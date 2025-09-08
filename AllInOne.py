@@ -6,7 +6,6 @@ __version__ = (1, 0, 0)
 
 from .. import loader, utils
 import random
-from telethon.tl.types import InputPeerChannel
 
 @loader.tds
 class AllInOne(loader.Module):
@@ -21,12 +20,11 @@ strings_ru = {
     }
 
 @loader.command(
-    en_doc="Рандомный шип чата!",
-    ru_doc="Random chat ship!",
+    ru_doc="Рандомный шип чата!",
+    en_doc="Random chat ship!",
 ) 
-async def ship(self, message):
+async def rship(self, message):
         """Рандомный шип чата!"""
-        
         chat = message.peer_id
         channel = await self.client.get_entity(chat)
         participants = await self.client.get_participants(channel)
