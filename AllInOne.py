@@ -19,11 +19,8 @@ strings_ru = {
     "Not_chat": "✖️ Это не чат!"
     }
 
-@loader.command(
-    ru_doc="Рандомный шип чата!",
-    en_doc="Random chat ship!",
-) 
-async def rship(self, message):
+@loader.command()
+    async def rship(self, message):
         """Рандомный шип чата!"""
         chat = message.peer_id
         channel = await self.client.get_entity(chat)
