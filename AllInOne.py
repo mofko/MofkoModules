@@ -19,7 +19,21 @@ strings_ru = {
     "Not_chat": "✖️ Это не чат!"
     }
 
-@loader.command()
+def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "Num_1",
+                1,
+                lambda: self.strings["Num1"],
+            ),
+
+            loader.ConfigValue(
+                "Num_2",
+                10,
+                lambda: self.strings["Num2"],
+            ),
+        )
+    
     async def rship(self, message):
         """Рандомный шип чата!"""
         chat = message.peer_id
