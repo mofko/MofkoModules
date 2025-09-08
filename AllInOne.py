@@ -20,6 +20,7 @@ strings_ru = {
     "Not_chat": "✖️ Это не чат!"
     }
 
+@loader.command()
 async def ship(self, message):
         """Рандомный шип чата!"""
         
