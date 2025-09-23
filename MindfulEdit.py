@@ -1,4 +1,4 @@
-__version__ = (1, 0, 0)
+__version__ = (1, 0, 1)
 # meta developer: @mofkomodules 
 # name: mindfuledit
 
@@ -55,6 +55,7 @@ limit=2500)
     )
         time.sleep(0.6)
         await self.client.delete_messages(message.chat_id, choose_video_message)
+
 
 
 
