@@ -1,4 +1,4 @@
-__version__ = (1, 2, 0)
+__version__ = (1, 3, 0)
 # meta developer: @mofkomodules 
 # name: MindfulEdit
 
@@ -29,9 +29,22 @@ class MindfulEdit(loader.Module):
     }
 
     def __init__(self):
-        self._videos_cache: Optional[List[Message]] = None
-        self._cache_time: float = 0
-        self.source_channel = "https://t.me/MindfulEdit"
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "additional_channels",
+                [],
+                "Укажите канал, который хотите добавить в подборку эдитов через @ (лимит 19 каналов)",
+                validator=loader.validators.Series(
+                    validator=loader.validators.Union(
+                        loader.validators.Link(),
+                        loader.validators.RegExp(r"@\w+")
+                    )
+                )
+            )
+        )
+        self._videos_cache: dict = {}
+        self._cache_time: dict = {}
+        self.main_channel = "https://t.me/MindfulEdit"
         self.cache_ttl = 3600
         self.messages_limit = 1000
 
@@ -39,47 +52,69 @@ class MindfulEdit(loader.Module):
         self.client = client
         self._db = db
 
-    async def _get_videos(self) -> List[Message]:
+    def _get_all_channels(self) -> List[str]:
+        """Get all channels including main and additional ones"""
+        channels = [self.main_channel]
+        if self.config["additional_channels"]:
+            additional_channels = []
+            for channel in self.config["additional_channels"]:
+                if channel.startswith("@"):
+                    additional_channels.append(f"https://t.me/{channel[1:]}")
+                else:
+                    additional_channels.append(channel)
+            channels.extend(additional_channels)
+        return channels
+
+    async def _get_videos(self, channel: str) -> List[Message]:
         current_time = time.time()
         
-        if (self._videos_cache and 
-            current_time - self._cache_time < self.cache_ttl):
-            return self._videos_cache
+        if (channel in self._videos_cache and 
+            channel in self._cache_time and
+            current_time - self._cache_time[channel] < self.cache_ttl):
+            return self._videos_cache[channel]
         
         try:
             videos = await self.client.get_messages(
-                self.source_channel,
+                channel,
                 limit=self.messages_limit
             )
             
             videos_with_media = [msg for msg in videos if msg.media]
             
             if not videos_with_media:
-                logger.warning("No media found in channel messages")
+                logger.warning(f"No media found in channel {channel}")
                 return []
             
-            self._videos_cache = videos_with_media
-            self._cache_time = current_time
-            logger.info(f"Cache updated with {len(videos_with_media)} videos")
+            self._videos_cache[channel] = videos_with_media
+            self._cache_time[channel] = current_time
+            logger.info(f"Cache updated for {channel} with {len(videos_with_media)} videos")
             
             return videos_with_media
             
         except Exception as e:
-            logger.error(f"Error loading videos: {e}")
-            return self._videos_cache or []
+            logger.error(f"Error loading videos from {channel}: {e}")
+            return self._videos_cache.get(channel, [])
 
     async def _send_random_edit(self, message: Message) -> None:
         try:
             status_msg = await utils.answer(message, self.strings["sending"])
-
-            videos = await self._get_videos()
+            channels = self._get_all_channels()
             
-            if not videos:
+            random.shuffle(channels)
+            selected_video = None
+            source_channel = None
+            
+            for channel in channels:
+                videos = await self._get_videos(channel)
+                if videos:
+                    selected_video = random.choice(videos)
+                    source_channel = channel
+                    break
+            
+            if not selected_video:
                 await utils.answer(status_msg, self.strings["no_videos"])
                 return
 
-            selected_video = random.choice(videos)
-            
             await self.client.delete_messages(message.chat_id, [status_msg])
             
             await self.client.send_message(
