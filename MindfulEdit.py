@@ -1,5 +1,5 @@
-__version__ = (1, 3, 0)
-# meta developer: @mofkomodules 
+__version__ = (1, 3, 1)
+# meta developer: @mofkomodules
 # name: MindfulEdit
 
 from herokutl.types import Message
@@ -9,7 +9,7 @@ import random
 import asyncio
 import logging
 import time
-from typing import List, Optional
+from typing import List
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +20,22 @@ class MindfulEdit(loader.Module):
         "sending": "<emoji document_id=5210956306952758910>👀</emoji> Looking for edit",
         "error": "<emoji document_id=5420323339723881652>⚠️</emoji> An error occurred, check logs",
         "no_videos": "<emoji document_id=5400086192559503700>😳</emoji> No videos found in channel",
+        "inline_question": "🔄 Send another edit?",
+        "btn_retry": "🔄 Another edit",
+        "btn_close": "❌ Close",
+        "cfg_show_inline_desc": "Show inline message with buttons after sending an edit",
+        "cfg_channels_desc": "Specify a channel to add to the edit selection via @ (limit 19 channels)",
     }
     
     strings_ru = {
         "sending": "<emoji document_id=5210956306952758910>👀</emoji> Ищу эдит",
         "error": "<emoji document_id=5420323339723881652>⚠️</emoji> Ошибка, проверьте логи",
         "no_videos": "<emoji document_id=5400086192559503700>😳</emoji> В канале не найдено видео",
+        "inline_question": "🔄 Отправить другой эдит?",
+        "btn_retry": "🔄 Другой эдит",
+        "btn_close": "❌ Закрыть",
+        "cfg_show_inline_desc": "Показывать инлайн-сообщение с кнопками после отправки эдита",
+        "cfg_channels_desc": "Укажите канал, который хотите добавить в подборку эдитов через @ (лимит 19 каналов)",
     }
 
     def __init__(self):
@@ -33,17 +43,23 @@ class MindfulEdit(loader.Module):
             loader.ConfigValue(
                 "additional_channels",
                 [],
-                "Укажите канал, который хотите добавить в подборку эдитов через @ (лимит 19 каналов)",
+                lambda: self.strings["cfg_channels_desc"],
                 validator=loader.validators.Series(
                     validator=loader.validators.Union(
                         loader.validators.Link(),
                         loader.validators.RegExp(r"@\w+")
                     )
                 )
+            ),
+            loader.ConfigValue(
+                "show_inline_after_send",
+                True,
+                lambda: self.strings["cfg_show_inline_desc"],
+                validator=loader.validators.Boolean()
             )
         )
-        self._videos_cache: dict = {}
-        self._cache_time: dict = {}
+        self._videos_cache = {}
+        self._cache_time = {}
         self.main_channel = "https://t.me/MindfulEdit"
         self.cache_ttl = 3600
         self.messages_limit = 1000
@@ -53,7 +69,6 @@ class MindfulEdit(loader.Module):
         self._db = db
 
     def _get_all_channels(self) -> List[str]:
-        """Get all channels including main and additional ones"""
         channels = [self.main_channel]
         if self.config["additional_channels"]:
             additional_channels = []
@@ -67,7 +82,6 @@ class MindfulEdit(loader.Module):
 
     async def _get_videos(self, channel: str) -> List[Message]:
         current_time = time.time()
-        
         if (channel in self._videos_cache and 
             channel in self._cache_time and
             current_time - self._cache_time[channel] < self.cache_ttl):
@@ -78,71 +92,86 @@ class MindfulEdit(loader.Module):
                 channel,
                 limit=self.messages_limit
             )
-            
             videos_with_media = [msg for msg in videos if msg.media]
-            
             if not videos_with_media:
                 logger.warning(f"No media found in channel {channel}")
                 return []
-            
             self._videos_cache[channel] = videos_with_media
             self._cache_time[channel] = current_time
             logger.info(f"Cache updated for {channel} with {len(videos_with_media)} videos")
-            
             return videos_with_media
-            
         except Exception as e:
             logger.error(f"Error loading videos from {channel}: {e}")
             return self._videos_cache.get(channel, [])
 
-    async def _send_random_edit(self, message: Message) -> None:
+    async def _close_callback(self, call: InlineCall):
         try:
-            status_msg = await utils.answer(message, self.strings["sending"])
-            channels = self._get_all_channels()
+            await call.delete()
+        except Exception as e:
+            logger.error(f"Error deleting inline message: {e}")
+
+    async def _retry_callback(self, call: InlineCall):
+        try:
+            await call.delete()
+            chat_id = call.form["chat"]
+            await self._send_random_edit_to_chat(chat_id)
+        except Exception as e:
+            logger.error(f"Error in retry callback: {e}")
+
+    async def _send_random_edit_to_chat(self, chat_id: int, reply_to_msg_id: int = None):
+        try:
+            status_msg = await self.client.send_message(
+                chat_id,
+                self.strings["sending"]
+            )
             
+            channels = self._get_all_channels()
             random.shuffle(channels)
             selected_video = None
-            source_channel = None
             
             for channel in channels:
                 videos = await self._get_videos(channel)
                 if videos:
                     selected_video = random.choice(videos)
-                    source_channel = channel
                     break
             
             if not selected_video:
-                await utils.answer(status_msg, self.strings["no_videos"])
+                await status_msg.edit(self.strings["no_videos"])
                 return
 
-            await self.client.delete_messages(message.chat_id, [status_msg])
+            try:
+                await status_msg.delete()
+            except Exception as e:
+                logger.warning(f"Could not delete status message: {e}")
             
             await self.client.send_message(
-                message.peer_id,
+                chat_id,
                 message=selected_video,
-                reply_to=getattr(message, "reply_to_msg_id", None)
+                reply_to=reply_to_msg_id
             )
             
-            await asyncio.sleep(2)
-            
-            await self.inline.form(
-                text="🔄 Отправить другой эдит?",
-                message=message,
-                reply_markup=[
-                    [
-                        {"text": "🔄 Другой эдит", "callback": self._retry_callback}
-                    ]
-                ]
-            )
+            if self.config["show_inline_after_send"]:
+                await asyncio.sleep(2)
                 
+                await self.inline.form(
+                    text=self.strings["inline_question"],
+                    message=status_msg,
+                    reply_markup=[
+                        [
+                            {"text": self.strings["btn_retry"], "callback": self._retry_callback},
+                            {"text": self.strings["btn_close"], "callback": self._close_callback}
+                        ]
+                    ]
+                )
+                    
         except Exception as e:
-            logger.error(f"Error sending edit: {e}")
-            await utils.answer(message, self.strings["error"])
+            logger.error(f"Error sending edit to chat: {e}")
 
-    async def _retry_callback(self, call: InlineCall):
-        await call.delete()
-        prefix = self.get_prefix()
-        await self.client.send_message(call.form["chat"], f"{prefix}redit")
+    async def _send_random_edit(self, message: Message) -> None:
+        await self._send_random_edit_to_chat(
+            message.chat_id,
+            getattr(message, "reply_to_msg_id", None)
+        )
 
     @loader.command(
         en_doc="Send random edit",
