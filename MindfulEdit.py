@@ -1,6 +1,7 @@
 __version__ = (1, 3, 1)
 # meta developer: @mofkomodules
 # name: MindfulEdit
+# meta fhsdesc: random, edits, fun
 
 from herokutl.types import Message
 from .. import loader, utils
@@ -180,3 +181,4 @@ class MindfulEdit(loader.Module):
     ) 
     async def redit(self, message: Message):
         await self._send_random_edit(message)
+
