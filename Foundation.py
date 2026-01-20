@@ -2,7 +2,7 @@ __version__ = (2, 0, 1)
 # meta developer: @mofkomodules
 # name: Foundation
 # description: best NSFW random module
-# meta fhsdesc: hentai, 18+, random, fun, nsfw
+# meta fhsdesc: hentai, 18+, random, хентай, porn, fun
 
 import random
 import logging
