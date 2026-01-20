@@ -11,6 +11,7 @@
 # ---------------------------------------------------------------------------------
 # meta developer: @mofkomodules 
 # name: Бредик
+# meta fhsdesc: fun, trash, random, funny
 
 __version__ = (1, 0, 0)
 
