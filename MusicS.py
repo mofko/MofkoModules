@@ -1,5 +1,6 @@
 # meta developer: @mofkomodules
 # name: MusicS
+# meta fhsdesc: tool, music, finder
 
 __version__ = (1, 1, 0)
 
