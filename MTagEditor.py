@@ -14,6 +14,7 @@
 # meta developer: @mofkomodules
 # name: MTagEditor
 # desc: Редактор тегов MP3 файлов
+# meta fhsdesc: tool, music, files, editor, mp3
 
 __version__ = (1, 0, 0)
 
