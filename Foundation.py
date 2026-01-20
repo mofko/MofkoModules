@@ -1,7 +1,8 @@
-__version__ = (2, 0, 0)
-# meta developer: @mofkomodules & @Haloperidol_Pills
+__version__ = (2, 0, 1)
+# meta developer: @mofkomodules
 # name: Foundation
-# description: Sends NSFW media from foundation 
+# description: best NSFW random module
+# meta fhsdesc: hentai, 18+, random, fun, nsfw
 
 import random
 import logging
@@ -12,6 +13,7 @@ from herokutl.types import Message
 from .. import loader, utils
 from telethon.errors import FloodWaitError
 from ..inline.types import InlineCall
+from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class Foundation(loader.Module):
 
     strings_ru = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Чот не то, чекай логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: https://t.me/+ZfmKdDrEMCA1NWEy",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено видео",
         "triggers_config": "⚙️ <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -44,6 +46,7 @@ class Foundation(loader.Module):
         "trigger_updated": "✅ Триггер обновлен!\n\n{} теперь будет вызывать .{} в чате {}",
         "trigger_disabled": "✅ Триггер отключен для .{} в чате {}",
         "no_triggers": "Триггеры не настроены",
+        "_cls_doc": "Случайное NSFW медиа",
     }
 
     def __init__(self):
@@ -54,15 +57,33 @@ class Foundation(loader.Module):
         self._last_entity_check = 0
         self.entity_check_interval = 300
         self.cache_ttl = 1200
-        self._spam_timestamps = defaultdict(list)
-        self._spam_blocked = defaultdict(float)
-        self._spam_lock = defaultdict(asyncio.Lock)
+        
+        self._spam_data = {
+            'triggers': defaultdict(list),
+            'blocked': {},
+            'global_blocked': False,
+            'global_block_time': 0
+        }
+        
+        self._block_cache = TTLCache(maxsize=1000, ttl=15)
+        
+        self.SPAM_LIMIT = 3
+        self.SPAM_WINDOW = 3
+        self.BLOCK_DURATION = 15
+        self.GLOBAL_LIMIT = 10
+        self.GLOBAL_WINDOW = 10
 
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "triggers_enabled",
                 True,
-                "Enable trigger watcher",
+                lambda: "Enable trigger watcher",
+                validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "spam_protection",
+                True,
+                lambda: "Enable spam protection for triggers",
                 validator=loader.validators.Boolean()
             )
         )
@@ -71,7 +92,26 @@ class Foundation(loader.Module):
         self.client = client
         self._db = db
         self.triggers = self._db.get(__name__, "triggers", {})
+        self._load_spam_data()
         await self._load_entity()
+    
+    def _load_spam_data(self):
+        saved = self._db.get(__name__, "spam_protection", {})
+        if saved:
+            self._spam_data['triggers'] = defaultdict(list, saved.get('triggers', {}))
+            self._spam_data['blocked'] = saved.get('blocked', {})
+            self._spam_data['global_blocked'] = saved.get('global_blocked', False)
+            self._spam_data['global_block_time'] = saved.get('global_block_time', 0)
+    
+    def _save_spam_data(self):
+        triggers_dict = dict(self._spam_data['triggers'])
+        data_to_save = {
+            'triggers': triggers_dict,
+            'blocked': self._spam_data['blocked'],
+            'global_blocked': self._spam_data['global_blocked'],
+            'global_block_time': self._spam_data['global_block_time']
+        }
+        self._db.set(__name__, "spam_protection", data_to_save)
 
     async def _load_entity(self):
         current_time = time.time()
@@ -123,32 +163,81 @@ class Foundation(loader.Module):
             self._video_cache["video"] = video_messages
         self._cache_time[cache_key] = current_time
         return self._media_cache.get("any") if media_type == "any" else self._video_cache.get("video")
+    
+    def _check_global_spam(self):
+        if not self.config["spam_protection"]:
+            return False
+        
+        current_time = time.time()
+        
+        if self._spam_data['global_blocked']:
+            if current_time - self._spam_data['global_block_time'] < self.BLOCK_DURATION:
+                return True
+            else:
+                self._spam_data['global_blocked'] = False
+                self._save_spam_data()
+                return False
+        
+        recent_triggers = 0
+        ten_seconds_ago = current_time - self.GLOBAL_WINDOW
+        
+        for user_data in self._spam_data['triggers'].values():
+            recent_in_user = [t for t in user_data if t > ten_seconds_ago]
+            recent_triggers += len(recent_in_user)
+        
+        if recent_triggers >= self.GLOBAL_LIMIT:
+            self._spam_data['global_blocked'] = True
+            self._spam_data['global_block_time'] = current_time
+            self._save_spam_data()
+            return True
+        
+        return False
+    
+    def _check_user_spam(self, user_id, chat_id):
+        if not self.config["spam_protection"]:
+            return False
+        
+        current_time = time.time()
+        key = f"{user_id}:{chat_id}"
+        
+        if key in self._block_cache:
+            return True
+        
+        if key in self._spam_data['blocked']:
+            block_until = self._spam_data['blocked'][key]
+            if current_time < block_until:
+                self._block_cache[key] = True
+                return True
+            else:
+                del self._spam_data['blocked'][key]
+        
+        timestamps = self._spam_data['triggers'][key]
+        
+        three_seconds_ago = current_time - self.SPAM_WINDOW
+        recent_timestamps = [ts for ts in timestamps if ts > three_seconds_ago]
+        
+        if len(recent_timestamps) >= self.SPAM_LIMIT:
+            block_until = current_time + self.BLOCK_DURATION
+            self._spam_data['blocked'][key] = block_until
+            self._block_cache[key] = True
+            self._spam_data['triggers'][key] = []
+            self._save_spam_data()
+            return True
+        
+        recent_timestamps.append(current_time)
+        self._spam_data['triggers'][key] = recent_timestamps[-20:]
+        
+        self._save_spam_data()
+        return False
 
     async def _check_spam(self, user_id, chat_id):
-        key = f"{user_id}:{chat_id}"
-        now = time.time()
+        if self._check_global_spam():
+            return True
         
-        async with self._spam_lock[key]:
-            if key in self._spam_blocked and now < self._spam_blocked[key]:
-                return True
-                
-            if key in self._spam_blocked and now >= self._spam_blocked[key]:
-                del self._spam_blocked[key]
-                if key in self._spam_timestamps:
-                    del self._spam_timestamps[key]
-            
-            timestamps = self._spam_timestamps[key]
-            one_sec_ago = now - 1.0
-            timestamps = [ts for ts in timestamps if ts > one_sec_ago]
-            
-            if len(timestamps) >= 3:
-                self._spam_blocked[key] = now + 15.0
-                self._spam_timestamps[key] = []
-                return True
-            
-            timestamps.append(now)
-            self._spam_timestamps[key] = timestamps[-10:]
-            return False
+        if self._check_user_spam(user_id, chat_id):
+            return True
+        
+        return False
 
     async def _send_media(self, message: Message, media_type: str = "any", delete_command: bool = False):
         try:
@@ -341,9 +430,10 @@ class Foundation(loader.Module):
         chat_id = utils.get_chat_id(message)
         text = message.text.lower().strip()
         chat_triggers = self.triggers.get(str(chat_id), {})
+        
         for command, trigger in chat_triggers.items():
             if text == trigger:
                 if await self._check_spam(message.sender_id, chat_id):
                     return
                 await self._send_media(message, "video" if command == "vfond" else "any", delete_command=True)
-                break 
+                break
