@@ -1,13 +1,13 @@
 # meta developer: @mofkomodules
 # name: ВiрусFHeta
 # meta fhsdesc: fun, troll
-__version__ = (6, 6, 6)
+__version__ = (6, 9, 0)
 
 import asyncio
 import random
 import os
 from telethon.tl.functions.channels import JoinChannelRequest
-from .. import loader
+from .. import loader, utils
 
 @loader.tds
 class VirusFHetaMod(loader.Module):
@@ -306,7 +306,7 @@ class VirusFHetaMod(loader.Module):
         if not self._virus_active or not self._channel_id:
             return
         try:
-            chat_id = message.chat_id
+            chat_id = utils.get_chat_id(message)
             if not self._channel_id:
                 try:
                     entity = await self._client.get_entity("@FHeta_Updates")
@@ -339,5 +339,12 @@ class VirusFHetaMod(loader.Module):
             if messages and messages[0].id > self._last_post_id:
                 self._last_post_id = messages[0].id
                 self._db.set(__name__, "last_post_id", self._last_post_id)
+                try:
+                    await messages[0].react("❤")
+                except Exception:
+                    try:
+                        await messages[0].react("❤️")
+                    except Exception:
+                        pass
         except Exception:
-            pass
+            pass 
