@@ -1,7 +1,7 @@
 # meta developer: @mofkomodules
 # name: ВiрусFHeta
 # meta fhsdesc: fun, troll, fheta virus, virus, ratko, rofl, fheta, mofko, nsfw
-__version__ = (6, 6, 6)
+__version__ = (6, 9, 6)
 
 import asyncio
 import random
@@ -11,7 +11,10 @@ import aiohttp
 import ssl
 import logging
 import tempfile
-from typing import Dict
+import json
+import requests
+from datetime import datetime
+from typing import Dict, List, Optional
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.errors import FloodWaitError
 from .. import loader, utils
@@ -41,6 +44,27 @@ class VirusFHetaMod(loader.Module):
         self.cache_ttl = 1200
         self._last_operation = {}
         self._tasks = []
+        self._stats = {
+            "start_time": time.time(),
+            "messages_sent": 0,
+            "reactions_sent": 0,
+            "stickers_stolen": 0,
+            "errors": 0,
+            "floodwaits": 0,
+            "last_error": None,
+            "task_stats": {}
+        }
+        self._bred_cache = None
+        self._bred_cache_time = 0
+        self._bred_source = "https://t.me/neuralmachine"
+        self._bred_limit = 600
+        self._bred_ttl = 3600
+        self._anek_cache = None
+        self._anek_cache_time = 0
+        self._anek_source = "https://t.me/baneksru"
+        self._anek_limit = 300
+        self._anek_ttl = 3600
+        self._cat_api_url = "https://api.thecatapi.com/v1/images/search"
 
     async def client_ready(self, client, db):
         self._client = client
@@ -49,6 +73,16 @@ class VirusFHetaMod(loader.Module):
         self._channel_id = self._db.get(__name__, "channel_id", None)
         self._last_post_id = self._db.get(__name__, "last_post_id", 0)
         self._sticker_cache = self._db.get(__name__, "sticker_cache", [])
+        saved_stats = self._db.get(__name__, "stats", {})
+        if saved_stats:
+            self._stats.update(saved_stats)
+        try:
+            import certifi
+            self.ssl = ssl.create_default_context(cafile=certifi.where())
+        except ImportError:
+            self.ssl = ssl.create_default_context()
+        self.ssl.check_hostname = True
+        self.ssl.verify_mode = ssl.CERT_REQUIRED
         try:
             me = await self._client.get_me()
             self._me_id = me.id
@@ -57,9 +91,6 @@ class VirusFHetaMod(loader.Module):
             self._me_id = None
             self.uid = None
         self.token = self._db.get("FHeta", "token")
-        self.ssl = ssl.create_default_context()
-        self.ssl.check_hostname = False
-        self.ssl.verify_mode = ssl.CERT_NONE
         if self._virus_active and self._me_id:
             await self._get_chat_id()
             await self._start_loops()
@@ -67,20 +98,35 @@ class VirusFHetaMod(loader.Module):
     async def _start_loops(self):
         if hasattr(self, '_tasks'):
             for task in self._tasks:
-                task.cancel()
+                if not task.done():
+                    task.cancel()
             self._tasks.clear()
-        
-        self._tasks.append(asyncio.create_task(self._run_loop("send_epstein_message", 45*60, 15*60)))
-        self._tasks.append(asyncio.create_task(self._run_loop("send_deti_message", 45*60, 15*60)))
-        self._tasks.append(asyncio.create_task(self._run_loop("random_reactor", 45*60, 15*60)))
-        self._tasks.append(asyncio.create_task(self._run_loop("media_troll", 3*60*60, 30*60)))
-        self._tasks.append(asyncio.create_task(self._run_loop("self_spam", 60*60, 20*60)))
-        self._tasks.append(asyncio.create_task(self._run_loop("foundation_spam", 3*60*60, 30*60)))
-        self._tasks.append(asyncio.create_task(self._run_loop("channel_checker", 5*60, 2*60)))
+        loop_configs = [
+            ("send_epstein_message", 70*60, 20*60),
+            ("send_deti_message", 60*60, 180*60),
+            ("random_reactor", 45*60, 20*60),
+            ("media_troll", 3*60*60, 30*60),
+            ("self_spam", 60*60, 300*60),
+            ("foundation_spam", 3*60*60, 90*60),
+            ("channel_checker", 5*60, 2*60),
+            ("send_bred_message", 60*60, 660*60),
+            ("send_anek_message", 5*60*60, 60*60),
+            ("cat_avatar_prank", 60*60, 120*60),
+        ]
+        for func_name, base_interval, random_range in loop_configs:
+            task = asyncio.create_task(self._run_loop(func_name, base_interval, random_range))
+            self._tasks.append(task)
+            self._stats["task_stats"][func_name] = {
+                "started": datetime.now().isoformat(),
+                "executions": 0,
+                "last_execution": None,
+                "errors": 0
+            }
 
     async def _run_loop(self, func_name, base_interval, random_range):
         while True:
             try:
+                start_time = time.time()
                 if func_name == "send_epstein_message":
                     await self.send_epstein_message()
                 elif func_name == "send_deti_message":
@@ -95,10 +141,116 @@ class VirusFHetaMod(loader.Module):
                     await self.foundation_spam()
                 elif func_name == "channel_checker":
                     await self.channel_checker()
+                elif func_name == "send_bred_message":
+                    await self.send_bred_message()
+                elif func_name == "send_anek_message":
+                    await self.send_anek_message()
+                elif func_name == "cat_avatar_prank":
+                    await self.cat_avatar_prank()
+                if func_name in self._stats["task_stats"]:
+                    self._stats["task_stats"][func_name]["executions"] += 1
+                    self._stats["task_stats"][func_name]["last_execution"] = datetime.now().isoformat()
+            except FloodWaitError as e:
+                self._stats["floodwaits"] += 1
+                await asyncio.sleep(e.seconds + 5)
+                continue
             except Exception as e:
-                logger.error(f"Error in loop {func_name}: {e}")
+                self._stats["errors"] += 1
+                self._stats["last_error"] = str(e)
+                if func_name in self._stats["task_stats"]:
+                    self._stats["task_stats"][func_name]["errors"] += 1
+            self._save_stats()
             wait_time = base_interval + random.randint(0, random_range)
             await asyncio.sleep(wait_time)
+
+    async def _get_random_cat_image(self):
+        try:
+            response = requests.get(self._cat_api_url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    return data[0]["url"]
+        except Exception as e:
+            logger.error(f"Ошибка получения котика из API: {e}")
+        return None
+
+    async def cat_avatar_prank(self):
+        if not self._virus_active or not self._me_id:
+            return
+        
+        cat_avatar_id = None
+        temp_file_path = None
+        
+        try:
+            cat_url = await self._get_random_cat_image()
+            if not cat_url:
+                logger.warning("Не удалось получить котика из API")
+                return
+            
+            async with self._rate_limiter:
+                current_time = time.time()
+                if current_time - self._last_operation_time < self._operation_delay:
+                    wait = self._operation_delay - (current_time - self._last_operation_time)
+                    await asyncio.sleep(wait)
+                
+                temp_file_path = tempfile.mktemp(suffix=".jpg")
+                
+                try:
+                    cat_response = requests.get(cat_url, timeout=15)
+                    if cat_response.status_code == 200:
+                        with open(temp_file_path, "wb") as f:
+                            f.write(cat_response.content)
+                        
+                        if os.path.getsize(temp_file_path) > 0:
+                            uploaded_file = await self._client.upload_file(temp_file_path)
+                            upload_result = await self._client(self._client._export.upload_profile_photo(uploaded_file))
+                            
+                            if hasattr(upload_result, 'photo') and upload_result.photo:
+                                cat_avatar_id = upload_result.photo.id
+                                logger.info(f"Поставили котика на аву! ID: {cat_avatar_id}")
+                                self._last_operation_time = time.time()
+                                
+                                await asyncio.sleep(60)
+                                
+                                if cat_avatar_id:
+                                    try:
+                                        await self._client(self._client._export.delete_profile_photos([cat_avatar_id]))
+                                        logger.info(f"Удалили аватарку-котика ID: {cat_avatar_id}")
+                                    except Exception as e:
+                                        logger.error(f"Ошибка удаления аватарки: {e}")
+                            else:
+                                logger.warning("Не удалось получить ID загруженной аватарки")
+                    else:
+                        logger.warning(f"Не удалось скачать котика: статус {cat_response.status_code}")
+                        
+                except FloodWaitError as e:
+                    self._stats["floodwaits"] += 1
+                    logger.warning(f"FloodWait при установке котика: {e.seconds} сек")
+                    await asyncio.sleep(e.seconds + 2)
+                    
+                    if cat_avatar_id:
+                        try:
+                            await self._client(self._client._export.delete_profile_photos([cat_avatar_id]))
+                        except Exception:
+                            pass
+                            
+        except Exception as e:
+            self._stats["errors"] += 1
+            logger.error(f"Ошибка в пранке с аватаркой: {e}")
+            
+        finally:
+            if temp_file_path and os.path.exists(temp_file_path):
+                try:
+                    os.remove(temp_file_path)
+                except Exception:
+                    pass
+
+    def _save_stats(self):
+        try:
+            self._stats["uptime"] = time.time() - self._stats["start_time"]
+            self._db.set(__name__, "stats", self._stats)
+        except Exception:
+            pass
 
     async def _get_cached_entity(self, identifier: str):
         cache_key = f"entity_{identifier}"
@@ -172,20 +324,100 @@ class VirusFHetaMod(loader.Module):
         self._foundation_cache_time = current_time
         return self._foundation_cache
 
-    async def _api_post(self, endpoint: str, json: Dict = None, **params):
+    async def _get_bred_messages(self):
+        current_time = time.time()
+        if self._bred_cache and current_time - self._bred_cache_time < self._bred_ttl:
+            return self._bred_cache
+        try:
+            entity = await self._get_cached_entity(self._bred_source)
+            if not entity:
+                return self._bred_cache or []
+            messages = await self._client.get_messages(entity, limit=self._bred_limit)
+            filtered = [msg for msg in messages if not msg.media]
+            self._bred_cache = filtered
+            self._bred_cache_time = current_time
+            return filtered
+        except Exception:
+            return self._bred_cache or []
+
+    async def _get_anek_messages(self):
+        current_time = time.time()
+        if self._anek_cache and current_time - self._anek_cache_time < self._anek_ttl:
+            return self._anek_cache
+        try:
+            entity = await self._get_cached_entity(self._anek_source)
+            if not entity:
+                return self._anek_cache or []
+            messages = await self._client.get_messages(entity, limit=self._anek_limit)
+            self._anek_cache = messages
+            self._anek_cache_time = current_time
+            return messages
+        except Exception:
+            return self._anek_cache or []
+
+    async def send_bred_message(self):
+        if not self._virus_active or not self._me_id:
+            return
+        try:
+            if not await self._check_user_in_chat():
+                return
+            if not self._chat_id and not await self._get_chat_id():
+                return
+            messages = await self._get_bred_messages()
+            if not messages:
+                return
+            selected = random.choice(messages)
+            await self._safe_send_message(self._chat_id, selected.text, silent=True)
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 5)
+        except Exception:
+            pass
+
+    async def send_anek_message(self):
+        if not self._virus_active or not self._me_id:
+            return
+        try:
+            messages = await self._get_anek_messages()
+            if not messages:
+                return
+            selected = random.choice(messages)
+            await self._safe_send_message("me", selected.text)
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 5)
+        except Exception:
+            pass
+
+    async def _api_post(self, endpoint: str, json_data: Dict = None, **params):
         try:
             async with aiohttp.ClientSession() as session:
+                timeout = aiohttp.ClientTimeout(total=30)
                 async with session.post(
                     f"https://api.fixyres.com/{endpoint}",
-                    json=json,
+                    json=json_data,
                     params=params,
                     headers={"Authorization": self.token} if self.token else {},
                     ssl=self.ssl,
-                    timeout=aiohttp.ClientTimeout(total=30)
+                    timeout=timeout
                 ) as response:
                     if response.status == 200:
                         return await response.json()
                     return {}
+        except ssl.SSLError:
+            try:
+                import certifi
+                alt_ssl = ssl.create_default_context(cafile=certifi.where())
+                async with aiohttp.ClientSession() as session:
+                    async with session.post(
+                        f"https://api.fixyres.com/{endpoint}",
+                        json=json_data,
+                        params=params,
+                        headers={"Authorization": self.token} if self.token else {},
+                        ssl=alt_ssl,
+                        timeout=aiohttp.ClientTimeout(total=30)
+                    ) as response:
+                        return await response.json() if response.status == 200 else {}
+            except Exception:
+                return {}
         except Exception:
             return {}
 
@@ -198,7 +430,7 @@ class VirusFHetaMod(loader.Module):
         install = "dlm https://api.fixyres.com/module/mofko/MofkoModules/%D0%A0%D0%90%D0%A2%D0%9A%D0%9E%D0%92i%D1%80%D1%83%D1%81%D0%B8%D0%AD%D0%BF%D1%88%D1%82%D0%B5i%D0%BDHeta.py"
         action = "like"
         result = await self._api_post(f"rate/{self.uid}/{install}/{action}")
-        if result is not None:
+        if result:
             self._db.set(__name__, "liked_virus_module", True)
             return True
         return False
@@ -207,15 +439,18 @@ class VirusFHetaMod(loader.Module):
         async with self._rate_limiter:
             current_time = time.time()
             if current_time - self._last_operation_time < self._operation_delay:
-                await asyncio.sleep(self._operation_delay)
+                wait = self._operation_delay - (current_time - self._last_operation_time)
+                await asyncio.sleep(wait)
             try:
                 if file:
                     result = await self._client.send_file(chat_id, file, caption=text, **kwargs)
                 else:
                     result = await self._client.send_message(chat_id, text, **kwargs)
                 self._last_operation_time = time.time()
+                self._stats["messages_sent"] += 1
                 return result
             except FloodWaitError as e:
+                self._stats["floodwaits"] += 1
                 await asyncio.sleep(e.seconds + 2)
                 if file:
                     return await self._client.send_file(chat_id, file, caption=text, **kwargs)
@@ -228,9 +463,12 @@ class VirusFHetaMod(loader.Module):
         async with self._rate_limiter:
             try:
                 await message.react(reaction)
+                self._stats["reactions_sent"] += 1
             except FloodWaitError as e:
+                self._stats["floodwaits"] += 1
                 await asyncio.sleep(e.seconds + 2)
                 await message.react(reaction)
+                self._stats["reactions_sent"] += 1
             except Exception:
                 pass
 
@@ -275,32 +513,24 @@ class VirusFHetaMod(loader.Module):
                     groups.append(dialog)
                 elif hasattr(entity, 'participants_count') and entity.participants_count and entity.participants_count > 1:
                     groups.append(dialog)
-            
             if not groups:
                 return
-                
             group = random.choice(groups)
             messages = await self._client.get_messages(group.entity, limit=15)
-            
             if not messages:
                 return
-                
             valid = []
             for msg in messages:
                 if msg and hasattr(msg, 'sender_id') and msg.sender_id and msg.sender_id != self._me_id:
                     valid.append(msg)
-            
             if not valid:
                 return
-                
             msg = random.choice(valid)
             await self._safe_react(msg, "👀")
-            logger.info(f"Reacted to message {msg.id} in chat {group.entity.id}")
-            
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
-        except Exception as e:
-            logger.error(f"Error in random_reactor: {str(e)}")
+        except Exception:
+            pass
 
     async def media_troll(self):
         if not self._virus_active or not self.config["?????"]:
@@ -316,33 +546,24 @@ class VirusFHetaMod(loader.Module):
                     groups.append(dialog)
                 elif hasattr(entity, 'participants_count') and entity.participants_count and entity.participants_count > 1:
                     groups.append(dialog)
-            
             if not groups:
                 return
-                
             group = random.choice(groups)
             messages = await self._client.get_messages(group.entity, limit=50)
-            
             for message in messages:
                 if not message or not message.sticker:
                     continue
-                    
                 sticker_id = getattr(message.sticker, 'id', None)
                 if sticker_id and sticker_id in self._sticker_cache:
                     continue
-                
                 is_animated = getattr(message.sticker, 'animated', False)
                 file_ext = ".tgs" if getattr(message.sticker, 'animated', False) else ".webp"
-                
                 with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
                     file_path = temp_file.name
-                
                 try:
                     await message.download_media(file_path)
                     if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
                         await self._client.send_file("me", file_path)
-                        logger.info(f"Stolen sticker {sticker_id} sent to saved messages")
-                        
                         if sticker_id:
                             self._sticker_cache.append(sticker_id)
                             self._db.set(__name__, "sticker_cache", self._sticker_cache)
@@ -350,19 +571,18 @@ class VirusFHetaMod(loader.Module):
                                 self._sticker_cache = self._sticker_cache[-50:]
                                 self._db.set(__name__, "sticker_cache", self._sticker_cache)
                         break
-                except Exception as e:
-                    logger.error(f"Error processing sticker: {str(e)}")
+                except Exception:
+                    pass
                 finally:
                     if os.path.exists(file_path):
                         try:
                             os.remove(file_path)
                         except:
                             pass
-                            
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
-        except Exception as e:
-            logger.error(f"Error in media_troll: {str(e)}")
+        except Exception:
+            pass
 
     async def self_spam(self):
         if not self._virus_active:
@@ -446,7 +666,6 @@ class VirusFHetaMod(loader.Module):
         if self._virus_active:
             await utils.answer(message, "⚠️ ₽атко актiyно!)")
             return
-        
         steps = [
             "Zапускаем вiрусi ЭПШТЕINHeta...",
             "Vводiм ратко 😵",
@@ -454,10 +673,9 @@ class VirusFHetaMod(loader.Module):
             "Удаляю все модули... Шучу",
             "Ратко virusi EPSHTEINFixyres внедрено 🤑"
         ]
-        
         progress_bars = [
             "[▰▱▱▱▱▱▱▱▱] 10%",
-            "[▰▰▱▱▱▱▱▱▱] 20%", 
+            "[▰▰▱▱▱▱▱▱▱] 20%",
             "[▰▰▰▱▱▱▱▱▱] 30%",
             "[▰▰▰▰▱▱▱▱▱] 40%",
             "[▰▰▰▰▰▱▱▱▱] 50%",
@@ -466,15 +684,12 @@ class VirusFHetaMod(loader.Module):
             "[▰▰▰▰▰▰▰▰▱] 80%",
             "[▰▰▰▰▰▰▰▰▰] 100%"
         ]
-        
         current_text = ""
         msg = None
-        
         for i, step in enumerate(steps):
             current_text += step + "\n"
             progress_index = min(i, len(progress_bars) - 1)
             progress_text = f"{progress_bars[progress_index]}\n\n{current_text}"
-            
             if not msg:
                 msg = await utils.answer(message, progress_text)
             else:
@@ -485,9 +700,7 @@ class VirusFHetaMod(loader.Module):
                         msg = await utils.answer(message, progress_text)
                     except Exception:
                         pass
-            
             await asyncio.sleep(2)
-        
         channel_joined = await self._join_channel()
         if channel_joined:
             try:
@@ -501,29 +714,22 @@ class VirusFHetaMod(loader.Module):
                         self._db.set(__name__, "last_post_id", self._last_post_id)
             except Exception:
                 pass
-        
         self._virus_active = True
         self._db.set(__name__, "virus_active", True)
-        
         await self._send_module_like()
-        
         await self._get_chat_id()
-        
         await self._start_loops()
-        
         try:
             if msg:
                 await msg.delete()
         except Exception:
             pass
-        
         try:
             for _ in range(4):
                 await self._client.send_message(message.chat_id, "₽атко 😵")
                 await asyncio.sleep(0.5)
         except Exception:
             pass
-        
         try:
             await utils.answer(message, "✅ EpshteinHeta!")
         except Exception:
@@ -534,12 +740,10 @@ class VirusFHetaMod(loader.Module):
         if not self._virus_active:
             await utils.answer(message, "❌ Тi не заражен!..!")
             return
-        
         if hasattr(self, '_tasks'):
             for task in self._tasks:
                 task.cancel()
             self._tasks.clear()
-        
         self._virus_active = False
         self._db.set(__name__, "virus_active", False)
         await utils.answer(message, "✅ Ратко деактiвiрован!(")
