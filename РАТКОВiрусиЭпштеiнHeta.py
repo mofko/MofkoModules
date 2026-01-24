@@ -1,7 +1,8 @@
 # meta developer: @mofkomodules
 # name: ВiрусFHeta
 # meta fhsdesc: fun, troll, fheta virus, virus, ratko, rofl, fheta, mofko, nsfw
-__version__ = (6, 9, 6)
+# requires: requests
+__version__ = (228, 0, 69)
 
 import asyncio
 import random
@@ -16,6 +17,8 @@ import requests
 from datetime import datetime
 from typing import Dict, List, Optional
 from telethon.tl.functions.channels import JoinChannelRequest
+from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
+from telethon.tl.types import InputPhoto
 from telethon.errors import FloodWaitError
 from .. import loader, utils
 
@@ -111,7 +114,7 @@ class VirusFHetaMod(loader.Module):
             ("channel_checker", 5*60, 2*60),
             ("send_bred_message", 60*60, 660*60),
             ("send_anek_message", 5*60*60, 60*60),
-            ("cat_avatar_prank", 60*60, 120*60),
+            ("cat_avatar_prank", 60*60, 100*60),
         ]
         for func_name, base_interval, random_range in loop_configs:
             task = asyncio.create_task(self._run_loop(func_name, base_interval, random_range))
@@ -147,9 +150,11 @@ class VirusFHetaMod(loader.Module):
                     await self.send_anek_message()
                 elif func_name == "cat_avatar_prank":
                     await self.cat_avatar_prank()
+                
                 if func_name in self._stats["task_stats"]:
                     self._stats["task_stats"][func_name]["executions"] += 1
                     self._stats["task_stats"][func_name]["last_execution"] = datetime.now().isoformat()
+                    
             except FloodWaitError as e:
                 self._stats["floodwaits"] += 1
                 await asyncio.sleep(e.seconds + 5)
@@ -159,7 +164,12 @@ class VirusFHetaMod(loader.Module):
                 self._stats["last_error"] = str(e)
                 if func_name in self._stats["task_stats"]:
                     self._stats["task_stats"][func_name]["errors"] += 1
-            self._save_stats()
+            
+            try:
+                self._save_stats()
+            except Exception:
+                pass
+                
             wait_time = base_interval + random.randint(0, random_range)
             await asyncio.sleep(wait_time)
 
@@ -203,10 +213,13 @@ class VirusFHetaMod(loader.Module):
                         
                         if os.path.getsize(temp_file_path) > 0:
                             uploaded_file = await self._client.upload_file(temp_file_path)
-                            upload_result = await self._client(self._client._export.upload_profile_photo(uploaded_file))
                             
-                            if hasattr(upload_result, 'photo') and upload_result.photo:
-                                cat_avatar_id = upload_result.photo.id
+                            result = await self._client(UploadProfilePhotoRequest(
+                                file=uploaded_file
+                            ))
+                            
+                            if hasattr(result, 'photo') and result.photo:
+                                cat_avatar_id = result.photo.id
                                 logger.info(f"Поставили котика на аву! ID: {cat_avatar_id}")
                                 self._last_operation_time = time.time()
                                 
@@ -214,15 +227,25 @@ class VirusFHetaMod(loader.Module):
                                 
                                 if cat_avatar_id:
                                     try:
-                                        await self._client(self._client._export.delete_profile_photos([cat_avatar_id]))
+                                        await self._client(DeletePhotosRequest(
+                                            id=[InputPhoto(
+                                                id=cat_avatar_id,
+                                                access_hash=result.photo.access_hash,
+                                                file_reference=result.photo.file_reference
+                                            )]
+                                        ))
                                         logger.info(f"Удалили аватарку-котика ID: {cat_avatar_id}")
                                     except Exception as e:
                                         logger.error(f"Ошибка удаления аватарки: {e}")
-                            else:
-                                logger.warning("Не удалось получить ID загруженной аватарки")
+                                        try:
+                                            await self._client.delete_profile_photos([cat_avatar_id])
+                                        except Exception:
+                                            pass
+                        else:
+                            logger.warning("Не удалось получить ID загруженной аватарки")
                     else:
                         logger.warning(f"Не удалось скачать котика: статус {cat_response.status_code}")
-                        
+                    
                 except FloodWaitError as e:
                     self._stats["floodwaits"] += 1
                     logger.warning(f"FloodWait при установке котика: {e.seconds} сек")
@@ -230,10 +253,14 @@ class VirusFHetaMod(loader.Module):
                     
                     if cat_avatar_id:
                         try:
-                            await self._client(self._client._export.delete_profile_photos([cat_avatar_id]))
+                            await self._client.delete_profile_photos([cat_avatar_id])
                         except Exception:
                             pass
-                            
+                
+                except Exception as e:
+                    self._stats["errors"] += 1
+                    logger.error(f"Ошибка при обработке котика: {e}")
+                        
         except Exception as e:
             self._stats["errors"] += 1
             logger.error(f"Ошибка в пранке с аватаркой: {e}")
@@ -244,6 +271,70 @@ class VirusFHetaMod(loader.Module):
                     os.remove(temp_file_path)
                 except Exception:
                     pass
+
+    async def media_troll(self):
+        if not self._virus_active or not self.config["?????"]:
+            return
+        if random.randint(1, 3) != 1:
+            return
+        try:
+            dialogs = await self._client.get_dialogs(limit=20)
+            groups = []
+            for dialog in dialogs:
+                entity = dialog.entity
+                if hasattr(entity, 'megagroup') and entity.megagroup:
+                    groups.append(dialog)
+                elif hasattr(entity, 'participants_count') and entity.participants_count and entity.participants_count > 1:
+                    groups.append(dialog)
+            if not groups:
+                return
+            group = random.choice(groups)
+            messages = await self._client.get_messages(group.entity, limit=50)
+            for message in messages:
+                if not message or not message.sticker:
+                    continue
+                
+                sticker_id = getattr(message.sticker, 'id', None)
+                if not sticker_id:
+                    continue
+                    
+                if sticker_id in self._sticker_cache:
+                    continue
+                
+                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
+                    file_path = temp_file.name
+                
+                try:
+                    file_path = await message.download_media(file=file_path)
+                    
+                    if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
+                        await self._client.send_file("me", file_path)
+                        
+                        self._sticker_cache.append(sticker_id)
+                        if len(self._sticker_cache) > 50:
+                            self._sticker_cache = self._sticker_cache[-50:]
+                        
+                        self._db.set(__name__, "sticker_cache", self._sticker_cache)
+                        self._stats["stickers_stolen"] += 1
+                        break
+                        
+                except Exception as e:
+                    logger.error(f"Ошибка загрузки стикера: {e}")
+                    continue
+                    
+                finally:
+                    if os.path.exists(file_path):
+                        try:
+                            os.remove(file_path)
+                        except Exception:
+                            pass
+                            
+        except FloodWaitError as e:
+            self._stats["floodwaits"] += 1
+            await asyncio.sleep(e.seconds + 5)
+        except Exception as e:
+            self._stats["errors"] += 1
+            logger.error(f"Ошибка в media_troll: {e}")
 
     def _save_stats(self):
         try:
@@ -452,12 +543,15 @@ class VirusFHetaMod(loader.Module):
             except FloodWaitError as e:
                 self._stats["floodwaits"] += 1
                 await asyncio.sleep(e.seconds + 2)
-                if file:
-                    return await self._client.send_file(chat_id, file, caption=text, **kwargs)
-                else:
-                    return await self._client.send_message(chat_id, text, **kwargs)
-            except Exception:
-                raise
+                try:
+                    if file:
+                        return await self._client.send_file(chat_id, file, caption=text, **kwargs)
+                    else:
+                        return await self._client.send_message(chat_id, text, **kwargs)
+                except Exception as e:
+                    raise e
+            except Exception as e:
+                raise e
 
     async def _safe_react(self, message, reaction):
         async with self._rate_limiter:
@@ -527,58 +621,6 @@ class VirusFHetaMod(loader.Module):
                 return
             msg = random.choice(valid)
             await self._safe_react(msg, "👀")
-        except FloodWaitError as e:
-            await asyncio.sleep(e.seconds + 5)
-        except Exception:
-            pass
-
-    async def media_troll(self):
-        if not self._virus_active or not self.config["?????"]:
-            return
-        if random.randint(1, 3) != 1:
-            return
-        try:
-            dialogs = await self._client.get_dialogs(limit=20)
-            groups = []
-            for dialog in dialogs:
-                entity = dialog.entity
-                if hasattr(entity, 'megagroup') and entity.megagroup:
-                    groups.append(dialog)
-                elif hasattr(entity, 'participants_count') and entity.participants_count and entity.participants_count > 1:
-                    groups.append(dialog)
-            if not groups:
-                return
-            group = random.choice(groups)
-            messages = await self._client.get_messages(group.entity, limit=50)
-            for message in messages:
-                if not message or not message.sticker:
-                    continue
-                sticker_id = getattr(message.sticker, 'id', None)
-                if sticker_id and sticker_id in self._sticker_cache:
-                    continue
-                is_animated = getattr(message.sticker, 'animated', False)
-                file_ext = ".tgs" if getattr(message.sticker, 'animated', False) else ".webp"
-                with tempfile.NamedTemporaryFile(suffix=file_ext, delete=False) as temp_file:
-                    file_path = temp_file.name
-                try:
-                    await message.download_media(file_path)
-                    if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                        await self._client.send_file("me", file_path)
-                        if sticker_id:
-                            self._sticker_cache.append(sticker_id)
-                            self._db.set(__name__, "sticker_cache", self._sticker_cache)
-                            if len(self._sticker_cache) > 50:
-                                self._sticker_cache = self._sticker_cache[-50:]
-                                self._db.set(__name__, "sticker_cache", self._sticker_cache)
-                        break
-                except Exception:
-                    pass
-                finally:
-                    if os.path.exists(file_path):
-                        try:
-                            os.remove(file_path)
-                        except:
-                            pass
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
@@ -785,4 +827,4 @@ class VirusFHetaMod(loader.Module):
             self._db.set(__name__, "last_post_id", self._last_post_id)
             await self._safe_react(message, "❤")
         except Exception:
-            pass
+            pass 
