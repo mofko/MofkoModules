@@ -1,4 +1,4 @@
-__version__ = (2, 1, 0)
+__version__ = (2, 2, 8)
 # meta developer: @mofkomodules
 # name: Foundation
 # description: best NSFW random module
@@ -400,28 +400,49 @@ class Foundation(loader.Module):
             await utils.answer(message, self.strings["error"])
 
     @loader.command(
-        en_doc="Send NSFW media from Foundation",
         ru_doc="Отправить NSFW медиа с Фонда",
+        de_doc="NSFW-Medien von Foundation senden",
+        zh_doc="从 Foundation 发送 NSFW 媒体",
+        ja_doc="FoundationからNSFWメディアを送信",
+        be_doc="Адправіць NSFW медыя з Foundation",
+        fr_doc="Envoyer un média NSFW depuis Foundation",
+        ua_doc="Надіслати NSFW медіа з Foundation",
+        kk_doc="Foundation-нан NSFW медиа жіберу"
     )
     async def fond(self, message: Message):
+        """Send NSFW media from Foundation"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, "any", delete_command=True)
 
     @loader.command(
-        en_doc="Send NSFW video from Foundation",
         ru_doc="Отправить NSFW видео с Фонда",
+        de_doc="NSFW-Video von Foundation senden",
+        zh_doc="从 Foundation 发送 NSFW 视频",
+        ja_doc="FoundationからNSFWビデオを送信",
+        be_doc="Адправіць NSFW відэа з Foundation",
+        fr_doc="Envoyer une vidéo NSFW depuis Foundation",
+        ua_doc="Надіслати NSFW відео з Foundation",
+        kk_doc="Foundation-нан NSFW видео жіберу"
     )
     async def vfond(self, message: Message):
+        """Send NSFW video from Foundation"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, "video", delete_command=True)
 
     @loader.command(
-        en_doc="Configure triggers for fond/vfond commands",
         ru_doc="Настроить триггеры для команд fond/vfond",
+        de_doc="Auslöser für fond/vfond-Befehle konfigurieren",
+        zh_doc="配置 fond/vfond 命令的触发器",
+        ja_doc="fond/vfondコマンドのトリガーを設定",
+        be_doc="Наладзіць трыгеры для каманд fond/vfond",
+        fr_doc="Configurer les déclencheurs pour les commandes fond/vfond",
+        ua_doc="Налаштувати тригери для команд fond/vfond",
+        kk_doc="fond/vfond командалары үшін триггерлерді конфигурациялау"
     )
     async def ftriggers(self, message: Message):
+        """Configure triggers for fond/vfond commands"""
         chat_id = utils.get_chat_id(message)
         chat = await message.get_chat()
         chat_title = getattr(chat, "title", "Private Chat")
