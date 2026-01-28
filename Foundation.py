@@ -1,4 +1,4 @@
-__version__ = (2, 2, 8)
+__version__ = (2, 2, 0)
 # meta developer: @mofkomodules
 # name: Foundation
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
