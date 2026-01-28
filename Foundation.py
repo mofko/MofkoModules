@@ -1,6 +1,8 @@
 __version__ = (2, 2, 8)
 # meta developer: @mofkomodules
 # name: Foundation
+# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
+# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
 # description: best NSFW random module
 # meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно
 
