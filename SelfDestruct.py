@@ -1,8 +1,10 @@
 # meta developer: @mofkomodules
 # meta name: SelfDestruct
 # meta desc: Периодически удаляет соо в выбранной чате
+# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_232806_896.jpg
+# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_232806_896.jpg
 # meta fhsdesk: cleaner, deleter, auto, tool, privacy, mofko
-__version__ = (1, 0, 0)
+__version__ = (1, 1, 1)
 
 import asyncio
 import time
@@ -85,35 +87,43 @@ class SelfDestructMod(loader.Module):
         self.chats[str(chat_id)] = settings
         self.db.set(__name__, "chats", self.chats)
 
-    @loader.loop(interval=1, autostart=True)
+    @loader.loop(interval=60, autostart=True) # <<< ИСПРАВЛЕНО: Интервал 60 секунд, а не 1
     async def _deleter_loop(self):
+        now = time.time()
         for chat_id_str, settings in self.chats.copy().items():
             if not settings.get("enabled"):
                 continue
 
             chat_id = int(chat_id_str)
-            current_time = time.time()
             interval_seconds = settings.get("interval", 60) * 60
             last_run = settings.get("last_run", 0)
 
-            if current_time - last_run < interval_seconds:
+            if now - last_run < interval_seconds:
                 continue
 
+            logger.debug(f"Running SelfDestruct for chat {chat_id}")
+            
             try:
-                ids_to_delete = []
-                async for msg in self.client.iter_messages(chat_id, from_user="me"):
-                    is_media = msg.media and not msg.web_preview
+                # <<< ИСПРАВЛЕНО: Логика удаления в цикле, чтобы удалить все, а не 100
+                while True:
+                    ids_to_delete = []
+                    async for msg in self.client.iter_messages(chat_id, from_user="me"):
+                        is_media = msg.media and not msg.web_preview
+                        
+                        if settings.get("type") == "media" and not is_media:
+                            continue
+                        
+                        ids_to_delete.append(msg.id)
+                        if len(ids_to_delete) >= 100:
+                            break
                     
-                    if settings.get("type") == "media" and not is_media:
-                        continue
+                    if ids_to_delete:
+                        await self.client.delete_messages(chat_id, ids_to_delete)
+                        await asyncio.sleep(1) # Небольшая задержка между пачками
                     
-                    ids_to_delete.append(msg.id)
-                    if len(ids_to_delete) >= 100:
-                        break
+                    if len(ids_to_delete) < 100:
+                        break # Сообщений меньше 100, значит, все удалили
 
-                if ids_to_delete:
-                    await self.client.delete_messages(chat_id, ids_to_delete)
-                
                 settings["last_run"] = time.time()
                 self._save_settings(chat_id, settings)
 
@@ -123,8 +133,6 @@ class SelfDestructMod(loader.Module):
                 self.db.set(__name__, "chats", self.chats)
             except Exception as e:
                 logger.error(self.strings["loop_error"].format(chat_id, e))
-            
-            await asyncio.sleep(1)
 
     @loader.command(
         ru_doc="Настроить авто-удаление своих сообщений в этом чате.",
@@ -134,7 +142,7 @@ class SelfDestructMod(loader.Module):
         """Configure self-destruct for this chat."""
         await self._show_main_menu(message)
 
-    async def _show_main_menu(self, target: [Message, InlineCall], chat_id: int = None):
+    async def _show_main_menu(self, target: [Message, InlineCall], chat_id: int = None, request_interval: bool = False):
         if chat_id is None:
             chat_id = utils.get_chat_id(target)
 
@@ -151,13 +159,28 @@ class SelfDestructMod(loader.Module):
             text += self.strings["type_status"].format(settings["type"])
             text += self.strings["interval_status"].format(settings["interval"])
         
+        interval_button = {
+            "text": self.strings["btn_set_interval"],
+            "callback": self._show_main_menu,
+            "args": (chat_id, True), # <<< ИСПРАВЛЕНО: Просто перерисовываем меню с запросом ввода
+        }
+
+        if request_interval:
+            interval_button = {
+                "text": self.strings["btn_set_interval"],
+                "input": self.strings["interval_input"],
+                "handler": self._save_interval,
+                "args": (chat_id,),
+            }
+
         markup = [
             [
                 {"text": self.strings["btn_toggle"], "callback": self._toggle_enabled, "args": (chat_id,)},
                 {"text": self.strings["btn_set_type"], "callback": self._set_type_menu, "args": (chat_id,)},
             ],
-            [{"text": self.strings["btn_set_interval"], "callback": self._set_interval, "args": (chat_id,)}],
-            [{"text": self.strings["btn_close"], "action": "close"}],
+            [interval_button],
+            [{"text": self.strings["btn_back"] if request_interval else self.strings["btn_close"], 
+              "callback": self._show_main_menu, "args": (chat_id, False)} if request_interval else {"action": "close"}],
         ]
 
         if isinstance(target, Message):
@@ -190,43 +213,15 @@ class SelfDestructMod(loader.Module):
         await call.answer(self.strings["type_saved"])
         await self._show_main_menu(call, chat_id)
 
-    async def _set_interval(self, call: InlineCall, chat_id: int):
-        chat = await self.client.get_entity(chat_id)
-        chat_title = getattr(chat, "title", f"ID {chat_id}")
-        settings = self._get_settings(chat_id)
-        text = self.strings["config_title"].format(utils.escape_html(chat_title))
-        
-        text += self.strings["enabled_status"] if settings["enabled"] else self.strings["disabled_status"]
-        text += self.strings["type_status"].format(settings["type"])
-        text += self.strings["interval_status"].format(settings["interval"])
-        
-        markup = [
-            [
-                {"text": self.strings["btn_toggle"], "callback": self._toggle_enabled, "args": (chat_id,)},
-                {"text": self.strings["btn_set_type"], "callback": self._set_type_menu, "args": (chat_id,)},
-            ],
-            [{"text": "⏱ Задать интервал", "input": self.strings["interval_input"], "handler": self._save_interval, "args": (chat_id,)}],
-            [{"text": self.strings["btn_close"], "action": "close"}],
-        ]
-        
-        await call.edit(text, reply_markup=markup)
-
     async def _save_interval(self, call: InlineCall, query: str, chat_id: int):
         if not query.isdigit() or int(query) <= 0:
-            try:
-                await call.answer(self.strings["invalid_interval"], show_alert=True)
-            except Exception:
-                pass
+            await call.answer(self.strings["invalid_interval"], show_alert=True)
             return
 
         settings = self._get_settings(chat_id)
         settings["interval"] = int(query)
-        settings["last_run"] = time.time()
+        settings["last_run"] = time.time() # Reset timer on interval change
         self._save_settings(chat_id, settings)
         
-        try:
-            await call.answer(self.strings["interval_saved"])
-        except Exception:
-            pass
-            
+        await call.answer(self.strings["interval_saved"])
         await self._show_main_menu(call, chat_id)
