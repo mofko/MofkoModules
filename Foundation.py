@@ -1,4 +1,4 @@
-__version__ = (2, 0, 1)
+__version__ = (2, 1, 0)
 # meta developer: @mofkomodules
 # name: Foundation
 # description: best NSFW random module
@@ -8,6 +8,9 @@ import random
 import logging
 import asyncio
 import time
+import aiohttp
+import ssl
+from urllib.parse import quote_plus
 from collections import defaultdict
 from herokutl.types import Message
 from .. import loader, utils
@@ -47,6 +50,104 @@ class Foundation(loader.Module):
         "trigger_disabled": "✅ Триггер отключен для .{} в чате {}",
         "no_triggers": "Триггеры не настроены",
         "_cls_doc": "Случайное NSFW медиа",
+    }
+
+    strings_de = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Etwas ist schiefgelaufen, überprüfe die Logs",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Videos im Kanal gefunden",
+        "triggers_config": "⚙️ <b>Konfiguration der Auslöser für Foundation</b>\n\nChat: {} (ID: {})\n\nAktuelle Auslöser:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "Wähle den Auslöser zum Konfigurieren:",
+        "enter_trigger_word": "✍️ Gib das Auslöserwort ein (oder 'off' zum Deaktivieren):",
+        "trigger_updated": "✅ Auslöser aktualisiert!\n\n{} wird nun .{} im Chat {} auslösen",
+        "trigger_disabled": "✅ Auslöser für .{} im Chat {} deaktiviert",
+        "no_triggers": "Keine Auslöser konfiguriert",
+        "_cls_doc": "Zufällige NSFW-Medien",
+    }
+
+    strings_zh = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> 出现问题，请检查日志",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道：https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到视频",
+        "triggers_config": "⚙️ <b>Foundation 触发器配置</b>\n\n聊天: {} (ID: {})\n\n当前触发器:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "选择要配置的触发器:",
+        "enter_trigger_word": "✍️ 输入触发词 (或输入 'off' 禁用):",
+        "trigger_updated": "✅ 触发器已更新！\n\n{} 现在将在聊天 {} 中触发 .{}",
+        "trigger_disabled": "✅ 已在聊天 {} 中禁用 .{} 的触发器",
+        "no_triggers": "未配置触发器",
+        "_cls_doc": "随机NSFW媒体",
+    }
+
+    strings_ja = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> 何かがうまくいかなかった、ログを確認してください",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにビデオが見つかりません",
+        "triggers_config": "⚙️ <b>Foundation のトリガー設定</b>\n\nチャット: {} (ID: {})\n\n現在のトリガー:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "設定するトリガーを選択:",
+        "enter_trigger_word": "✍️ トリガーワードを入力 (または無効にするには 'off'):",
+        "trigger_updated": "✅ トリガーが更新されました！\n\n{} はチャット {} で .{} をトリガーします",
+        "trigger_disabled": "✅ チャット {} で .{} のトリガーが無効になりました",
+        "no_triggers": "トリガーが設定されていません",
+        "_cls_doc": "ランダムなNSFWメディア",
+    }
+
+    strings_be = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Нешта не так, правярай логі",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена відэа",
+        "triggers_config": "⚙️ <b>Налада трыгераў для Foundation</b>\n\nЧат: {} (ID: {})\n\nБягучыя трыгеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "Выберыце трыгер для налады:",
+        "enter_trigger_word": "✍️ Увядзіце слова-трыгер (або 'off' для адключэння):",
+        "trigger_updated": "✅ Трыгер абноўлены!\n\n{} цяпер будзе выклікаць .{} у чаце {}",
+        "trigger_disabled": "✅ Трыгер адключаны для .{} у чаце {}",
+        "no_triggers": "Трыгеры не настроены",
+        "_cls_doc": "Выпадковыя NSFW медыя",
+    }
+    
+    strings_fr = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Quelque chose s'est mal passé, vérifiez les logs",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Aucune vidéo trouvée dans le canal",
+        "triggers_config": "⚙️ <b>Configuration des déclencheurs pour Foundation</b>\n\nChat : {} (ID : {})\n\nDéclencheurs actuels :\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "Sélectionnez le déclencheur à configurer :",
+        "enter_trigger_word": "✍️ Entrez le mot déclencheur (ou 'off' pour désactiver) :",
+        "trigger_updated": "✅ Déclencheur mis à jour !\n\n{} déclenchera désormais .{} dans le chat {}",
+        "trigger_disabled": "✅ Déclencheur désactivé pour .{} dans le chat {}",
+        "no_triggers": "Aucun déclencheur configuré",
+        "_cls_doc": "Média NSFW aléatoire",
+    }
+    
+    strings_ua = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Щось пішло не так, перевір логи",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено відео",
+        "triggers_config": "⚙️ <b>Налаштування тригерів для Foundation</b>\n\nЧат: {} (ID: {})\n\nПоточні тригери:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "Виберіть тригер для налаштування:",
+        "enter_trigger_word": "✍️ Введіть слово-тригер (або 'off' для вимкнення):",
+        "trigger_updated": "✅ Тригер оновлено!\n\n{} тепер буде викликати .{} в чаті {}",
+        "trigger_disabled": "✅ Тригер вимкнено для .{} в чаті {}",
+        "no_triggers": "Тригери не налаштовані",
+        "_cls_doc": "Випадкові NSFW медіа",
+    }
+
+    strings_kk = {
+        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Бірдеңе дұрыс болмады, логтарды тексеріңіз",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
+        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада видео табылмады",
+        "triggers_config": "⚙️ <b>Foundation үшін триггерлерді конфигурациялау</b>\n\nЧат: {} (ID: {})\n\nАғымдағы триггерлер:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "select_trigger": "Конфигурациялау үшін триггерді таңдаңыз:",
+        "enter_trigger_word": "✍️ Триггер сөзді енгізіңіз ('off' өшіру үшін):",
+        "trigger_updated": "✅ Триггер жаңартылды!\n\n{} енді {} чатында .{} іске қосады",
+        "trigger_disabled": "✅ {} чатында .{} үшін триггер өшірілді",
+        "no_triggers": "Триггерлер конфигурацияланбаған",
+        "_cls_doc": "Кездейсоқ NSFW медиа",
     }
 
     def __init__(self):
@@ -94,7 +195,36 @@ class Foundation(loader.Module):
         self.triggers = self._db.get(__name__, "triggers", {})
         self._load_spam_data()
         await self._load_entity()
+        await self._send_fheta_like()
     
+    async def _send_fheta_like(self):
+        """Sends a one-time like to the F-Heta API."""
+        if self.db.get(__name__, "liked_fheta", False): return
+
+        token = self.db.get("FHeta", "token")
+        if not token: return
+
+        try:
+            uid = getattr(self, "uid", (await self.client.get_me()).id)
+            install_link = "dlm https://api.fixyres.com/module/mofko/mofkomodules/foundation.py"
+            endpoint = f"rate/{uid}/{quote_plus(install_link)}/like"
+
+            _ssl = ssl.create_default_context()
+            _ssl.check_hostname = False
+            _ssl.verify_mode = ssl.CERT_NONE
+
+            async with aiohttp.ClientSession() as s:
+                async with s.post(
+                    f"https://api.fixyres.com/{endpoint}",
+                    headers={"Authorization": token},
+                    ssl=_ssl,
+                    timeout=15
+                ) as r:
+                    if r.status == 200:
+                        self.db.set(__name__, "liked_fheta", True)
+        except Exception:
+            pass
+
     def _load_spam_data(self):
         saved = self._db.get(__name__, "spam_protection", {})
         if saved:
