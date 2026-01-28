@@ -2,7 +2,7 @@ __version__ = (2, 0, 1)
 # meta developer: @mofkomodules
 # name: Foundation
 # description: best NSFW random module
-# meta fhsdesc: hentai, 18+, random, хентай, porn, fun
+# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно
 
 import random
 import logging
@@ -139,7 +139,7 @@ class Foundation(loader.Module):
         if not await self._load_entity():
             return None
         try:
-            messages = await self.client.get_messages(self.entity, limit=2500)
+            messages = await self.client.get_messages(self.entity, limit=1500)
         except FloodWaitError as e:
             logger.warning(f"FloodWait for {e.seconds} seconds")
             await asyncio.sleep(e.seconds)
