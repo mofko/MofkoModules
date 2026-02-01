@@ -1,4 +1,5 @@
-__version__ = (2, 2, 0)
+__version__ = (2, 2, 1)
+# diff: new link
 # meta developer: @mofkomodules
 # name: Foundation
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
@@ -22,7 +23,7 @@ from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
-FOUNDATION_LINK = "https://t.me/+ZfmKdDrEMCA1NWEy"
+FOUNDATION_LINK = "https://t.me/+iYqyf6VveFxmMmJi"
 
 @loader.tds
 class Foundation(loader.Module):
