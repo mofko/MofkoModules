@@ -30,7 +30,7 @@ class Foundation(loader.Module):
     strings = {
         "name": "Foundation",
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Something went wrong, check logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> You need to join the channel first: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> You need to join the channel first: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> No videos found in channel",
         "triggers_config": "⚙️ <b>Configuration of triggers for Foundation</b>\n\nChat: {} (ID: {})\n\nCurrent triggers:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -43,7 +43,7 @@ class Foundation(loader.Module):
 
     strings_ru = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Чот не то, чекай логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено видео",
         "triggers_config": "⚙️ <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -57,7 +57,7 @@ class Foundation(loader.Module):
 
     strings_de = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Etwas ist schiefgelaufen, überprüfe die Logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Videos im Kanal gefunden",
         "triggers_config": "⚙️ <b>Konfiguration der Auslöser für Foundation</b>\n\nChat: {} (ID: {})\n\nAktuelle Auslöser:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -71,7 +71,7 @@ class Foundation(loader.Module):
 
     strings_zh = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> 出现问题，请检查日志",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道：https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道 https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到视频",
         "triggers_config": "⚙️ <b>Foundation 触发器配置</b>\n\n聊天: {} (ID: {})\n\n当前触发器:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -85,7 +85,7 @@ class Foundation(loader.Module):
 
     strings_ja = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> 何かがうまくいかなかった、ログを確認してください",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにビデオが見つかりません",
         "triggers_config": "⚙️ <b>Foundation のトリガー設定</b>\n\nチャット: {} (ID: {})\n\n現在のトリガー:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -99,7 +99,7 @@ class Foundation(loader.Module):
 
     strings_be = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Нешта не так, правярай логі",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена відэа",
         "triggers_config": "⚙️ <b>Налада трыгераў для Foundation</b>\n\nЧат: {} (ID: {})\n\nБягучыя трыгеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -113,7 +113,7 @@ class Foundation(loader.Module):
     
     strings_fr = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Quelque chose s'est mal passé, vérifiez les logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Aucune vidéo trouvée dans le canal",
         "triggers_config": "⚙️ <b>Configuration des déclencheurs pour Foundation</b>\n\nChat : {} (ID : {})\n\nDéclencheurs actuels :\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -127,7 +127,7 @@ class Foundation(loader.Module):
     
     strings_ua = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Щось пішло не так, перевір логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено відео",
         "triggers_config": "⚙️ <b>Налаштування тригерів для Foundation</b>\n\nЧат: {} (ID: {})\n\nПоточні тригери:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -141,7 +141,7 @@ class Foundation(loader.Module):
 
     strings_kk = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Бірдеңе дұрыс болмады, логтарды тексеріңіз",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: https://t.me/+ZfmKdDrEMCA1NWEy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: https://t.me/+iYqyf6VveFxmMmJi",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада видео табылмады",
         "triggers_config": "⚙️ <b>Foundation үшін триггерлерді конфигурациялау</b>\n\nЧат: {} (ID: {})\n\nАғымдағы триггерлер:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
