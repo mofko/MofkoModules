@@ -1,5 +1,5 @@
-__version__ = (2, 2, 2)
-# diff: new link AGAIN
+__version__ = (2, 2, 3)
+# diff: + Auto Delete in cfg
 # meta developer: @mofkomodules
 # name: Foundation
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
@@ -189,6 +189,18 @@ class Foundation(loader.Module):
                 True,
                 lambda: "Enable spam protection for triggers",
                 validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "auto_delete_media",
+                False,
+                lambda: "Автоматически удалять отправленное медиа через заданное время.",
+                validator=loader.validators.Boolean()
+            ),
+            loader.ConfigValue(
+                "auto_delete_delay",
+                30,
+                lambda: "Задержка в секундах перед автоудалением отправленного медиа (0 для отключения).",
+                validator=loader.validators.Integer(minimum=0)
             )
         )
 
@@ -372,6 +384,14 @@ class Foundation(loader.Module):
         
         return False
 
+    async def _schedule_delete(self, message_to_delete: Message, delay: int):
+        """Schedules a message for deletion after a specified delay."""
+        await asyncio.sleep(delay)
+        try:
+            await message_to_delete.delete()
+        except Exception as e:
+            logger.warning(f"Failed to auto-delete message {message_to_delete.id} in chat {message_to_delete.chat_id}: {e}")
+
     async def _send_media(self, message: Message, media_type: str = "any", delete_command: bool = False):
         try:
             if not await self._load_entity():
@@ -387,11 +407,16 @@ class Foundation(loader.Module):
                     await utils.answer(message, self.strings["no_videos"])
                 return
             random_message = random.choice(media_list)
-            await self.client.send_message(
+            
+            sent_message = await self.client.send_message(
                 message.peer_id,
                 message=random_message,
                 reply_to=getattr(message, "reply_to_msg_id", None)
             )
+            
+            if self.config["auto_delete_media"] and self.config["auto_delete_delay"] > 0:
+                asyncio.create_task(self._schedule_delete(sent_message, self.config["auto_delete_delay"]))
+
             if delete_command:
                 await asyncio.sleep(0.1)
                 try:
@@ -485,7 +510,8 @@ class Foundation(loader.Module):
         )
 
     async def _configure_trigger(self, call: InlineCall, chat_id: int, command: str):
-        await call.edit(
+        await utils.answer(
+            call,
             self.strings("select_trigger"),
             reply_markup=[
                 [
@@ -544,7 +570,8 @@ class Foundation(loader.Module):
         chat_triggers = self.triggers.get(str(chat_id), {})
         fond_trigger = chat_triggers.get("fond", self.strings("no_triggers"))
         vfond_trigger = chat_triggers.get("vfond", self.strings("no_triggers"))
-        await call.edit(
+        await utils.answer(
+            call,
             self.strings("triggers_config").format(
                 chat_title,
                 chat_id,
