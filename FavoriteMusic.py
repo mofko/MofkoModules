@@ -1,7 +1,7 @@
-__version__ = (6, 6, 6)
+__version__ = (2, 2, 8)
 # meta developer: @mofkomodules
 # name: FavoriteMusic
-# meta fhsdesc: music, random, favorite, mofko, музыка, рандом, хуйня, funny
+# meta fhsdesc: music, random, favorite, chill, mofko, музыка, хуйня, funny
 
 import random
 import logging
@@ -22,19 +22,19 @@ FAVORITE_MUSIC_CHANNEL_LINK = "https://t.me/+l9ewEixIglUzODMy"
 
 @loader.tds
 class FavoriteMusicMod(loader.Module):
-    """Рандомная прекрасная музыка из сEкрЕтнOго кAнала"""
+    """Рандомная прекрасная музыка из секретного канала"""
 
     strings = {
         "name": "FavoriteMusic",
         "error": "<emoji document_id=5121063440311386962>👎</emoji> Что-то пошло не так, проверьте логи.",
-        "not_joined": "<emoji document_id=5407001145740631266>🤐</emoji> Нужно вступить в секретный канал с музыкой: {channel_link}",
+        "not_joined": "<emoji document_id=5407001145740631266>🤐</emoji> Нужно вступить в канал с любимой музыкой: {channel_link}",
         "no_audio": "<emoji document_id=5407001145740631266>🤐</emoji> В канале не найдено аудиозаписей.",
     }
 
     strings_ru = {
-        "_cls_doc": "Рандомная прекрасная музыка из сЕкретнОго кАнала",
+        "_cls_doc": "Рандомная прекрасная музыка из секретного канала",
         "error": "<emoji document_id=5121063440311386962>👎</emoji> Чот не то, чекай логи.",
-        "not_joined": "<emoji document_id=5407001145740631266>🤐</emoji> Нужно вступить в секретный канал с музыкой: {channel_link}",
+        "not_joined": "<emoji document_id=5407001145740631266>🤐</emoji> Нужно вступить в канал с любимой музыкой: {channel_link}",
         "no_audio": "<emoji document_id=5407001145740631266>🤐</emoji> В канале не найдено аудиозаписей.",
     }
 
@@ -46,8 +46,7 @@ class FavoriteMusicMod(loader.Module):
         self.entity_check_interval = 300
         self.cache_ttl = 1200
         
-        self.config = loader.ModuleConfig(
-        )
+        self.config = loader.ModuleConfig()
 
     async def client_ready(self, client, db):
         self.client = client
