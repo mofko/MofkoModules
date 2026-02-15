@@ -32,7 +32,7 @@ class FavoriteMusicMod(loader.Module):
     }
 
     strings_ru = {
-        "_cls_doc": "Рандомная прекрасная музыка из закрытого канала",
+        "_cls_doc": "Рандомная прекрасная музыка из сЕкретнОго кАнала",
         "error": "<emoji document_id=5121063440311386962>👎</emoji> Чот не то, чекай логи.",
         "not_joined": "<emoji document_id=5407001145740631266>🤐</emoji> Нужно вступить в секретный канал с музыкой: {channel_link}",
         "no_audio": "<emoji document_id=5407001145740631266>🤐</emoji> В канале не найдено аудиозаписей.",
