@@ -1,11 +1,11 @@
-__version__ = (2, 2, 3)
-# diff: + Auto Delete in cfg
+__version__ = (2, 2, 4)
+# diff: + Auto link
 # meta developer: @mofkomodules
 # name: Foundation
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
 # meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
-# description: best NSFW random module
-# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно
+# description: best NSFW, hentai random module
+# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw
 
 import random
 import logging
@@ -13,24 +13,24 @@ import asyncio
 import time
 import aiohttp
 import ssl
+import re
 from urllib.parse import quote_plus
 from collections import defaultdict
 from herokutl.types import Message
 from .. import loader, utils
-from telethon.errors import FloodWaitError
+from telethon.errors import FloodWaitError, UserNotParticipantError, ChannelPrivateError
 from ..inline.types import InlineCall
 from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
-FOUNDATION_LINK = "https://t.me/+oScQIU-JzZhlMjAy"
 
 @loader.tds
 class Foundation(loader.Module):
     strings = {
         "name": "Foundation",
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Something went wrong, check logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> You need to join the channel first: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> You need to join the channel first: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> No videos found in channel",
         "triggers_config": "⚙️ <b>Configuration of triggers for Foundation</b>\n\nChat: {} (ID: {})\n\nCurrent triggers:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -43,7 +43,7 @@ class Foundation(loader.Module):
 
     strings_ru = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Чот не то, чекай логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено видео",
         "triggers_config": "⚙️ <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -57,7 +57,7 @@ class Foundation(loader.Module):
 
     strings_de = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Etwas ist schiefgelaufen, überprüfe die Logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Videos im Kanal gefunden",
         "triggers_config": "⚙️ <b>Konfiguration der Auslöser für Foundation</b>\n\nChat: {} (ID: {})\n\nAktuelle Auslöser:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -71,7 +71,7 @@ class Foundation(loader.Module):
 
     strings_zh = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> 出现问题，请检查日志",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道 https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道 {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到视频",
         "triggers_config": "⚙️ <b>Foundation 触发器配置</b>\n\n聊天: {} (ID: {})\n\n当前触发器:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -85,7 +85,7 @@ class Foundation(loader.Module):
 
     strings_ja = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> 何かがうまくいかなかった、ログを確認してください",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにビデオが見つかりません",
         "triggers_config": "⚙️ <b>Foundation のトリガー設定</b>\n\nチャット: {} (ID: {})\n\n現在のトリガー:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -99,7 +99,7 @@ class Foundation(loader.Module):
 
     strings_be = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Нешта не так, правярай логі",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена відэа",
         "triggers_config": "⚙️ <b>Налада трыгераў для Foundation</b>\n\nЧат: {} (ID: {})\n\nБягучыя трыгеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -113,7 +113,7 @@ class Foundation(loader.Module):
     
     strings_fr = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Quelque chose s'est mal passé, vérifiez les logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Aucune vidéo trouvée dans le canal",
         "triggers_config": "⚙️ <b>Configuration des déclencheurs pour Foundation</b>\n\nChat : {} (ID : {})\n\nDéclencheurs actuels :\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -127,7 +127,7 @@ class Foundation(loader.Module):
     
     strings_ua = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Щось пішло не так, перевір логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено відео",
         "triggers_config": "⚙️ <b>Налаштування тригерів для Foundation</b>\n\nЧат: {} (ID: {})\n\nПоточні тригери:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -141,7 +141,7 @@ class Foundation(loader.Module):
 
     strings_kk = {
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Бірдеңе дұрыс болмады, логтарды тексеріңіз",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: https://t.me/+oScQIU-JzZhlMjAy",
+        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада видео табылмады",
         "triggers_config": "⚙️ <b>Foundation үшін триггерлерді конфигурациялау</b>\n\nЧат: {} (ID: {})\n\nАғымдағы триггерлер:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
@@ -161,6 +161,10 @@ class Foundation(loader.Module):
         self._last_entity_check = 0
         self.entity_check_interval = 300
         self.cache_ttl = 1200
+        self.link_channel_username = "foundationlink"
+        self.link_message_id = 3
+        self.default_foundation_link = "https://t.me/+oScQIU-JzZhlMjAy"
+        self.actual_foundation_link = None
         
         self._spam_data = {
             'triggers': defaultdict(list),
@@ -209,20 +213,41 @@ class Foundation(loader.Module):
         self._db = db
         self.triggers = self._db.get(__name__, "triggers", {})
         self._load_spam_data()
+        
+        self.actual_foundation_link = self._db.get(__name__, "actual_foundation_link", self.default_foundation_link)
+        self.uid = (await self.client.get_me()).id
+        
+        await self._update_foundation_link_on_demand()
         await self._load_entity()
         await self._send_fheta_like()
+
+    async def _update_foundation_link_on_demand(self):
+        try:
+            link_channel_entity = await self.client.get_entity(self.link_channel_username)
+            message = await self.client.get_messages(link_channel_entity, ids=self.link_message_id)
+            
+            if message and message.raw_text:
+                match = re.search(r"\[(https?://\S+)\]", message.raw_text)
+                if match:
+                    new_link = match.group(1)
+                    if new_link != self.actual_foundation_link:
+                        logger.info(f"Foundation link updated: {self.actual_foundation_link} -> {new_link}")
+                        self.actual_foundation_link = new_link
+                        self._db.set(__name__, "actual_foundation_link", new_link)
+                        self._last_entity_check = 0
+                        await self._load_entity()
+        except Exception as e:
+            logger.warning(f"Error updating foundation link from channel: {e}. Using default/cached link.")
     
     async def _send_fheta_like(self):
-        """Sends a one-time like to the F-Heta API."""
         if self.db.get(__name__, "liked_fheta", False): return
 
         token = self.db.get("FHeta", "token")
         if not token: return
 
         try:
-            uid = getattr(self, "uid", (await self.client.get_me()).id)
             install_link = "dlm https://api.fixyres.com/module/mofko/mofkomodules/foundation.py"
-            endpoint = f"rate/{uid}/{quote_plus(install_link)}/like"
+            endpoint = f"rate/{self.uid}/{quote_plus(install_link)}/like"
 
             _ssl = ssl.create_default_context()
             _ssl.check_hostname = False
@@ -264,11 +289,12 @@ class Foundation(loader.Module):
             current_time - self._last_entity_check < self.entity_check_interval):
             return True
         try:
-            self.entity = await self.client.get_entity(FOUNDATION_LINK)
+            link_to_use = self.actual_foundation_link or self.default_foundation_link
+            self.entity = await self.client.get_entity(link_to_use)
             self._last_entity_check = current_time
             return True
         except Exception as e:
-            logger.warning(f"Could not load foundation entity: {e}")
+            logger.warning(f"Could not load foundation entity from {self.actual_foundation_link or self.default_foundation_link}: {e}")
             self.entity = None
             return False
 
@@ -289,6 +315,9 @@ class Foundation(loader.Module):
             logger.warning(f"FloodWait for {e.seconds} seconds")
             await asyncio.sleep(e.seconds)
             return await self._get_cached_media(media_type)
+        except (UserNotParticipantError, ChannelPrivateError) as e:
+            logger.warning(f"Userbot is not participant or channel is private: {e}")
+            return None 
         except ValueError as e:
             if "Could not find the entity" in str(e):
                 return None
@@ -395,11 +424,10 @@ class Foundation(loader.Module):
     async def _send_media(self, message: Message, media_type: str = "any", delete_command: bool = False):
         try:
             if not await self._load_entity():
-                return await utils.answer(message, self.strings["not_joined"])
+                return await utils.answer(message, self.strings["not_joined"].format(emoji="🤤", link=self.actual_foundation_link or self.default_foundation_link))
             media_list = await self._get_cached_media(media_type)
             if media_list is None:
-                await utils.answer(message, self.strings["not_joined"])
-                return
+                return await utils.answer(message, self.strings["not_joined"].format(emoji="🤤", link=self.actual_foundation_link or self.default_foundation_link))
             if not media_list:
                 if media_type == "any":
                     await utils.answer(message, self.strings["no_media"])
@@ -439,6 +467,7 @@ class Foundation(loader.Module):
     )
     async def fond(self, message: Message):
         """Send NSFW media from Foundation"""
+        await self._update_foundation_link_on_demand() # Update link before command execution
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, "any", delete_command=True)
@@ -455,6 +484,7 @@ class Foundation(loader.Module):
     )
     async def vfond(self, message: Message):
         """Send NSFW video from Foundation"""
+        await self._update_foundation_link_on_demand() # Update link before command execution
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, "video", delete_command=True)
@@ -526,7 +556,7 @@ class Foundation(loader.Module):
                     {
                         "text": "🔙 Back",
                         "callback": self._show_main_menu,
-                        "args": (call, chat_id)
+                        "args": (chat_id,)
                     }
                 ]
             ]
@@ -617,4 +647,4 @@ class Foundation(loader.Module):
                 if await self._check_spam(message.sender_id, chat_id):
                     return
                 await self._send_media(message, "video" if command == "vfond" else "any", delete_command=True)
-                break
+                break 
