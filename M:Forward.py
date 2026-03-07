@@ -1,11 +1,11 @@
-__version__ = (1, 1, 2)
-# diff: + Поддержка топиков
+__version__ = (1, 2, 0)
+# diff: + Обход ios блокировки, запрет пересылки из 18+ каналов. 
 # meta developer: @mofkomodules
 # name: M:Forward
 # description: Модуль для пересылки сообщений (Поддерживает каналы с запретом пересылки и топики).
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260210_160819_562.jpg 
 # meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260210_160819_562.jpg
-# meta fhsdesc: forward, mofko, хуйня, link, tool, Пересылка, copy, копирование, топики
+# meta fhsdesc: forward, mofko, хуйня, link, tool, пересылка, copy, копирование, топики, обход
 
 import logging
 import io
@@ -445,8 +445,8 @@ class MForwardMod(loader.Module):
                     if batch_index + batch_size_config < len(messages_to_process_list):
                         await asyncio.sleep(batch_delay_config)
 
-            except errors.ChatForwardsRestrictedError:
-                logger.warning("Обнаружен защищенный канал, переключаюсь на метод скачивания. Ошибка: ChatForwardsRestrictedError")
+            except (errors.ChatForwardsRestrictedError, errors.rpcerrorlist.MessageIdInvalidError) as e:
+                logger.warning(f"Обнаружен защищенный канал или недопустимый ID сообщения, переключаюсь на метод скачивания. Ошибка: {type(e).__name__}")
                 for message_to_send_restricted_flow in messages_to_process_list:
                     await self._send_single_message_restricted_flow(
                         frw_target_msg=message_to_send_restricted_flow,
