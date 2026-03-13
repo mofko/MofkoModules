@@ -1,11 +1,12 @@
-__version__ = (2, 2, 4)
-# diff: + Auto link
+__version__ = (2, 2, 8)
+# diff: + fsfw command
 # meta developer: @mofkomodules
+# original author module: @HaloperidolPills
 # name: Foundation
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
 # meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
-# description: best NSFW, hentai random module
-# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw
+# description: best NSFW & SFW, hentai random module
+# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw
 
 import random
 import logging
@@ -33,12 +34,14 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> You need to join the channel first: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> No videos found in channel",
-        "triggers_config": "⚙️ <b>Configuration of triggers for Foundation</b>\n\nChat: {} (ID: {})\n\nCurrent triggers:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
+        "triggers_config": "⚙️ <b>Configuration of triggers for Foundation</b>\n\nChat: {} (ID: {})\n\nCurrent triggers:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Select trigger to configure:",
         "enter_trigger_word": "✍️ Enter trigger word (or 'off' to disable):",
         "trigger_updated": "✅ Trigger updated!\n\n{} will now trigger .{} in chat {}",
         "trigger_disabled": "✅ Trigger disabled for .{} in chat {}",
         "no_triggers": "No triggers configured",
+        "fsfw_cmd_doc": "Send random SFW media from @sfwfond",
     }
 
     strings_ru = {
@@ -46,13 +49,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено видео",
-        "triggers_config": "⚙️ <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа в канале",
+        "triggers_config": "⚙️ <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Выберите триггер для настройки:",
         "enter_trigger_word": "✍️ Введите слово-триггер (или 'off' для отключения):",
         "trigger_updated": "✅ Триггер обновлен!\n\n{} теперь будет вызывать .{} в чате {}",
         "trigger_disabled": "✅ Триггер отключен для .{} в чате {}",
         "no_triggers": "Триггеры не настроены",
         "_cls_doc": "Случайное NSFW медиа",
+        "fsfw_cmd_doc": "Отправить рандомное SFW медиа с @sfwfond",
     }
 
     strings_de = {
@@ -60,13 +65,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Videos im Kanal gefunden",
-        "triggers_config": "⚙️ <b>Konfiguration der Auslöser für Foundation</b>\n\nChat: {} (ID: {})\n\nAktuelle Auslöser:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
+        "triggers_config": "⚙️ <b>Konfiguration der Auslöser für Foundation</b>\n\nChat: {} (ID: {})\n\nAktuelle Auslöser:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Wähle den Auslöser zum Konfigurieren:",
         "enter_trigger_word": "✍️ Gib das Auslöserwort ein (oder 'off' zum Deaktivieren):",
         "trigger_updated": "✅ Auslöser aktualisiert!\n\n{} wird nun .{} im Chat {} auslösen",
         "trigger_disabled": "✅ Auslöser für .{} im Chat {} deaktiviert",
         "no_triggers": "Keine Auslöser konfiguriert",
         "_cls_doc": "Zufällige NSFW-Medien",
+        "fsfw_cmd_doc": "Zufällige SFW-Medien von @sfwfond senden",
     }
 
     strings_zh = {
@@ -74,13 +81,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道 {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到视频",
-        "triggers_config": "⚙️ <b>Foundation 触发器配置</b>\n\n聊天: {} (ID: {})\n\n当前触发器:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
+        "triggers_config": "⚙️ <b>Foundation 触发器配置</b>\n\n聊天: {} (ID: {})\n\n当前触发器:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "选择要配置的触发器:",
         "enter_trigger_word": "✍️ 输入触发词 (或输入 'off' 禁用):",
         "trigger_updated": "✅ 触发器已更新！\n\n{} 现在将在聊天 {} 中触发 .{}",
         "trigger_disabled": "✅ 已在聊天 {} 中禁用 .{} 的触发器",
         "no_triggers": "未配置触发器",
         "_cls_doc": "随机NSFW媒体",
+        "fsfw_cmd_doc": "从 @sfwfond 发送随机 SFW 媒体",
     }
 
     strings_ja = {
@@ -88,13 +97,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにビデオが見つかりません",
-        "triggers_config": "⚙️ <b>Foundation のトリガー設定</b>\n\nチャット: {} (ID: {})\n\n現在のトリガー:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
+        "triggers_config": "⚙️ <b>Foundation のトリガー設定</b>\n\nチャット: {} (ID: {})\n\n現在のトリガー:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "設定するトリガーを選択:",
         "enter_trigger_word": "✍️ トリガーワードを入力 (または無効にするには 'off'):",
         "trigger_updated": "✅ トリガーが更新されました！\n\n{} はチャット {} で .{} をトリガーします",
         "trigger_disabled": "✅ チャット {} で .{} のトリガーが無効になりました",
         "no_triggers": "トリガーが設定されていません",
         "_cls_doc": "ランダムなNSFWメディア",
+        "fsfw_cmd_doc": "@sfwfond からランダムな SFW メディアを送信",
     }
 
     strings_be = {
@@ -102,13 +113,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена відэа",
-        "triggers_config": "⚙️ <b>Налада трыгераў для Foundation</b>\n\nЧат: {} (ID: {})\n\nБягучыя трыгеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя ў канале",
+        "triggers_config": "⚙️ <b>Налада трыгераў для Foundation</b>\n\nЧат: {} (ID: {})\n\nБягучыя трыгеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Выберыце трыгер для налады:",
         "enter_trigger_word": "✍️ Увядзіце слова-трыгер (або 'off' для адключэння):",
         "trigger_updated": "✅ Трыгер абноўлены!\n\n{} цяпер будзе выклікаць .{} у чаце {}",
         "trigger_disabled": "✅ Трыгер адключаны для .{} у чаце {}",
         "no_triggers": "Трыгеры не настроены",
         "_cls_doc": "Выпадковыя NSFW медыя",
+        "fsfw_cmd_doc": "Адправіць выпадковае SFW медыя з @sfwfond",
     }
     
     strings_fr = {
@@ -116,13 +129,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Aucune vidéo trouvée dans le canal",
-        "triggers_config": "⚙️ <b>Configuration des déclencheurs pour Foundation</b>\n\nChat : {} (ID : {})\n\nDéclencheurs actuels :\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
+        "triggers_config": "⚙️ <b>Configuration des déclencheurs pour Foundation</b>\n\nChat : {} (ID : {})\n\nDéclencheurs actuels :\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Sélectionnez le déclencheur à configurer :",
         "enter_trigger_word": "✍️ Entrez le mot déclencheur (ou 'off' pour désactiver) :",
         "trigger_updated": "✅ Déclencheur mis à jour !\n\n{} déclenchera désormais .{} dans le chat {}",
         "trigger_disabled": "✅ Déclencheur désactivé pour .{} dans le chat {}",
         "no_triggers": "Aucun déclencheur configuré",
         "_cls_doc": "Média NSFW aléatoire",
+        "fsfw_cmd_doc": "Envoyer un média SFW aléatoire depuis @sfwfond",
     }
     
     strings_ua = {
@@ -130,13 +145,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено відео",
-        "triggers_config": "⚙️ <b>Налаштування тригерів для Foundation</b>\n\nЧат: {} (ID: {})\n\nПоточні тригери:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа в каналі",
+        "triggers_config": "⚙️ <b>Налаштування тригерів для Foundation</b>\n\nЧат: {} (ID: {})\n\nПоточні тригери:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Виберіть тригер для налаштування:",
         "enter_trigger_word": "✍️ Введіть слово-тригер (або 'off' для вимкнення):",
         "trigger_updated": "✅ Тригер оновлено!\n\n{} тепер буде викликати .{} в чаті {}",
         "trigger_disabled": "✅ Тригер вимкнено для .{} в чаті {}",
         "no_triggers": "Тригери не налаштовані",
         "_cls_doc": "Випадкові NSFW медіа",
+        "fsfw_cmd_doc": "Надіслати випадкове SFW медіа з @sfwfond",
     }
 
     strings_kk = {
@@ -144,13 +161,15 @@ class Foundation(loader.Module):
         "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: {link}",
         "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
         "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада видео табылмады",
-        "triggers_config": "⚙️ <b>Foundation үшін триггерлерді конфигурациялау</b>\n\nЧат: {} (ID: {})\n\nАғымдағы триггерлер:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}",
+        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
+        "triggers_config": "⚙️ <b>Foundation үшін триггерлерді конфигурациялау</b>\n\nЧат: {} (ID: {})\n\nАғымдағы триггерлер:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}",
         "select_trigger": "Конфигурациялау үшін триггерді таңдаңыз:",
         "enter_trigger_word": "✍️ Триггер сөзді енгізіңіз ('off' өшіру үшін):",
         "trigger_updated": "✅ Триггер жаңартылды!\n\n{} енді {} чатында .{} іске қосады",
         "trigger_disabled": "✅ {} чатында .{} үшін триггер өшірілді",
         "no_triggers": "Триггерлер конфигурацияланбаған",
         "_cls_doc": "Кездейсоқ NSFW медиа",
+        "fsfw_cmd_doc": "@sfwfond арнасынан кездейсоқ SFW медиа жіберу",
     }
 
     def __init__(self):
@@ -166,6 +185,13 @@ class Foundation(loader.Module):
         self.default_foundation_link = "https://t.me/+oScQIU-JzZhlMjAy"
         self.actual_foundation_link = None
         
+        self._sfw_channel_username = "sfwfond"
+        self._sfw_channel_entity = None
+        self._sfw_last_entity_check = 0
+        self._sfw_media_cache = {}
+        self._sfw_cache_time = {}
+        self._sfw_cache_ttl = 600
+
         self._spam_data = {
             'triggers': defaultdict(list),
             'blocked': {},
@@ -173,7 +199,7 @@ class Foundation(loader.Module):
             'global_block_time': 0
         }
         
-        self._block_cache = TTLCache(maxsize=1000, ttl=15)
+        self._block_cache = TTLCache(maxsize=1042, ttl=15)
         
         self.SPAM_LIMIT = 3
         self.SPAM_WINDOW = 3
@@ -219,6 +245,7 @@ class Foundation(loader.Module):
         
         await self._update_foundation_link_on_demand()
         await self._load_entity()
+        await self._load_sfw_entity()
         await self._send_fheta_like()
 
     async def _update_foundation_link_on_demand(self):
@@ -298,6 +325,20 @@ class Foundation(loader.Module):
             self.entity = None
             return False
 
+    async def _load_sfw_entity(self):
+        current_time = time.time()
+        if (self._sfw_channel_entity and 
+            current_time - self._sfw_last_entity_check < self.entity_check_interval):
+            return True
+        try:
+            self._sfw_channel_entity = await self.client.get_entity(self._sfw_channel_username)
+            self._sfw_last_entity_check = current_time
+            return True
+        except Exception as e:
+            logger.warning(f"Could not load SFW channel entity @{self._sfw_channel_username}: {e}")
+            self._sfw_channel_entity = None
+            return False
+
     async def _get_cached_media(self, media_type="any"):
         current_time = time.time()
         cache_key = media_type
@@ -337,6 +378,34 @@ class Foundation(loader.Module):
             self._video_cache["video"] = video_messages
         self._cache_time[cache_key] = current_time
         return self._media_cache.get("any") if media_type == "any" else self._video_cache.get("video")
+    
+    async def _get_sfw_cached_media(self):
+        current_time = time.time()
+        cache_key = "sfw_any"
+        if (cache_key in self._sfw_cache_time and
+            current_time - self._sfw_cache_time[cache_key] < self._sfw_cache_ttl):
+            return self._sfw_media_cache[cache_key]
+        if not await self._load_sfw_entity():
+            return None
+        try:
+            messages = await self.client.get_messages(self._sfw_channel_entity, limit=1000)
+        except FloodWaitError as e:
+            logger.warning(f"FloodWait for {e.seconds} seconds on SFW channel")
+            await asyncio.sleep(e.seconds)
+            return await self._get_sfw_cached_media()
+        except (UserNotParticipantError, ChannelPrivateError) as e:
+            logger.warning(f"Userbot is not participant or SFW channel is private: {e}")
+            return None
+        except ValueError as e:
+            if "Could not find the entity" in str(e):
+                return None
+            raise e
+        if not messages:
+            return []
+        sfw_media_messages = [msg for msg in messages if msg.media]
+        self._sfw_media_cache[cache_key] = sfw_media_messages
+        self._sfw_cache_time[cache_key] = current_time
+        return sfw_media_messages
     
     def _check_global_spam(self):
         if not self.config["spam_protection"]:
@@ -414,26 +483,36 @@ class Foundation(loader.Module):
         return False
 
     async def _schedule_delete(self, message_to_delete: Message, delay: int):
-        """Schedules a message for deletion after a specified delay."""
         await asyncio.sleep(delay)
         try:
             await message_to_delete.delete()
         except Exception as e:
             logger.warning(f"Failed to auto-delete message {message_to_delete.id} in chat {message_to_delete.chat_id}: {e}")
 
-    async def _send_media(self, message: Message, media_type: str = "any", delete_command: bool = False):
+    async def _send_media(self, message: Message, media_type: str = "any", delete_command: bool = False, is_sfw: bool = False):
         try:
-            if not await self._load_entity():
-                return await utils.answer(message, self.strings["not_joined"].format(emoji="🤤", link=self.actual_foundation_link or self.default_foundation_link))
-            media_list = await self._get_cached_media(media_type)
-            if media_list is None:
-                return await utils.answer(message, self.strings["not_joined"].format(emoji="🤤", link=self.actual_foundation_link or self.default_foundation_link))
-            if not media_list:
-                if media_type == "any":
-                    await utils.answer(message, self.strings["no_media"])
-                else:
-                    await utils.answer(message, self.strings["no_videos"])
-                return
+            if is_sfw:
+                if not await self._load_sfw_entity():
+                    return await utils.answer(message, self.strings["error"])
+                media_list = await self._get_sfw_cached_media()
+                if media_list is None:
+                    return await utils.answer(message, self.strings["error"])
+                if not media_list:
+                    await utils.answer(message, self.strings["fsfw_no_media"])
+                    return
+            else:
+                if not await self._load_entity():
+                    return await utils.answer(message, self.strings["not_joined"].format(emoji="🤤", link=self.actual_foundation_link or self.default_foundation_link))
+                media_list = await self._get_cached_media(media_type)
+                if media_list is None:
+                    return await utils.answer(message, self.strings["not_joined"].format(emoji="🤤", link=self.actual_foundation_link or self.default_foundation_link))
+                if not media_list:
+                    if media_type == "any":
+                        await utils.answer(message, self.strings["no_media"])
+                    else:
+                        await utils.answer(message, self.strings["no_videos"])
+                    return
+            
             random_message = random.choice(media_list)
             
             sent_message = await self.client.send_message(
@@ -467,7 +546,7 @@ class Foundation(loader.Module):
     )
     async def fond(self, message: Message):
         """Send NSFW media from Foundation"""
-        await self._update_foundation_link_on_demand() # Update link before command execution
+        await self._update_foundation_link_on_demand()
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, "any", delete_command=True)
@@ -484,36 +563,54 @@ class Foundation(loader.Module):
     )
     async def vfond(self, message: Message):
         """Send NSFW video from Foundation"""
-        await self._update_foundation_link_on_demand() # Update link before command execution
+        await self._update_foundation_link_on_demand()
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, "video", delete_command=True)
 
     @loader.command(
-        ru_doc="Настроить триггеры для команд fond/vfond",
-        de_doc="Auslöser für fond/vfond-Befehle konfigurieren",
-        zh_doc="配置 fond/vfond 命令的触发器",
-        ja_doc="fond/vfondコマンドのトリガーを設定",
-        be_doc="Наладзіць трыгеры для каманд fond/vfond",
-        fr_doc="Configurer les déclencheurs pour les commandes fond/vfond",
-        ua_doc="Налаштувати тригери для команд fond/vfond",
-        kk_doc="fond/vfond командалары үшін триггерлерді конфигурациялау"
+        ru_doc="Отправить рандомное SFW медиа с @sfwfond",
+        de_doc="Zufällige SFW-Medien von @sfwfond senden",
+        zh_doc="从 @sfwfond 发送随机 SFW 媒体",
+        ja_doc="@sfwfond からランダムな SFW メディアを送信",
+        be_doc="Адправіць выпадковае SFW медыя з @sfwfond",
+        fr_doc="Envoyer un média SFW aléatoire depuis @sfwfond",
+        ua_doc="Надіслати випадкове SFW медіа з @sfwfond",
+        kk_doc="@sfwfond арнасынан кездейсоқ SFW медиа жіберу"
+    )
+    async def fsfw(self, message: Message):
+        """Send random SFW media from @sfwfond"""
+        if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
+            return
+        await self._send_media(message, is_sfw=True, delete_command=True)
+
+    @loader.command(
+        ru_doc="Настроить триггеры для команд fond/vfond/fsfw",
+        de_doc="Auslöser für fond/vfond/fsfw-Befehle konfigurieren",
+        zh_doc="配置 fond/vfond/fsfw 命令的触发器",
+        ja_doc="fond/vfond/fsfwコマンドのトリガーを設定",
+        be_doc="Наладзіць трыгеры для каманд fond/vfond/fsfw",
+        fr_doc="Configurer les déclencheurs pour les commandes fond/vfond/fsfw",
+        ua_doc="Налаштувати тригери для команд fond/vfond/fsfw",
+        kk_doc="fond/vfond/fsfw командалары үшін триггерлерді конфигурациялау"
     )
     async def ftriggers(self, message: Message):
-        """Configure triggers for fond/vfond commands"""
+        """Configure triggers for fond/vfond/fsfw commands"""
         chat_id = utils.get_chat_id(message)
         chat = await message.get_chat()
         chat_title = getattr(chat, "title", "Private Chat")
         chat_triggers = self.triggers.get(str(chat_id), {})
         fond_trigger = chat_triggers.get("fond", self.strings("no_triggers"))
         vfond_trigger = chat_triggers.get("vfond", self.strings("no_triggers"))
+        fsfw_trigger = chat_triggers.get("fsfw", self.strings("no_triggers"))
         await self.inline.form(
             message=message,
             text=self.strings("triggers_config").format(
                 chat_title,
                 chat_id,
                 fond_trigger,
-                vfond_trigger
+                vfond_trigger,
+                fsfw_trigger
             ),
             reply_markup=[
                 [
@@ -528,6 +625,13 @@ class Foundation(loader.Module):
                         "text": "⚙️ Configure vfond trigger",
                         "callback": self._configure_trigger,
                         "args": (chat_id, "vfond")
+                    }
+                ],
+                [
+                    {
+                        "text": "⚙️ Configure fsfw trigger",
+                        "callback": self._configure_trigger,
+                        "args": (chat_id, "fsfw")
                     }
                 ],
                 [
@@ -600,13 +704,15 @@ class Foundation(loader.Module):
         chat_triggers = self.triggers.get(str(chat_id), {})
         fond_trigger = chat_triggers.get("fond", self.strings("no_triggers"))
         vfond_trigger = chat_triggers.get("vfond", self.strings("no_triggers"))
+        fsfw_trigger = chat_triggers.get("fsfw", self.strings("no_triggers"))
         await utils.answer(
             call,
             self.strings("triggers_config").format(
                 chat_title,
                 chat_id,
                 fond_trigger,
-                vfond_trigger
+                vfond_trigger,
+                fsfw_trigger
             ),
             reply_markup=[
                 [
@@ -621,6 +727,13 @@ class Foundation(loader.Module):
                         "text": "⚙️ Configure vfond trigger",
                         "callback": self._configure_trigger,
                         "args": (chat_id, "vfond")
+                    }
+                ],
+                [
+                    {
+                        "text": "⚙️ Configure fsfw trigger",
+                        "callback": self._configure_trigger,
+                        "args": (chat_id, "fsfw")
                     }
                 ],
                 [
@@ -646,5 +759,10 @@ class Foundation(loader.Module):
             if text == trigger:
                 if await self._check_spam(message.sender_id, chat_id):
                     return
-                await self._send_media(message, "video" if command == "vfond" else "any", delete_command=True)
-                break 
+                if command == "fond":
+                    await self._send_media(message, "any", delete_command=True)
+                elif command == "vfond":
+                    await self._send_media(message, "video", delete_command=True)
+                elif command == "fsfw":
+                    await self._send_media(message, is_sfw=True, delete_command=True)
+                break
