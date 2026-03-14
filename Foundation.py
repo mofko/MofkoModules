@@ -1,6 +1,7 @@
 __version__ = (2, 2, 8)
 # diff: - autodelete fsfw
 # meta developer: @mofkomodules
+# original author module: @HaloperidolPills 
 # name: Foundation
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
 # meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
