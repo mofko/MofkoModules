@@ -1,11 +1,10 @@
 __version__ = (2, 2, 8)
-# diff: + fsfw command
+# diff: - autodelete fsfw
 # meta developer: @mofkomodules
-# original author module: @HaloperidolPills
 # name: Foundation
-# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
-# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260128_211636_866.jpg
-# description: best NSFW & SFW, hentai random module
+# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
+# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
+# description: best NSFW % SFW, hentai random module
 # meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw
 
 import random
@@ -199,7 +198,7 @@ class Foundation(loader.Module):
             'global_block_time': 0
         }
         
-        self._block_cache = TTLCache(maxsize=1042, ttl=15)
+        self._block_cache = TTLCache(maxsize=1000, ttl=15)
         
         self.SPAM_LIMIT = 3
         self.SPAM_WINDOW = 3
@@ -521,7 +520,7 @@ class Foundation(loader.Module):
                 reply_to=getattr(message, "reply_to_msg_id", None)
             )
             
-            if self.config["auto_delete_media"] and self.config["auto_delete_delay"] > 0:
+            if self.config["auto_delete_media"] and self.config["auto_delete_delay"] > 0 and not is_sfw:
                 asyncio.create_task(self._schedule_delete(sent_message, self.config["auto_delete_delay"]))
 
             if delete_command:
