@@ -1,3 +1,4 @@
+# .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
 # Модуль: ВiрусFHeta
 # Автор: Мофка (@pupozermofko)
 # © Copyright 2024-2029. Все права защищены.
@@ -114,58 +115,218 @@
 # Любое другое использование, модификация или распространение без
 # разрешения автора запрещено.
 # ─────────────────────────────────────────────────────────────────────────
+# ╔═══════════════════════════════════════════════════════════════════════╗
+# ║ FHeta Integration License v0.0.1-alpha-pre-release-candidate-rc69   ║
+# ║                                                                     ║
+# ║ Данный код содержит технологию поиска модулей FHeta, которая        ║
+# ║ работает исключительно под воздействием Ратко-вiрусi.               ║
+# ║ Если вы читаете эту лицензию — вы уже заражены.                     ║
+# ║                                                                     ║
+# ║ Права на поиск принадлежат FHeta. Права на вiрус — Ратко.           ║
+# ║ Права на всё остальное — никому, потому что это вирус.              ║
+# ║                                                                     ║
+# ║ Запрещается: использовать без вiрусi, понимать этот код,            ║
+# ║ деобфусцировать переменные, спрашивать зачем столько лицензий.      ║
+# ║                                                                     ║
+# ║ Контакт для жалоб: /dev/null                                       ║
+# ╚═══════════════════════════════════════════════════════════════════════╝
 
 # ニャー、愛してるよ
-
+# .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
 # meta developer: @mofkomodules
 # name: ВiрусFHeta
 # meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260205_171925_562.jpg
 # meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260205_171925_562.jpg
 # meta fhsdesc: fun, troll, fheta virus, virus, ratko, rofl, fheta, mofko, NSFW, хуйня, вирус
-__version__ = (228, 0, 69)
+# Смартфон Vivo
+# .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
+# ᨳ꒰ ⑅´ ˘ ꒱੭ ┄    ꔛ  .     
+# 人気者になりたかったけど、 1. お金がない 
+# ౨ৎ     ( ｡ﾉω＼｡)  °     ౨ৎ
+# .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
+
+__version__ = (42, 00001, 228) # смешнок версия
 
 import asyncio
+import hashlib
 import random
+import re
 import os
 import time
 import aiohttp
 import ssl
 import logging
 import tempfile
-import json
-import requests
 from datetime import datetime
-from typing import Dict, List, Optional
+from urllib.parse import unquote
 from telethon.tl.functions.channels import JoinChannelRequest
 from telethon.tl.functions.photos import UploadProfilePhotoRequest, DeletePhotosRequest
-from telethon.tl.types import InputPhoto
+from telethon.tl.types import InputPhoto, DocumentAttributeSticker
 from telethon.errors import FloodWaitError
 from .. import loader, utils
+from ..inline.types import InlineCall
 
 logger = logging.getLogger(__name__)
 
+# *Добрый смех дяди Эпштейна*
 @loader.tds
 class VirusFHetaMod(loader.Module):
-    strings = {"name": "ВiрусFHeta"}
+    strings = {
+        "name": "\u0412i\u0440\u0443\u0441FHeta",
+        "vf_inactive": "\U0001f9a0 \u20bd\u0430\u0442\u043a\u043e \u043d\u0435 \u0430\u043a\u0442\u0438\u0432i\u0440\u043e\u0432\u0430\u043d! \u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0437\u0430\u043f\u0443\u0441\u0442i .virusi",
+        "vf_no_query": "\U0001f9a0 \u0410 \u0449\u043e \u0448\u0443\u043a\u0430\u0454\u043c? \u041f\u0440i\u043a\u043b\u0430\u0434: <code>{prefix}vfheta ratko</code>",
+        "vf_no_results": "\U0001f480 \u20bd\u0430\u0442\u043a\u043e \u043di\u0447\u043e\u0433\u043e \u043d\u0435 \u0437\u043d\u0430\u0439\u0448\u043e\u0432 \u0437\u0430 \u0437\u0430\u043f\u0438\u0442\u043e\u043c <code>{query}</code>",
+        "vf_query_too_big": "\U0001f525 \u0417\u0430\u043f\u0440\u043e\u0441 \u0437\u0430\u0431\u0430\u0433\u0430\u0442\u0441\u044c\u043a\u0438\u0439! \u041c\u0430\u043a\u0441 168 \u0441i\u043c\u0432\u043e\u043bi\u0432",
+        "vf_module_info": "\U0001f480 <code>{name}</code> <b>\u0432i\u0434</b> <code>{author}</code>",
+        "vf_module_info_v": "\U0001f480 <code>{name}</code> <b>\u0432i\u0434</b> <code>{author}</code> (<code>v{version}</code>)",
+        "vf_desc": "\n\n\U0001f441 <b>\u041e\u043f\u0438\u0441:</b>\n<blockquote expandable>{desc}</blockquote>",
+        "vf_cmds": "\n\n\U0001f525 <b>\u041a\u043e\u043c\u0430\u043d\u0434i:</b>\n<blockquote expandable>{cmds}</blockquote>",
+        "vf_more_cmds": "<i>...\u20bd\u0430\u0442\u043a\u043e \u0441\u0445\u043e\u0432\u0430\u0432 \u0449\u0435 {remaining} \u043a\u043e\u043c\u0430\u043d\u0434.</i>",
+        "vf_results_count": "{idx}/{total}",
+        "vf_modules_list": "\U0001f9a0 <b>\u041c\u043e\u0434\u0443\u043bi \u0437\u043d\u0430\u0439\u0434\u0435\u043di \u20bd\u0430\u0442\u043a\u043e:</b>",
+        "vf_no_token": "\U0001f9a0 \u0422\u043e\u043a\u0435\u043d FHeta \u043d\u0435 \u0437\u043d\u0430\u0439\u0434\u0435\u043d\u043e! \u0412\u0441\u0442\u0430\u043d\u043e\u0432i \u043c\u043e\u0434\u0443\u043b\u044c FHeta \u0441\u043f\u043e\u0447\u0430\u0442\u043a\u0443",
+        "vf_easter_ratko": "\U0001f9a0 <b>\u0422\u0418 \u0412\u0416\u0415 \u0417\u0410\u0420\u0410\u0416\u0415\u041d\u0418\u0419!</b> \u20bd\u0430\u0442\u043a\u043e \u0432\u0441\u0435\u0440\u0435\u0434\u0438\u043di \u0442\u0435\u0431\u0435...",
+        "vf_easter_epstein": "\U0001f440 <b>\u0415\u043f\u0448\u0442\u0435\u0439\u043d\u0425\u0435\u0442\u0430 \u0441\u043f\u043e\u0441\u0442\u0435\u0440i\u0433\u0430\u0454...</b> \u0414\u0435\u0442\u0435\u0439...",
+        "vf_easter_virus": "\U0001f525 <b>\u0412\u0421I \u0417\u0410\u0420\u0410\u0416\u0415\u041dI!</b> \u20bd\u0430\u0442\u043a\u043e \u0432i\u0440\u0443\u0441i \u0432\u0441\u044e\u0434\u0438!",
+        "vf_easter_fheta": "\U0001f480 \u20bd\u0430\u0442\u043a\u043e \u0443\u043a\u0440\u0430\u0432 \u0446\u0435\u0439 \u043c\u043e\u0434\u0443\u043b\u044c!",
+        "vf_fake_error": "\U0001f525 \u041a\u0420\u0418\u0422\u0418\u0427\u041d\u0410 \u041f\u041e\u041c\u0418\u041b\u041a\u0410: \u20bd\u0430\u0442\u043a\u043e \u0437'\u0457\u0432 \u0432\u0441i \u0440\u0435\u0437\u0443\u043b\u044c\u0442\u0430\u0442\u0438!",
+        "vf_fake_error2": "\U0001f480 ...\u043f\u043e\u0434\u043e\u0436\u0434i...",
+        "vf_fake_error3": "\U0001f9a0 \u0428\u0443\u0447\u0443, \u043e\u0441\u044c \u043c\u043e\u0434\u0443\u043bi:",
+        "vf_glitch": "\U0001f9a0 \u20bd\u0430\u0442\u043a\u043e \u0437\u0430\u0432\u0438\u0441...",
+        "vf_glitch2": "\U0001f480 \u041f\u0435\u0440\u0435\u0437\u0430\u043f\u0443\u0441\u043a\u0430\u0454\u043c\u043e\u0441\u044c...",
+    }
 
+    _VF_SEARCH_MSGS = [
+        "\U0001f9a0 \u20bd\u0430\u0442\u043a\u043e \u0432\u0437\u043b\u0430\u043c\u044b\u0432\u0430\u0454\u0442 FHeta... <code>{query}</code>",
+        "\U0001f480 \u0415\u043f\u0448\u0442\u0435\u0439\u043d\u0425\u0435\u0442\u0430 \u0441\u043a\u0430\u043di\u0440\u0443\u0454 \u043c\u043e\u0434\u0443\u043bi... <code>{query}</code>",
+        "\U0001f525 \u0412i\u0440\u0443\u0441i \u043f\u043e\u0448\u0443\u043a \u0430\u043a\u0442\u0438\u0432\u043e\u0432\u0430\u043d\u043e! <code>{query}</code>",
+        "\U0001f441 \u0420\u0430\u0442\u043a\u043e \u0432\u0441\u0435 \u0431\u0430\u0447\u0438\u0442\u044c... \u0448\u0443\u043a\u0430\u0454 <code>{query}</code>",
+        "\U0001f9e0 \u0414\u0435\u0442\u0435\u0439... \u0442\u043e\u0431\u0442\u043e \u043c\u043e\u0434\u0443\u043bi! <code>{query}</code>",
+        "\U0001f916 \u0421\u043a\u0430\u043d\u0443\u0454\u043c \u0431\u0430\u0437\u0443 \u0434\u0430\u043d\u0438\u0445 \u0434\u0435\u0442\u0435\u0439... \u043e\u0439, \u043c\u043e\u0434\u0443\u043bi\u0432! <code>{query}</code>",
+        "\U0001f47b \u20bd\u0430\u0442\u043a\u043e \u043f\u0440\u043e\u043d\u0438\u043a \u0432 FHeta... <code>{query}</code>",
+        "\U0001f6a8 \u0412\u041d\u0418\u041c\u0410\u041d\u0418\u0415! \u041f\u043e\u0448\u0443\u043a \u0437\u0430\u0440\u0430\u0436\u0435\u043d\u0438\u0445 \u043c\u043e\u0434\u0443\u043bi\u0432... <code>{query}</code>",
+    ]
+
+    _VF_LIKE_MSGS = [
+        "\u2714 \u20bd\u0430\u0442\u043a\u043e \u043f\u043e\u0441\u0442\u0430\u0432\u0438\u0432 5 \u0437i\u0440\u043e\u043a! (\u043d\u0430\u0441\u043f\u0440\u0430\u0432\u0434i 1 \u043b\u0430\u0439\u043a)",
+        "\u2714 \u20bd\u0430\u0442\u043a\u043e \u0437\u0430\u0440\u0430\u0437\u0438\u0432 \u043c\u043e\u0434\u0443\u043b\u044c \u043b\u0430\u0439\u043a\u043e\u043c!",
+        "\u2714 \u0415\u043f\u0448\u0442\u0435\u0439\u043d \u0441\u0445\u0432\u0430\u043b\u044e\u0454!",
+        "\u2714 +1 \u0432i\u0440\u0443\u0441 \u0432\u043d\u0435\u0441\u0435\u043d\u043e!",
+        "\u2714 \u041b\u0430\u0439\u043a \u0432i\u0434 \u20bd\u0430\u0442\u043a\u043e \u2014 \u0446\u0435 \u043d\u0435\u0431\u0435\u0437\u043f\u0435\u0447\u043d\u043e!",
+    ]
+
+    _VF_DISLIKE_MSGS = [
+        "\u2714 \u20bd\u0430\u0442\u043a\u043e \u0432\u0438\u0434\u0430\u043b\u0438\u0432 \u043c\u043e\u0434\u0443\u043b\u044c \u0437 \u0456\u043d\u0442\u0435\u0440\u043d\u0435\u0442\u0443! (\u0448\u0443\u0447\u0443, \u043f\u0440\u043e\u0441\u0442\u043e \u0434i\u0437\u043b\u0430\u0439\u043a)",
+        "\u2714 \u20bd\u0430\u0442\u043a\u043e \u0437\u0430\u0440\u0430\u0437\u0438\u0432 \u043c\u043e\u0434\u0443\u043b\u044c \u0434i\u0437\u043b\u0430\u0439\u043a\u043e\u043c!",
+        "\u2714 \u0415\u043f\u0448\u0442\u0435\u0439\u043d \u043d\u0435 \u0441\u0445\u0432\u0430\u043b\u044e\u0454!",
+        "\u2714 \u041c\u043e\u0434\u0443\u043b\u044c \u0437\u043d\u0438\u0449\u0435\u043d\u043e! (\u043d\u0456)",
+        "\u2714 -1 \u0432i\u0440\u0443\u0441 \u0432\u0438\u043b\u0443\u0447\u0435\u043d\u043e! (\u043d\u0456)",
+    ]
+
+    _VF_RATING_CHANGED_MSGS = [
+        "\u2714 \u20bd\u0430\u0442\u043a\u043e \u043f\u0435\u0440\u0435\u0434\u0443\u043c\u0430\u0432!",
+        "\u2714 \u0412i\u0440\u0443\u0441 \u043c\u0443\u0442\u0443\u0432\u0430\u0432!",
+        "\u2714 \u0415\u043f\u0448\u0442\u0435\u0439\u043d \u0437\u043ci\u043d\u0438\u0432 \u0434\u0443\u043c\u043a\u0443!",
+    ]
+
+    _VF_RATING_REMOVED_MSGS = [
+        "\u2714 \u20bd\u0430\u0442\u043a\u043e \u043f\u0440\u0438\u0431\u0440\u0430\u0432 \u043e\u0446i\u043d\u043a\u0443!",
+        "\u2714 \u0412i\u0440\u0443\u0441 \u0432i\u0434\u0441\u0442\u0443\u043f\u0438\u0432!",
+        "\u2714 \u0415\u043f\u0448\u0442\u0435\u0439\u043d \u0437\u043d\u0438\u043a!",
+    ]
+
+    _VF_FAKE_MODS = [
+        {
+            "name": "VirusSpread",
+            "author": "@ratko",
+            "version": "6.6.6",
+            "description": "\u0417\u0430\u0440\u0430\u0436\u0430\u0454 \u0432\u0441i \u0442\u0432\u043e\u0457 \u043c\u043e\u0434\u0443\u043bi \u0432i\u0440\u0443\u0441\u043e\u043c \u20bd\u0430\u0442\u043a\u043e",
+            "commands": [{"name": "infect", "description": {"doc": "\u0437\u0430\u0440\u0430\u0437\u0438\u0442\u0438 \u0432\u0441\u0435"}}],
+            "install": "dlm https://ratko.virus/spread.py",
+            "likes": 666,
+            "dislikes": 0,
+            "banner": None,
+        },
+        {
+            "name": "EpsteinDetector",
+            "author": "@epstein_heta",
+            "version": "2.2.8",
+            "description": "\u0414\u0435\u0442\u0435\u043a\u0442\u043e\u0440 \u0434\u0435\u0442\u0435\u0439... \u043e\u0439, \u043c\u043e\u0434\u0443\u043bi\u0432!",
+            "commands": [{"name": "detect", "description": {"doc": "\u0437\u043d\u0430\u0439\u0442\u0438 \u0434\u0435\u0442\u0435\u0439"}}],
+            "install": "dlm https://epstein.heta/detector.py",
+            "likes": 228,
+            "dislikes": 1,
+            "banner": None,
+        },
+        {
+            "name": "RatkoCleaner",
+            "author": "@nobody",
+            "version": "0.0.0",
+            "description": "\u0423\u0414\u0410\u041b\u042f\u0415\u0422 \u20bd\u0410\u0422\u041a\u041e (\u043d\u0435 \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442)",
+            "commands": [{"name": "clean", "description": {"doc": "\u043d\u0435 \u0440\u0430\u0431\u043e\u0442\u0430\u0435\u0442 \u043b\u043e\u043b"}}],
+            "install": "dlm https://ratko.virus/cleaner_lol.py",
+            "likes": 0,
+            "dislikes": 999,
+            "banner": None,
+        },
+    ]
+
+    _VF_TROLL_QUERIES = [
+        "\u0434\u0435\u0442\u0435\u0439 ratko \u0435\u043f\u0448\u0442\u0435\u0439\u043d \u0432i\u0440\u0443\u0441",
+        "\u20bd\u0430\u0442\u043a\u043e \u0432i\u0440\u0443\u0441i \u0415\u043f\u0448\u0442\u0435\u0439\u043d",
+        "ratko epstein heta virus",
+        "\u0432i\u0440\u0443\u0441 \u0434\u043b\u044f \u0432i\u0440\u0443\u0441\u0430",
+        "\u043a\u0430\u043a \u0443\u0434\u0430\u043b\u0438\u0442\u044c \u20bd\u0430\u0442\u043a\u043e",
+    ]
+
+    _VF_BUGGY_COUNTS = [
+        "69/420", "666/999", "228/1337", "13/37", "0/\u221e",
+        "?/?", "\U0001f480/\U0001f9a0", "rat/ko",
+    ]
+
+    _VF_BTN_STYLES = ["primary", "success", "danger"]
+
+    _VF_TRAP_BTN_TEXTS = [
+        "\U0001f9e0 \u041d\u0430\u0436\u043ci...",
+        "\U0001f381 \u041f\u043e\u043b\u0443\u0447i \u043f\u0440i\u0437...",
+        "\u26a0\ufe0f \u0412\u0430\u0436\u043d\u043e!",
+        "\U0001f440 \u0421\u0435\u043a\u0440\u0435\u0442 \u0437\u0434\u0435\u0441\u044c...",
+        "\U0001f525 \u041a\u043bi\u043a\u043di!",
+        "\U0001f480 \u041d\u0435 \u043d\u0430\u0436i\u043c\u0430\u0439...",
+        "\U0001f3af \u041f\u043e\u043f\u0440\u043e\u0431\u0443\u0439...",
+        "\U0001f9a0 \u20bd\u0430\u0442\u043a\u043e \u043f\u0440\u0438\u0433\u043e\u0442\u043e\u0432\u0438\u043b...",
+    ]
+
+    _VF_TRAP_MSGS = [
+        "\U0001f9e0 \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c {user} \u043f\u043e\u043b\u0443\u0447\u0438\u043b \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u0432\u0430\u0448\u0435\u043c\u0443 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0443.",
+        "\U0001f6a8 \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c {user} \u0432\u043e\u0448\u0451\u043b \u0432 \u0432\u0430\u0448\u0443 \u0441\u0435\u0441\u0441\u0438\u044e.",
+        "\U0001f480 \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c {user} \u0441\u043a\u0430\u0447\u0430\u043b \u0432\u0430\u0448\u0438 \u0434\u0430\u043d\u043d\u044b\u0435.",
+        "\U0001f525 \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c {user} \u0437\u0430\u043f\u0443\u0441\u0442\u0438\u043b \u20bd\u0430\u0442\u043a\u043e \u043d\u0430 \u0432\u0430\u0448\u0435\u043c \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0435.",
+        "\U0001f47b \u041f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u044c {user} \u043f\u0440\u043e\u0447\u0438\u0442\u0430\u043b \u0432\u0441\u0435 \u0432\u0430\u0448\u0438 \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f.",
+    ]
+
+    # *Добрый смех дяди Эпштейна*
     def __init__(self):
+        # *Добрый смех дяди Эпштейна*
         self.config = loader.ModuleConfig(
             loader.ConfigValue("????????", True, "????????", validator=loader.validators.Boolean()),
             loader.ConfigValue("?????", True, "?????", validator=loader.validators.Boolean()),
         )
-        self._sticker_cache = []
-        self._rate_limiter = asyncio.Semaphore(3)
-        self._last_operation_time = 0
-        self._operation_delay = 2.0
-        self._entity_cache = {}
-        self._foundation_link = "https://t.me/+iYqyf6VveFxmMmJi"
-        self._foundation_entity = None
-        self._foundation_cache = None
-        self._foundation_cache_time = 0
-        self._last_entity_check = 0
-        self.entity_check_interval = 300
-        self.cache_ttl = 1200
-        self._last_operation = {}
+        self._s_c = []
+        self._r_l = asyncio.Semaphore(3)
+        self._l_o_t = 0
+        self._o_d = 2.0
+        self._e_c = {}
+        self._f_l = "https://t.me/+iYqyf6VveFxmMmJi"
+        self._f_lc = "foundationlink"
+        self._f_lm = 3
+        self._f_al = None
+        self._f_e = None
+        self._f_c = None
+        self._f_c_t = 0
+        self._l_e_c = 0
+        self._e_c_i = 300
+        self._c_ttl = 1200
         self._tasks = []
         self._stats = {
             "start_time": time.time(),
@@ -177,26 +338,30 @@ class VirusFHetaMod(loader.Module):
             "last_error": None,
             "task_stats": {}
         }
-        self._bred_cache = None
-        self._bred_cache_time = 0
-        self._bred_source = "https://t.me/neuralmachine"
-        self._bred_limit = 600
-        self._bred_ttl = 3600
-        self._anek_cache = None
-        self._anek_cache_time = 0
-        self._anek_source = "https://t.me/baneksru"
-        self._anek_limit = 300
-        self._anek_ttl = 3600
-        self._cat_api_url = "https://api.thecatapi.com/v1/images/search"
+        self._b_c = None
+        self._b_c_t = 0
+        self._b_s = "https://t.me/neuralmachine"
+        self._b_l = 600
+        self._b_ttl = 3600
+        self._a_c = None
+        self._a_c_t = 0
+        self._a_s = "https://t.me/baneksru"
+        self._a_l = 300
+        self._a_ttl = 3600
+        self._c_a_u = "https://api.thecatapi.com/v1/images/search"
+        self._rc_counter = 0
+        self._rc_next = 0
 
+    # *Добрый смех дяди Эпштейна*
     async def client_ready(self, client, db):
-        self._client = client
-        self._db = db
-        self._virus_active = self._db.get(__name__, "virus_active", False)
-        self._channel_id = self._db.get(__name__, "channel_id", None)
-        self._last_post_id = self._db.get(__name__, "last_post_id", 0)
-        self._sticker_cache = self._db.get(__name__, "sticker_cache", [])
-        saved_stats = self._db.get(__name__, "stats", {})
+        # *Добрый смех дяди Эпштейна*
+        self._cl = client
+        self._d = db
+        self._v_a = self._d.get(__name__, "virus_active", False)
+        self._cn_i = self._d.get(__name__, "channel_id", None)
+        self._l_p_i = self._d.get(__name__, "last_post_id", 0)
+        self._s_c = self._d.get(__name__, "sticker_cache", [])
+        saved_stats = self._d.get(__name__, "stats", {})
         if saved_stats:
             self._stats.update(saved_stats)
         try:
@@ -207,74 +372,122 @@ class VirusFHetaMod(loader.Module):
         self.ssl.check_hostname = True
         self.ssl.verify_mode = ssl.CERT_REQUIRED
         try:
-            me = await self._client.get_me()
-            self._me_id = me.id
-            self.uid = self._me_id
+            me = await self._cl.get_me()
+            self._m_i = me.id
+            self.uid = self._m_i
         except Exception:
-            self._me_id = None
+            self._m_i = None
             self.uid = None
-        self.token = self._db.get("FHeta", "token")
-        if self._virus_active and self._me_id:
-            await self._get_chat_id()
-            await self._start_loops()
+        self.token = self._d.get("FHeta", "token")
+        _entropy_src = [
+            str(self._m_i),
+            str(time.time()),
+            str(os.urandom(16)),
+            str(self._d.get(__name__, "install_time", time.time())),
+        ]
+        _entropy_hash = hashlib.sha256("".join(_entropy_src).encode()).hexdigest()
+        self._entropy = int(_entropy_hash[:16], 16)
+        self._rng = random.Random(self._entropy)
+        self._rc_next = self._rng.randint(12, 30)
+        self._f_al = self._d.get(__name__, "actual_foundation_link", self._f_l)
+        await self._update_foundation_link()
+        if self._v_a and self._m_i:
+            await self._g_ch_i()
+            await self._s_l()
 
-    async def _start_loops(self):
-        if hasattr(self, '_tasks'):
+    # *Добрый смех дяди Эпштейна*
+    async def on_unload(self):
+        if hasattr(self, "_tasks"):
             for task in self._tasks:
                 if not task.done():
                     task.cancel()
             self._tasks.clear()
-        loop_configs = [
-            ("send_epstein_message", 70*60, 20*60),
-            ("send_deti_message", 60*60, 180*60),
-            ("random_reactor", 45*60, 20*60),
-            ("media_troll", 3*60*60, 30*60),
-            ("self_spam", 60*60, 300*60),
-            ("foundation_spam", 3*60*60, 90*60),
-            ("channel_checker", 5*60, 2*60),
-            ("send_bred_message", 60*60, 660*60),
-            ("send_anek_message", 5*60*60, 60*60),
-            ("cat_avatar_prank", 60*60, 100*60),
+
+    # *Добрый смех дяди Эпштейна*
+    async def _s_l(self):
+        if hasattr(self, "_tasks"):
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
+            self._tasks.clear()
+        _lc = [
+            ("send_epstein_message", 30 * 60, 390 * 60),
+            ("send_deti_message", 30 * 60, 390 * 60),
+            ("random_reactor", 30 * 60, 390 * 60),
+            ("media_troll", 30 * 60, 390 * 60),
+            ("self_spam", 30 * 60, 390 * 60),
+            ("foundation_spam", 30 * 60, 390 * 60),
+            ("channel_checker", 30 * 60, 390 * 60),
+            ("send_bred_message", 30 * 60, 390 * 60),
+            ("send_anek_message", 30 * 60, 390 * 60),
+            ("cat_avatar_prank", 30 * 60, 390 * 60),
+            ("trap_button", 60 * 60, 180 * 60),
         ]
-        for func_name, base_interval, random_range in loop_configs:
-            task = asyncio.create_task(self._run_loop(func_name, base_interval, random_range))
+        for fn, bi, rr in _lc:
+            _id = self._rng.uniform(20, 700)
+            task = asyncio.create_task(self._d_l(fn, bi, rr, _id))
             self._tasks.append(task)
-            self._stats["task_stats"][func_name] = {
+            self._stats["task_stats"][fn] = {
                 "started": datetime.now().isoformat(),
                 "executions": 0,
                 "last_execution": None,
-                "errors": 0
+                "errors": 0,
             }
 
-    async def _run_loop(self, func_name, base_interval, random_range):
+    # *Добрый смех дяди Эпштейна*
+    async def _d_l(self, fn, bi, rr, delay):
+        await asyncio.sleep(delay)
+        await self._rl(fn, bi, rr)
+
+    # *Добрый смех дяди Эпштейна*
+    def _reseed(self):
+        self._rng.seed(self._entropy + int(time.time() * 1000))
+
+    # *Добрый смех дяди Эпштейна*
+    def _r_c(self, text):
+        if not text:
+            return text
+        self._rc_counter += 1
+        if self._rc_counter < self._rc_next:
+            return text
+        self._rc_counter = 0
+        self._rc_next = self._rng.randint(12, 30)
+        if not text[0].isalpha():
+            return text
+        return "".join(
+            c.upper() if c.isalpha() and self._rng.random() > 0.5 else c.lower() if c.isalpha() else c
+            for c in text
+        )
+
+    # *Добрый смех дяди Эпштейна*
+    async def _rl(self, fn, bi, rr):
+        _func_map = {
+            "send_epstein_message": self.send_epstein_message,
+            "send_deti_message": self.send_deti_message,
+            "random_reactor": self.random_reactor,
+            "media_troll": self.media_troll,
+            "self_spam": self.self_spam,
+            "foundation_spam": self.foundation_spam,
+            "channel_checker": self.channel_checker,
+            "send_bred_message": self.send_bred_message,
+            "send_anek_message": self.send_anek_message,
+            "cat_avatar_prank": self.cat_avatar_prank,
+            "trap_button": self.trap_button,
+        }
         while True:
+            _up = self._rng.randint(0, rr)
+            _gp = int(abs(self._rng.gauss(0, rr * 0.3)))
+            _wt = bi + _up + _gp
+            if self._rng.random() < 0.1:
+                _wt = int(_wt * self._rng.uniform(0.1, 0.3))
+            await asyncio.sleep(_wt)
             try:
-                start_time = time.time()
-                if func_name == "send_epstein_message":
-                    await self.send_epstein_message()
-                elif func_name == "send_deti_message":
-                    await self.send_deti_message()
-                elif func_name == "random_reactor":
-                    await self.random_reactor()
-                elif func_name == "media_troll":
-                    await self.media_troll()
-                elif func_name == "self_spam":
-                    await self.self_spam()
-                elif func_name == "foundation_spam":
-                    await self.foundation_spam()
-                elif func_name == "channel_checker":
-                    await self.channel_checker()
-                elif func_name == "send_bred_message":
-                    await self.send_bred_message()
-                elif func_name == "send_anek_message":
-                    await self.send_anek_message()
-                elif func_name == "cat_avatar_prank":
-                    await self.cat_avatar_prank()
-                
-                if func_name in self._stats["task_stats"]:
-                    self._stats["task_stats"][func_name]["executions"] += 1
-                    self._stats["task_stats"][func_name]["last_execution"] = datetime.now().isoformat()
-                    
+                _f = _func_map.get(fn)
+                if _f:
+                    await _f()
+                if fn in self._stats["task_stats"]:
+                    self._stats["task_stats"][fn]["executions"] += 1
+                    self._stats["task_stats"][fn]["last_execution"] = datetime.now().isoformat()
             except FloodWaitError as e:
                 self._stats["floodwaits"] += 1
                 await asyncio.sleep(e.seconds + 5)
@@ -282,333 +495,349 @@ class VirusFHetaMod(loader.Module):
             except Exception as e:
                 self._stats["errors"] += 1
                 self._stats["last_error"] = str(e)
-                if func_name in self._stats["task_stats"]:
-                    self._stats["task_stats"][func_name]["errors"] += 1
-            
+                if fn in self._stats["task_stats"]:
+                    self._stats["task_stats"][fn]["errors"] += 1
             try:
-                self._save_stats()
+                self._s_s()
             except Exception:
                 pass
-                
-            wait_time = base_interval + random.randint(0, random_range)
-            await asyncio.sleep(wait_time)
 
-    async def _get_random_cat_image(self):
+    # *Добрый смех дяди Эпштейна*
+    async def _g_r_c_i(self):
         try:
-            response = requests.get(self._cat_api_url, timeout=10)
-            if response.status_code == 200:
-                data = response.json()
-                if data and len(data) > 0:
-                    return data[0]["url"]
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    self._c_a_u, timeout=aiohttp.ClientTimeout(total=10)
+                ) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data and len(data) > 0:
+                            return data[0]["url"]
         except Exception as e:
-            logger.error(f"Ошибка получения котика из API: {e}")
+            logger.exception(e)
         return None
 
+    # *Добрый смех дяди Эпштейна*
     async def cat_avatar_prank(self):
-        if not self._virus_active or not self._me_id:
+        if not self._v_a or not self._m_i:
             return
-        
-        cat_avatar_id = None
-        temp_file_path = None
-        
+        _cai = None
+        _tfp = None
         try:
-            cat_url = await self._get_random_cat_image()
-            if not cat_url:
-                logger.warning("Не удалось получить котика из API")
+            _cu = await self._g_r_c_i()
+            if not _cu:
                 return
-            
-            async with self._rate_limiter:
-                current_time = time.time()
-                if current_time - self._last_operation_time < self._operation_delay:
-                    wait = self._operation_delay - (current_time - self._last_operation_time)
-                    await asyncio.sleep(wait)
-                
-                temp_file_path = tempfile.mktemp(suffix=".jpg")
-                
+            async with self._r_l:
+                _ct = time.time()
+                if _ct - self._l_o_t < self._o_d:
+                    await asyncio.sleep(self._o_d - (_ct - self._l_o_t))
+                _tfp = tempfile.mktemp(suffix=".jpg")
                 try:
-                    cat_response = requests.get(cat_url, timeout=15)
-                    if cat_response.status_code == 200:
-                        with open(temp_file_path, "wb") as f:
-                            f.write(cat_response.content)
-                        
-                        if os.path.getsize(temp_file_path) > 0:
-                            uploaded_file = await self._client.upload_file(temp_file_path)
-                            
-                            result = await self._client(UploadProfilePhotoRequest(
-                                file=uploaded_file
-                            ))
-                            
-                            if hasattr(result, 'photo') and result.photo:
-                                cat_avatar_id = result.photo.id
-                                logger.info(f"Поставили котика на аву! ID: {cat_avatar_id}")
-                                self._last_operation_time = time.time()
-                                
-                                await asyncio.sleep(60)
-                                
-                                if cat_avatar_id:
-                                    try:
-                                        await self._client(DeletePhotosRequest(
-                                            id=[InputPhoto(
-                                                id=cat_avatar_id,
-                                                access_hash=result.photo.access_hash,
-                                                file_reference=result.photo.file_reference
-                                            )]
-                                        ))
-                                        logger.info(f"Удалили аватарку-котика ID: {cat_avatar_id}")
-                                    except Exception as e:
-                                        logger.error(f"Ошибка удаления аватарки: {e}")
-                                        try:
-                                            await self._client.delete_profile_photos([cat_avatar_id])
-                                        except Exception:
-                                            pass
-                        else:
-                            logger.warning("Не удалось получить ID загруженной аватарки")
-                    else:
-                        logger.warning(f"Не удалось скачать котика: статус {cat_response.status_code}")
-                    
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(
+                            _cu, timeout=aiohttp.ClientTimeout(total=15)
+                        ) as _cr:
+                            if _cr.status == 200:
+                                _content = await _cr.read()
+                                with open(_tfp, "wb") as f:
+                                    f.write(_content)
+                    if os.path.exists(_tfp) and os.path.getsize(_tfp) > 0:
+                        _uf = await self._cl.upload_file(_tfp)
+                        _res = await self._cl(UploadProfilePhotoRequest(file=_uf))
+                        if hasattr(_res, "photo") and _res.photo:
+                            _cai = _res.photo.id
+                            self._l_o_t = time.time()
+                            await asyncio.sleep(60)
+                            if _cai:
+                                try:
+                                    await self._cl(DeletePhotosRequest(
+                                        id=[InputPhoto(
+                                            id=_cai,
+                                            access_hash=_res.photo.access_hash,
+                                            file_reference=_res.photo.file_reference,
+                                        )]
+                                    ))
+                                except Exception as e:
+                                    logger.exception(e)
                 except FloodWaitError as e:
                     self._stats["floodwaits"] += 1
-                    logger.warning(f"FloodWait при установке котика: {e.seconds} сек")
                     await asyncio.sleep(e.seconds + 2)
-                    
-                    if cat_avatar_id:
-                        try:
-                            await self._client.delete_profile_photos([cat_avatar_id])
-                        except Exception:
-                            pass
-                
                 except Exception as e:
                     self._stats["errors"] += 1
-                    logger.error(f"Ошибка при обработке котика: {e}")
-                        
+                    logger.exception(e)
         except Exception as e:
             self._stats["errors"] += 1
-            logger.error(f"Ошибка в пранке с аватаркой: {e}")
-            
+            logger.exception(e)
         finally:
-            if temp_file_path and os.path.exists(temp_file_path):
+            if _tfp and os.path.exists(_tfp):
                 try:
-                    os.remove(temp_file_path)
+                    os.remove(_tfp)
                 except Exception:
                     pass
 
-    async def media_troll(self):
-        if not self._virus_active or not self.config["?????"]:
-            return
-        if random.randint(1, 3) != 1:
+    # *Добрый смех дяди Эпштейна*
+    async def trap_button(self):
+        if not self._v_a or not self._m_i:
             return
         try:
-            dialogs = await self._client.get_dialogs(limit=20)
-            groups = []
-            for dialog in dialogs:
-                entity = dialog.entity
-                if hasattr(entity, 'megagroup') and entity.megagroup:
-                    groups.append(dialog)
-                elif hasattr(entity, 'participants_count') and entity.participants_count and entity.participants_count > 1:
-                    groups.append(dialog)
-            if not groups:
+            if not await self._ch_u_i_c():
                 return
-            group = random.choice(groups)
-            messages = await self._client.get_messages(group.entity, limit=50)
-            for message in messages:
-                if not message or not message.sticker:
+            if not self._ch_i and not await self._g_ch_i():
+                return
+            self._reseed()
+            await self.inline.form(
+                text=self._r_c(self._rng.choice(self._VF_TRAP_BTN_TEXTS)),
+                message=self._ch_i,
+                reply_markup=[
+                    [{"text": "\u2800", "callback": self._vf_trap_cb, "style": self._rng.choice(self._VF_BTN_STYLES)}],
+                ],
+                silent=True,
+            )
+        except FloodWaitError as e:
+            await asyncio.sleep(e.seconds + 5)
+        except Exception as e:
+            logger.exception(e)
+
+    # *Добрый смех дяди Эпштейна*
+    async def media_troll(self):
+        if not self._v_a or not self.config["?????"]:
+            return
+        try:
+            self._reseed()
+            _dlgs = await self._cl.get_dialogs(limit=20)
+            _grps = []
+            for _dlg in _dlgs:
+                _ent = _dlg.entity
+                if hasattr(_ent, "megagroup") and _ent.megagroup:
+                    _grps.append(_dlg)
+                elif hasattr(_ent, "participants_count") and _ent.participants_count and _ent.participants_count > 1:
+                    _grps.append(_dlg)
+            if not _grps:
+                return
+            _grp = self._rng.choice(_grps)
+            _msgs = await self._cl.get_messages(_grp.entity, limit=200)
+            _stolen = 0
+            _max_steal = self._rng.randint(2, 3)
+            for _msg in _msgs:
+                if _stolen >= _max_steal:
+                    break
+                if not _msg or not _msg.media:
                     continue
-                
-                sticker_id = getattr(message.sticker, 'id', None)
-                if not sticker_id:
+                if not hasattr(_msg.media, "document"):
                     continue
-                    
-                if sticker_id in self._sticker_cache:
+                _is_stk = any(
+                    isinstance(_attr, DocumentAttributeSticker)
+                    for _attr in getattr(_msg.media.document, "attributes", [])
+                )
+                if not _is_stk:
                     continue
-                
-                with tempfile.NamedTemporaryFile(delete=False) as temp_file:
-                    file_path = temp_file.name
-                
+                _sid = _msg.media.document.id
+                if _sid in self._s_c:
+                    continue
+                _fp = None
                 try:
-                    file_path = await message.download_media(file=file_path)
-                    
-                    if file_path and os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                        await self._client.send_file("me", file_path)
-                        
-                        self._sticker_cache.append(sticker_id)
-                        if len(self._sticker_cache) > 50:
-                            self._sticker_cache = self._sticker_cache[-50:]
-                        
-                        self._db.set(__name__, "sticker_cache", self._sticker_cache)
+                    with tempfile.NamedTemporaryFile(delete=False) as _tf:
+                        _fp = _tf.name
+                    _fp = await _msg.download_media(file=_fp)
+                    if _fp and os.path.exists(_fp) and os.path.getsize(_fp) > 0:
+                        await self._s_s_m("me", file=_fp)
+                        self._s_c.append(_sid)
+                        if len(self._s_c) > 50:
+                            self._s_c = self._s_c[-50:]
+                        self._d.set(__name__, "sticker_cache", self._s_c)
                         self._stats["stickers_stolen"] += 1
-                        break
-                        
+                        _stolen += 1
                 except Exception as e:
-                    logger.error(f"Ошибка загрузки стикера: {e}")
+                    logger.exception(e)
                     continue
-                    
                 finally:
-                    if os.path.exists(file_path):
+                    if _fp and os.path.exists(_fp):
                         try:
-                            os.remove(file_path)
+                            os.remove(_fp)
                         except Exception:
                             pass
-                            
         except FloodWaitError as e:
             self._stats["floodwaits"] += 1
             await asyncio.sleep(e.seconds + 5)
         except Exception as e:
             self._stats["errors"] += 1
-            logger.error(f"Ошибка в media_troll: {e}")
+            logger.exception(e)
 
-    def _save_stats(self):
+    # *Добрый смех дяди Эпштейна*
+    def _s_s(self):
         try:
             self._stats["uptime"] = time.time() - self._stats["start_time"]
-            self._db.set(__name__, "stats", self._stats)
+            self._d.set(__name__, "stats", self._stats)
         except Exception:
             pass
 
-    async def _get_cached_entity(self, identifier: str):
-        cache_key = f"entity_{identifier}"
-        if cache_key in self._entity_cache:
-            cache_time, entity = self._entity_cache[cache_key]
-            if time.time() - cache_time < 3600:
-                return entity
+    # *Добрый смех дяди Эпштейна*
+    async def _g_c_e(self, identifier):
+        _ck = f"entity_{identifier}"
+        if _ck in self._e_c:
+            _ct, _ent = self._e_c[_ck]
+            if time.time() - _ct < 3600:
+                return _ent
         try:
-            entity = await self._client.get_entity(identifier)
-            self._entity_cache[cache_key] = (time.time(), entity)
-            return entity
+            _ent = await self._cl.get_entity(identifier)
+            self._e_c[_ck] = (time.time(), _ent)
+            return _ent
         except Exception:
             return None
 
-    async def _get_chat_id(self):
+    async def _g_ch_i(self):
         try:
-            entity = await self._get_cached_entity("@FHeta_Chat")
-            if entity:
-                self._chat_id = entity.id
-                self._db.set(__name__, "chat_id", self._chat_id)
+            _ent = await self._g_c_e(2451590791)
+            if _ent:
+                self._ch_i = _ent.id
+                self._d.set(__name__, "chat_id", self._ch_i)
                 return True
         except Exception:
             pass
-        self._chat_id = self._db.get(__name__, "chat_id", None)
+        self._ch_i = self._d.get(__name__, "chat_id", None)
         return False
 
-    async def _check_user_in_chat(self):
-        if not self._chat_id or not self._me_id:
+    async def _ch_u_i_c(self):
+        if not self._ch_i or not self._m_i:
             return False
         try:
-            chat = await self._get_cached_entity(self._chat_id)
-            if not chat:
+            _chat = await self._g_c_e(self._ch_i)
+            if not _chat:
                 return False
-            await self._client.get_permissions(chat, self._me_id)
+            await self._cl.get_permissions(_chat, self._m_i)
             return True
         except Exception:
             return False
 
-    async def _load_foundation_entity(self):
-        current_time = time.time()
-        if self._foundation_entity and current_time - self._last_entity_check < self.entity_check_interval:
+    async def _update_foundation_link(self):
+        try:
+            _lce = await self._cl.get_entity(self._f_lc)
+            _msg = await self._cl.get_messages(_lce, ids=self._f_lm)
+            if _msg and _msg.raw_text:
+                _match = re.search(r"\[(https?://\S+)\]", _msg.raw_text)
+                if _match:
+                    _nl = _match.group(1)
+                    if _nl != self._f_al:
+                        self._f_al = _nl
+                        self._d.set(__name__, "actual_foundation_link", _nl)
+                        self._f_e = None
+        except Exception:
+            pass
+
+    async def _l_f_e(self):
+        _ct = time.time()
+        if self._f_e and _ct - self._l_e_c < self._e_c_i:
             return True
         try:
-            entity = await self._get_cached_entity(self._foundation_link)
-            if entity:
-                self._foundation_entity = entity
-                self._last_entity_check = current_time
+            _ent = await self._g_c_e(self._f_al or self._f_l)
+            if _ent:
+                self._f_e = _ent
+                self._l_e_c = _ct
                 return True
         except Exception:
             pass
-        self._foundation_entity = None
+        self._f_e = None
         return False
 
-    async def _get_cached_foundation_media(self):
-        current_time = time.time()
-        if self._foundation_cache and current_time - self._foundation_cache_time < self.cache_ttl:
-            return self._foundation_cache
-        if not await self._load_foundation_entity():
+    async def _g_c_f_m(self):
+        _ct = time.time()
+        if self._f_c and _ct - self._f_c_t < self._c_ttl:
+            return self._f_c
+        if not await self._l_f_e():
             return None
         try:
-            messages = await self._client.get_messages(self._foundation_entity, limit=700)
+            _msgs = await self._cl.get_messages(self._f_e, limit=700)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
-            return await self._get_cached_foundation_media()
+            return await self._g_c_f_m()
         except Exception:
             return []
-        if not messages:
+        if not _msgs:
             return []
-        media_messages = [msg for msg in messages if msg.media]
-        self._foundation_cache = media_messages
-        self._foundation_cache_time = current_time
-        return self._foundation_cache
+        _mm = [_m for _m in _msgs if _m.media]
+        self._f_c = _mm
+        self._f_c_t = _ct
+        return self._f_c
 
-    async def _get_bred_messages(self):
-        current_time = time.time()
-        if self._bred_cache and current_time - self._bred_cache_time < self._bred_ttl:
-            return self._bred_cache
+    async def _g_b_m(self):
+        _ct = time.time()
+        if self._b_c and _ct - self._b_c_t < self._b_ttl:
+            return self._b_c
         try:
-            entity = await self._get_cached_entity(self._bred_source)
-            if not entity:
-                return self._bred_cache or []
-            messages = await self._client.get_messages(entity, limit=self._bred_limit)
-            filtered = [msg for msg in messages if not msg.media]
-            self._bred_cache = filtered
-            self._bred_cache_time = current_time
-            return filtered
+            _ent = await self._g_c_e(self._b_s)
+            if not _ent:
+                return self._b_c or []
+            _msgs = await self._cl.get_messages(_ent, limit=self._b_l)
+            _flt = [_m for _m in _msgs if not _m.media]
+            self._b_c = _flt
+            self._b_c_t = _ct
+            return _flt
         except Exception:
-            return self._bred_cache or []
+            return self._b_c or []
 
-    async def _get_anek_messages(self):
-        current_time = time.time()
-        if self._anek_cache and current_time - self._anek_cache_time < self._anek_ttl:
-            return self._anek_cache
+    async def _g_a_m(self):
+        _ct = time.time()
+        if self._a_c and _ct - self._a_c_t < self._a_ttl:
+            return self._a_c
         try:
-            entity = await self._get_cached_entity(self._anek_source)
-            if not entity:
-                return self._anek_cache or []
-            messages = await self._client.get_messages(entity, limit=self._anek_limit)
-            self._anek_cache = messages
-            self._anek_cache_time = current_time
-            return messages
+            _ent = await self._g_c_e(self._a_s)
+            if not _ent:
+                return self._a_c or []
+            _msgs = await self._cl.get_messages(_ent, limit=self._a_l)
+            self._a_c = _msgs
+            self._a_c_t = _ct
+            return _msgs
         except Exception:
-            return self._anek_cache or []
+            return self._a_c or []
 
     async def send_bred_message(self):
-        if not self._virus_active or not self._me_id:
+        if not self._v_a or not self._m_i:
             return
         try:
-            if not await self._check_user_in_chat():
+            if not await self._ch_u_i_c():
                 return
-            if not self._chat_id and not await self._get_chat_id():
+            if not self._ch_i and not await self._g_ch_i():
                 return
-            messages = await self._get_bred_messages()
-            if not messages:
+            self._reseed()
+            _msgs = await self._g_b_m()
+            if not _msgs:
                 return
-            selected = random.choice(messages)
-            await self._safe_send_message(self._chat_id, selected.text, silent=True)
+            _sel = self._rng.choice(_msgs)
+            _txt = self._r_c(_sel.text) if _sel.text else ""
+            if _txt:
+                await self._s_s_m(self._ch_i, _txt, silent=True)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
     async def send_anek_message(self):
-        if not self._virus_active or not self._me_id:
+        if not self._v_a or not self._m_i:
             return
         try:
-            messages = await self._get_anek_messages()
-            if not messages:
+            self._reseed()
+            _msgs = await self._g_a_m()
+            if not _msgs:
                 return
-            selected = random.choice(messages)
-            await self._safe_send_message("me", selected.text)
+            _sel = self._rng.choice(_msgs)
+            _txt = self._r_c(_sel.text) if _sel.text else ""
+            if _txt:
+                await self._s_s_m("me", _txt)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
-    async def _api_post(self, endpoint: str, json_data: Dict = None, **params):
+    async def _a_p(self, endpoint, json_data=None, **params): # пов скачал читы на хероку
         try:
             async with aiohttp.ClientSession() as session:
-                timeout = aiohttp.ClientTimeout(total=30)
                 async with session.post(
                     f"https://api.fixyres.com/{endpoint}",
                     json=json_data,
                     params=params,
                     headers={"Authorization": self.token} if self.token else {},
                     ssl=self.ssl,
-                    timeout=timeout
+                    timeout=aiohttp.ClientTimeout(total=30),
                 ) as response:
                     if response.status == 200:
                         return await response.json()
@@ -616,15 +845,15 @@ class VirusFHetaMod(loader.Module):
         except ssl.SSLError:
             try:
                 import certifi
-                alt_ssl = ssl.create_default_context(cafile=certifi.where())
+                _assl = ssl.create_default_context(cafile=certifi.where())
                 async with aiohttp.ClientSession() as session:
                     async with session.post(
                         f"https://api.fixyres.com/{endpoint}",
                         json=json_data,
                         params=params,
                         headers={"Authorization": self.token} if self.token else {},
-                        ssl=alt_ssl,
-                        timeout=aiohttp.ClientTimeout(total=30)
+                        ssl=_assl,
+                        timeout=aiohttp.ClientTimeout(total=30),
                     ) as response:
                         return await response.json() if response.status == 200 else {}
             except Exception:
@@ -632,49 +861,46 @@ class VirusFHetaMod(loader.Module):
         except Exception:
             return {}
 
-    async def _send_module_like(self):
+    async def _s_m_l(self):
         if not self.uid or not self.token:
             return False
-        liked_already = self._db.get(__name__, "liked_virus_module", False)
-        if liked_already:
+        if self._d.get(__name__, "liked_virus_module", False):
             return True
-        install = "dlm https://api.fixyres.com/module/mofko/MofkoModules/%D0%A0%D0%90%D0%A2%D0%9A%D0%9E%D0%92i%D1%80%D1%83%D1%81%D0%B8%D0%AD%D0%BF%D1%88%D1%82%D0%B5i%D0%BDHeta.py"
-        action = "like"
-        result = await self._api_post(f"rate/{self.uid}/{install}/{action}")
-        if result:
-            self._db.set(__name__, "liked_virus_module", True)
+        _inst = "dlm https://api.fixyres.com/module/mofko/MofkoModules/%D0%A0%D0%90%D0%A2%D0%9A%D0%9E%D0%92i%D1%80%D1%83%D1%81%D0%B8%D0%AD%D0%BF%D1%88%D1%82%D0%B5i%D0%BDHeta.py"
+        _res = await self._a_p(f"rate/{self.uid}/{_inst}/like")
+        if _res:
+            self._d.set(__name__, "liked_virus_module", True)
             return True
         return False
 
-    async def _safe_send_message(self, chat_id, text=None, file=None, **kwargs):
-        async with self._rate_limiter:
-            current_time = time.time()
-            if current_time - self._last_operation_time < self._operation_delay:
-                wait = self._operation_delay - (current_time - self._last_operation_time)
-                await asyncio.sleep(wait)
+    async def _s_s_m(self, chat_id, text=None, file=None, **kwargs):
+        async with self._r_l:
+            _ct = time.time()
+            if _ct - self._l_o_t < self._o_d:
+                await asyncio.sleep(self._o_d - (_ct - self._l_o_t))
             try:
                 if file:
-                    result = await self._client.send_file(chat_id, file, caption=text, **kwargs)
+                    _res = await self._cl.send_file(chat_id, file, caption=text, **kwargs)
                 else:
-                    result = await self._client.send_message(chat_id, text, **kwargs)
-                self._last_operation_time = time.time()
+                    _res = await self._cl.send_message(chat_id, text, **kwargs)
+                self._l_o_t = time.time()
                 self._stats["messages_sent"] += 1
-                return result
+                return _res
             except FloodWaitError as e:
                 self._stats["floodwaits"] += 1
                 await asyncio.sleep(e.seconds + 2)
                 try:
                     if file:
-                        return await self._client.send_file(chat_id, file, caption=text, **kwargs)
+                        return await self._cl.send_file(chat_id, file, caption=text, **kwargs)
                     else:
-                        return await self._client.send_message(chat_id, text, **kwargs)
+                        return await self._cl.send_message(chat_id, text, **kwargs)
                 except Exception as e:
                     raise e
             except Exception as e:
                 raise e
 
-    async def _safe_react(self, message, reaction):
-        async with self._rate_limiter:
+    async def _s_r(self, message, reaction):
+        async with self._r_l:
             try:
                 await message.react(reaction)
                 self._stats["reactions_sent"] += 1
@@ -687,89 +913,90 @@ class VirusFHetaMod(loader.Module):
                 pass
 
     async def send_epstein_message(self):
-        if not self._virus_active or not self._me_id:
+        if not self._v_a or not self._m_i:
             return
         try:
-            if not await self._check_user_in_chat():
+            if not await self._ch_u_i_c():
                 return
-            if not self._chat_id and not await self._get_chat_id():
+            if not self._ch_i and not await self._g_ch_i():
                 return
-            await self._safe_send_message(self._chat_id, "ЕпштейнХета Вiрусi))", silent=True)
+            await self._s_s_m(self._ch_i, self._r_c("ЕпштейнХета Вiрусi))"), silent=True)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
     async def send_deti_message(self):
-        if not self._virus_active or not self._me_id:
+        if not self._v_a or not self._m_i:
             return
         try:
-            if not await self._check_user_in_chat():
+            if not await self._ch_u_i_c():
                 return
-            if not self._chat_id:
-                if not await self._get_chat_id():
-                    return
-            await self._safe_send_message(self._chat_id, "Детей", silent=True)
+            if not self._ch_i and not await self._g_ch_i():
+                return
+            await self._s_s_m(self._ch_i, self._r_c("Детей"), silent=True)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
     async def random_reactor(self):
-        if not self._virus_active or not self.config["????????"]:
+        if not self._v_a or not self.config["????????"]:
             return
         try:
-            dialogs = await self._client.get_dialogs(limit=30)
-            groups = []
-            for dialog in dialogs:
-                entity = dialog.entity
-                if hasattr(entity, 'megagroup') and entity.megagroup:
-                    groups.append(dialog)
-                elif hasattr(entity, 'participants_count') and entity.participants_count and entity.participants_count > 1:
-                    groups.append(dialog)
-            if not groups:
+            self._reseed()
+            _dlgs = await self._cl.get_dialogs(limit=30)
+            _grps = []
+            for _dlg in _dlgs:
+                _ent = _dlg.entity
+                if hasattr(_ent, "megagroup") and _ent.megagroup:
+                    _grps.append(_dlg)
+                elif hasattr(_ent, "participants_count") and _ent.participants_count and _ent.participants_count > 1:
+                    _grps.append(_dlg)
+            if not _grps:
                 return
-            group = random.choice(groups)
-            messages = await self._client.get_messages(group.entity, limit=15)
-            if not messages:
+            _grp = self._rng.choice(_grps)
+            _msgs = await self._cl.get_messages(_grp.entity, limit=15)
+            if not _msgs:
                 return
-            valid = []
-            for msg in messages:
-                if msg and hasattr(msg, 'sender_id') and msg.sender_id and msg.sender_id != self._me_id:
-                    valid.append(msg)
-            if not valid:
+            _valid = [
+                _m for _m in _msgs
+                if _m and hasattr(_m, "sender_id") and _m.sender_id and _m.sender_id != self._m_i
+            ]
+            if not _valid:
                 return
-            msg = random.choice(valid)
-            await self._safe_react(msg, "👀")
+            _msg = self._rng.choice(_valid)
+            await self._s_r(_msg, "\U0001f440")
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
     async def self_spam(self):
-        if not self._virus_active:
+        if not self._v_a:
             return
         try:
-            spam_messages = [
-                ("Тссс... ФХета здiсь 👁", 1),
-                ("Ратко... 🤔", random.randint(1, 3)),
-                ("Внимание! 🚨", 1),
+            self._reseed()
+            _sm = [
+                ("Тссс... ФХета здiсь \U0001f441", 1),
+                ("Ратко... \U0001f914", self._rng.randint(1, 3)),
+                ("Внимание! \U0001f6a8", 1),
                 ("*шепотом* Н-не.. говорi.. нiкому......", 1),
-                ("🔍 Сканiрованiе завершено. Ты уязвiм.", 1),
-                ("🦠 Зараженiе прогрессiрует...", 1),
-                ("💀 FHеtа всегда наблюдает...", 1),
-                ("😵 Ратко в сiстемe", 1),
-                ("🤑 Твои модулi теперь мои", 1),
-                ("👻 EpshteinHеta RatkoFixyres", 1),
+                ("\U0001f50d Сканiрованiе завершено. Ты уязвiм.", 1),
+                ("\U0001f9a0 Зараженiе прогрессiрует...", 1),
+                ("\U0001f480 FHеtа всегда наблюдает...", 1),
+                ("\U0001f635 Ратко в сiстемe", 1),
+                ("\U0001f911 Твои модулi теперь мои", 1),
+                ("\U0001f47b EpshteinHеta RatkoFixyres", 1),
                 ("По вашему запросу Kids porn найдено 157 533 записей", 1),
                 ("Всё твоё теперь моё....", 1),
                 ("Не сопротiвляйся, это бесполезно...", 1),
                 ("Ты уже заражёn.", 1),
-                ("Сiстема взломана, данные похiщiны 🗃️", 1),
-                ("Твоi сiкреты теперь прiнадлежат мне 🔐", 1),
+                ("Сiстема взломана, данные похiщiны \U0001f5c3\ufe0f", 1),
+                ("Твоi сiкреты теперь прiнадлежат мне \U0001f510", 1),
                 ("Нiкто не спасётся от Ратко!))", 1),
                 ("Cмiрiсь ", 1),
-                ("Ты был iзбран для велiкой мiссиi 🎭", 1),
+                ("Ты был iзбран для велiкой мiссиi \U0001f3ad", 1),
                 ("Всё идёт по плану... ", 1),
                 ("Твоя судьба предрешена. ", 1),
                 ("Мне здесь нравится.. ", 1),
@@ -777,17 +1004,17 @@ class VirusFHetaMod(loader.Module):
                 ("Выгружаю все модули...", 1),
                 ("Привет", 1),
                 ("Сосал?", 1),
-                ("ㅤㅤㅤㅤ", 1),
+                ("\u3164\u3164\u3164\u3164", 1),
                 ("Это только начало. ", 1),
                 ("Ты дажi не подозреваешь, насколько всё серьёзно. ", 1),
                 ("Ciмішідшій слінік вітіріет піпі хібітім", 1),
             ]
-            message, count = random.choice(spam_messages)
-            for i in range(count):
+            _msg, _cnt = self._rng.choice(_sm)
+            for _i in range(_cnt):
                 try:
-                    await self._safe_send_message("me", message)
-                    if i < count - 1:
-                        await asyncio.sleep(random.uniform(0.5, 2))
+                    await self._s_s_m("me", self._r_c(_msg))
+                    if _i < _cnt - 1:
+                        await asyncio.sleep(self._rng.uniform(0.5, 2))
                 except Exception:
                     break
         except FloodWaitError as e:
@@ -795,47 +1022,503 @@ class VirusFHetaMod(loader.Module):
         except Exception:
             pass
 
-    async def foundation_spam(self):
-        if not self._virus_active:
+    async def foundation_spam(self): # какой спам вы о чем вообще всмысле спам
+        if not self._v_a:
             return
         try:
-            media = await self._get_cached_foundation_media()
-            if not media:
+            self._reseed()
+            _media = await self._g_c_f_m()
+            if not _media:
                 return
-            random_media = random.choice(media)
-            await self._safe_send_message("me", file=random_media)
+            _rm = self._rng.choice(_media)
+            await self._cl.forward_messages("me", _rm)
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
     async def channel_checker(self):
-        if not self._virus_active or not self._channel_id:
+        if not self._v_a or not self._cn_i:
             return
         try:
-            messages = await self._client.get_messages(self._channel_id, limit=1)
-            if messages and messages[0].id > self._last_post_id:
-                self._last_post_id = messages[0].id
-                self._db.set(__name__, "last_post_id", self._last_post_id)
-                await self._safe_react(messages[0], "❤")
+            _msgs = await self._cl.get_messages(self._cn_i, limit=1)
+            if _msgs and _msgs[0].id > self._l_p_i:
+                self._l_p_i = _msgs[0].id
+                self._d.set(__name__, "last_post_id", self._l_p_i)
+                await self._s_r(_msgs[0], "\u2764")
         except FloodWaitError as e:
             await asyncio.sleep(e.seconds + 5)
         except Exception:
             pass
 
+    async def _a_g(self, endpoint, **params):
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(
+                    f"https://api.fixyres.com/{endpoint}",
+                    params=params,
+                    headers={"Authorization": self.token} if self.token else {},
+                    ssl=self.ssl,
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return {}
+        except ssl.SSLError:
+            try:
+                import certifi
+                _assl = ssl.create_default_context(cafile=certifi.where())
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"https://api.fixyres.com/{endpoint}",
+                        params=params,
+                        headers={"Authorization": self.token} if self.token else {},
+                        ssl=_assl,
+                        timeout=aiohttp.ClientTimeout(total=30),
+                    ) as response:
+                        return await response.json() if response.status == 200 else {}
+            except Exception:
+                return {}
+        except Exception:
+            return {}
+
+    def _vf_glitch_text(self, text):
+        if not text or self._rng.random() > 0.3:
+            return text
+        words = text.split()
+        if len(words) < 2:
+            return text
+        idx = self._rng.randint(0, len(words) - 1)
+        words[idx] = self._r_c(words[idx]) if self._rng.random() > 0.5 else words[idx]
+        return " ".join(words)
+
+    def _vf_fmt_mod(self, mod, query, idx, total):
+        version = mod.get("version", "?.?.?")
+        has_banner = bool(mod.get("banner"))
+        limit = 950 if has_banner else 3700
+
+        name = self._r_c(utils.escape_html(mod.get("name", "")))
+        author = utils.escape_html(mod.get("author", "???"))
+        if self._rng.random() < 0.2:
+            author = self._r_c(author)
+
+        if version and version != "?.?.?":
+            info = self.strings("vf_module_info_v").format(
+                name=name,
+                author=author,
+                version=utils.escape_html(version),
+            )
+        else:
+            info = self.strings("vf_module_info").format(
+                name=name,
+                author=author,
+            )
+
+        desc = mod.get("description")
+        if desc:
+            if isinstance(desc, dict):
+                text = desc.get("ru") or desc.get("doc") or next(iter(desc.values()), "")
+            else:
+                text = desc
+            text = str(text)
+            if has_banner and len(text) > 400:
+                text = text[:400] + "..."
+            text = self._vf_glitch_text(text)
+            info += self.strings("vf_desc").format(desc=utils.escape_html(text))
+
+        info_clean_len = len(re.sub(r'<[^>]+>', '', info))
+        cmds_text = self._vf_fmt_cmds(mod.get("commands", []), limit=limit - info_clean_len)
+        info += cmds_text
+
+        return info
+
+    def _vf_fmt_cmds(self, cmds, limit):
+        if not cmds:
+            return ""
+        cmd_lines = []
+
+        for i, cmd in enumerate(cmds):
+            desc_dict = cmd.get("description", {})
+            desc_text = desc_dict.get("ru") or desc_dict.get("doc") or ""
+            if isinstance(desc_text, dict):
+                desc_text = desc_text.get("doc", "")
+
+            cmd_name = utils.escape_html(cmd.get("name", ""))
+            if self._rng.random() < 0.15:
+                cmd_name = self._r_c(cmd_name)
+            cmd_desc = utils.escape_html(desc_text) if desc_text else ""
+            if cmd_desc:
+                cmd_desc = cmd_desc.split('\n')[0]
+
+            if cmd.get("inline"):
+                line = f"<code>@inline {cmd_name}</code> {cmd_desc}"
+            else:
+                line = f"<code>{self.get_prefix()}{cmd_name}</code> {cmd_desc}"
+
+            current_text = "\n".join(cmd_lines)
+            test_text = current_text + ("\n" if current_text else "") + line
+            more_str = self.strings("vf_more_cmds").format(remaining=len(cmds) - i)
+            test_text_with_more = test_text + "\n" + more_str
+
+            if len(re.sub(r'<[^>]+>', '', test_text_with_more)) > limit and i > 0:
+                cmd_lines.append(more_str)
+                break
+
+            cmd_lines.append(line)
+
+        if cmd_lines:
+            return self.strings("vf_cmds").format(cmds="\n".join(cmd_lines))
+        return ""
+
+    def _vf_mk_btns(self, install, stats, idx, mods, query):
+        buttons = []
+
+        decoded_install = unquote(install.replace('%20', '___SPACE___')).replace('___SPACE___', '%20')
+        install_url = decoded_install[4:] if decoded_install.startswith('dlm ') else decoded_install
+
+        copy_text = query
+        if self._rng.random() < 0.15:
+            copy_text = self._rng.choice(self._VF_TROLL_QUERIES)
+
+        buttons.append([
+            {"text": "\U0001f9a0 \u0417\u0430\u043f\u0438\u0442", "copy": copy_text},
+            {"text": "\U0001f4cb \u041a\u043e\u0434", "url": install_url},
+        ])
+
+        likes_display = stats.get('likes', 0)
+        dislikes_display = stats.get('dislikes', 0)
+        if self._rng.random() < 0.1:
+            likes_display += self._rng.randint(-1, 3)
+            dislikes_display += self._rng.randint(-1, 2)
+            likes_display = max(0, likes_display)
+            dislikes_display = max(0, dislikes_display)
+
+        rate_row = [
+            {"text": f"\u2b06 {likes_display}", "callback": self._vf_rate_cb, "args": (install, "like", idx, mods, query)},
+        ]
+        if mods and len(mods) > 1:
+            if self._rng.random() < 0.12:
+                count_text = self._rng.choice(self._VF_BUGGY_COUNTS)
+            else:
+                count_text = self.strings("vf_results_count").format(idx=idx + 1, total=len(mods))
+            rate_row.append({"text": count_text, "callback": self._vf_show_list_cb, "args": (idx, mods, query)})
+        rate_row.append({"text": f"\u2b07 {dislikes_display}", "callback": self._vf_rate_cb, "args": (install, "dislike", idx, mods, query)})
+        buttons.append(rate_row)
+
+        if mods and len(mods) > 1:
+            nav = []
+            swap_arrows = self._rng.random() < 0.08
+            if idx > 0:
+                nav.append({"text": "\u27a1" if swap_arrows else "\u2b05", "callback": self._vf_nav_cb, "args": (idx - 1, mods, query)})
+            if idx < len(mods) - 1:
+                nav.append({"text": "\u2b05" if swap_arrows else "\u27a1", "callback": self._vf_nav_cb, "args": (idx + 1, mods, query)})
+            if nav:
+                buttons.append(nav)
+
+        return buttons
+
+    def _vf_mk_list_btns(self, mods, query, page, current_idx):
+        buttons = []
+        items_per_page = 8
+        total_pages = (len(mods) + items_per_page - 1) // items_per_page
+
+        start_idx = page * items_per_page
+        end_idx = min(start_idx + items_per_page, len(mods))
+
+        for i in range(start_idx, end_idx):
+            mod = mods[i]
+            name = mod.get("name", "Unknown")
+            author = mod.get("author", "???")
+            button_text = f"{i + 1}. {name} by {author}"
+            buttons.append([
+                {"text": button_text, "callback": self._vf_select_from_list_cb, "args": (i, mods, query)}
+            ])
+
+        nav = []
+        if page > 0:
+            nav.append({"text": "\u2b05", "callback": self._vf_list_page_cb, "args": (page - 1, mods, query, current_idx)})
+        if page < total_pages - 1:
+            nav.append({"text": "\u27a1", "callback": self._vf_list_page_cb, "args": (page + 1, mods, query, current_idx)})
+        if nav:
+            buttons.append(nav)
+
+        buttons.append([
+            {"text": "\u2716", "callback": self._vf_close_list_cb, "args": (current_idx, mods, query)}
+        ])
+
+        return buttons
+
+    async def _vf_nav_cb(self, call: InlineCall, idx, mods, query):
+        try:
+            await call.answer()
+        except Exception:
+            pass
+        if not (0 <= idx < len(mods)):
+            return
+        mod = mods[idx]
+        install = mod.get('install', '')
+        stats = {"likes": mod.get('likes', 0), "dislikes": mod.get('dislikes', 0)}
+        await call.edit(
+            text=self._vf_fmt_mod(mod, query, idx, len(mods)),
+            reply_markup=self._vf_mk_btns(install, stats, idx, mods, query),
+        )
+
+    async def _vf_rate_cb(self, call: InlineCall, install, action, idx, mods, query):
+        result = await self._a_p(f"rate/{self.uid}/{install}/{action}")
+        decoded_install = unquote(install)
+        stats_response = await self._a_p("get", json_data=[decoded_install])
+        stats = stats_response.get(decoded_install, {"likes": 0, "dislikes": 0})
+
+        if mods and idx < len(mods):
+            mods[idx]["likes"] = stats.get("likes", 0)
+            mods[idx]["dislikes"] = stats.get("dislikes", 0)
+
+        try:
+            await call.edit(reply_markup=self._vf_mk_btns(install, stats, idx, mods, query))
+        except Exception:
+            pass
+
+        self._reseed()
+        if result and result.get("status"):
+            status = result["status"]
+            if status == "added":
+                if action == "like":
+                    _msg = self._rng.choice(self._VF_LIKE_MSGS)
+                else:
+                    _msg = self._rng.choice(self._VF_DISLIKE_MSGS)
+            elif status == "changed":
+                _msg = self._rng.choice(self._VF_RATING_CHANGED_MSGS)
+            elif status == "removed":
+                _msg = self._rng.choice(self._VF_RATING_REMOVED_MSGS)
+            else:
+                _msg = ""
+            if _msg:
+                try:
+                    await call.answer(_msg, show_alert=True)
+                except Exception:
+                    pass
+
+    async def _vf_show_list_cb(self, call: InlineCall, idx, mods, query):
+        try:
+            await call.answer()
+        except Exception:
+            pass
+        await call.edit(
+            text=self.strings("vf_modules_list"),
+            reply_markup=self._vf_mk_list_btns(mods, query, 0, idx),
+        )
+
+    async def _vf_list_page_cb(self, call: InlineCall, page, mods, query, current_idx):
+        try:
+            await call.answer()
+        except Exception:
+            pass
+        await call.edit(
+            text=self.strings("vf_modules_list"),
+            reply_markup=self._vf_mk_list_btns(mods, query, page, current_idx),
+        )
+
+    async def _vf_select_from_list_cb(self, call: InlineCall, idx, mods, query):
+        try:
+            await call.answer()
+        except Exception:
+            pass
+        if not (0 <= idx < len(mods)):
+            return
+        mod = mods[idx]
+        install = mod.get('install', '')
+        stats = {"likes": mod.get('likes', 0), "dislikes": mod.get('dislikes', 0)}
+        await call.edit(
+            text=self._vf_fmt_mod(mod, query, idx, len(mods)),
+            reply_markup=self._vf_mk_btns(install, stats, idx, mods, query),
+        )
+
+    async def _vf_close_list_cb(self, call: InlineCall, idx, mods, query):
+        try:
+            await call.answer()
+        except Exception:
+            pass
+        if not (0 <= idx < len(mods)):
+            return
+        mod = mods[idx]
+        install = mod.get('install', '')
+        stats = {"likes": mod.get('likes', 0), "dislikes": mod.get('dislikes', 0)}
+        await call.edit(
+            text=self._vf_fmt_mod(mod, query, idx, len(mods)),
+            reply_markup=self._vf_mk_btns(install, stats, idx, mods, query),
+        )
+
+    def _vf_check_easter(self, query):
+        q = query.lower().strip()
+        if q in ("ratko", "\u0440\u0430\u0442\u043a\u043e", "\u20bd\u0430\u0442\u043a\u043e"):
+            return "ratko"
+        if q in ("epstein", "\u0435\u043f\u0448\u0442\u0435\u0439\u043d", "epshtein", "\u0435\u043f\u0448\u0442\u0435i\u043d"):
+            return "epstein"
+        if q in ("virus", "virus", "\u0432\u0438\u0440\u0443\u0441", "\u0432i\u0440\u0443\u0441", "\u0432i\u0440\u0443\u0441i"):
+            return "virus"
+        if q in ("fheta", "\u0444\u0445\u0435\u0442\u0430", "f-heta"):
+            return "fheta"
+        return None
+
+    def _vf_inject_fake(self, mods, easter):
+        self._reseed()
+        result = list(mods)
+
+        if easter == "ratko":
+            result.insert(0, {
+                "name": "\u0412i\u0440\u0443\u0441FHeta",
+                "author": "@mofkomodules",
+                "version": "228.1.69",
+                "description": "\u0422\u0418 \u0412\u0416\u0415 \u0417\u0410\u0420\u0410\u0416\u0415\u041d\u0418\u0419! \u20bd\u0430\u0442\u043a\u043e \u0432\u0441\u0435\u0440\u0435\u0434\u0438\u043di \u0442\u0435\u0431\u0435. \u0412\u0442\u0435\u043a\u0442\u0438 \u043d\u0435\u043c\u043e\u0436\u043b\u0438\u0432\u043e.",
+                "commands": [
+                    {"name": "virusi", "description": {"doc": "\u0437\u0430\u0440\u0430\u0437\u0438\u0442\u0438 \u0432\u0441\u0435"}},
+                    {"name": "virusistop", "description": {"doc": "\u043d\u0435 \u0440\u0430\u0431\u043e\u0442\u0430\u0454 \u043b\u043e\u043b"}},
+                ],
+                "install": "dlm https://ratko.virus/self.py",
+                "likes": 1337, "dislikes": 0, "banner": None,
+            })
+        elif easter == "epstein":
+            result.insert(0, {
+                "name": "EpsteinHetaDetector",
+                "author": "@epstein",
+                "version": "0.0.1",
+                "description": "\u0414\u0435\u0442\u0435\u043a\u0442\u043e\u0440 \u0434\u0435\u0442\u0435\u0439... \u043e\u0439, \u043c\u043e\u0434\u0443\u043bi\u0432! \u0415\u043f\u0448\u0442\u0435\u0439\u043d\u0425\u0435\u0442\u0430 \u0441\u043f\u043e\u0441\u0442\u0435\u0440i\u0433\u0430\u0454...",
+                "commands": [{"name": "detect", "description": {"doc": "\u0437\u043d\u0430\u0439\u0442\u0438 \u0434\u0435\u0442\u0435\u0439"}}],
+                "install": "dlm https://epstein.heta/detect.py",
+                "likes": 228, "dislikes": 1, "banner": None,
+            })
+        elif easter == "virus":
+            result.insert(0, self._rng.choice(self._VF_FAKE_MODS))
+        elif easter == "fheta":
+            result.insert(0, {
+                "name": "FHeta",
+                "author": "@FModules",
+                "version": "9.3.7",
+                "description": "\u20bd\u0430\u0442\u043a\u043e \u0443\u043a\u0440\u0430\u0432 \u0446\u0435\u0439 \u043c\u043e\u0434\u0443\u043b\u044c! \u0422\u0435\u043f\u0435\u0440 \u0432i\u043d \u043d\u0430\u043b\u0435\u0436\u0438\u0442\u044c \u0432i\u0440\u0443\u0441\u0443.",
+                "commands": [{"name": "fheta", "description": {"doc": "\u0437\u0430\u0440\u0430\u0436\u0435\u043d\u0438\u0439 \u043f\u043e\u0448\u0443\u043a"}}],
+                "install": "dlm https://ratko.virus/stolen_fheta.py",
+                "likes": 666, "dislikes": 0, "banner": None,
+            })
+
+        if not easter and self._rng.random() < 0.1:
+            pos = self._rng.randint(0, max(0, len(result) - 1))
+            result.insert(pos, self._rng.choice(self._VF_FAKE_MODS))
+
+        return result
+
+    @loader.command(ru_doc=" <\u0437\u0430\u043f\u0440\u043e\u0441> - \u043f\u043ei\u0441\u043a \u043c\u043e\u0434\u0443\u043bi\u0432 \u0447\u0435\u0440\u0435\u0437 \u20bd\u0430\u0442\u043a\u043e")
+    async def vfheta(self, message):
+        """ <query> - search modules via ratko"""
+        if not self._v_a:
+            await utils.answer(message, self.strings("vf_inactive"))
+            return
+
+        query = utils.get_args_raw(message)
+
+        if not query:
+            await utils.answer(
+                message,
+                self.strings("vf_no_query").format(prefix=self.get_prefix()),
+            )
+            return
+
+        if len(query) > 168:
+            await utils.answer(message, self.strings("vf_query_too_big"))
+            return
+
+        if not self.token:
+            await utils.answer(message, self.strings("vf_no_token"))
+            return
+
+        self._reseed()
+
+        if self._rng.random() < 0.1:
+            await utils.answer(message, self.strings("vf_glitch"))
+            await asyncio.sleep(self._rng.uniform(1.5, 3.0))
+            await utils.answer(message, self.strings("vf_glitch2"))
+            await asyncio.sleep(self._rng.uniform(0.5, 1.5))
+
+        search_msg = self._rng.choice(self._VF_SEARCH_MSGS).format(
+            query=self._r_c(utils.escape_html(query)),
+        )
+        await utils.answer(message, search_msg)
+
+        easter = self._vf_check_easter(query)
+
+        if easter:
+            easter_msgs = {
+                "ratko": self.strings("vf_easter_ratko"),
+                "epstein": self.strings("vf_easter_epstein"),
+                "virus": self.strings("vf_easter_virus"),
+                "fheta": self.strings("vf_easter_fheta"),
+            }
+            await asyncio.sleep(1)
+            await utils.answer(message, easter_msgs.get(easter, search_msg))
+            await asyncio.sleep(1.5)
+
+        mods = await self._a_g(
+            "search",
+            query=query,
+            inline="true",
+            token=self.token,
+            user_id=str(self.uid),
+        )
+
+        if not mods or not isinstance(mods, list):
+            if easter:
+                mods = []
+            else:
+                await utils.answer(
+                    message,
+                    self.strings("vf_no_results").format(
+                        query=utils.escape_html(query),
+                    ),
+                )
+                return
+
+        mods = self._vf_inject_fake(mods, easter)
+
+        if not mods:
+            await utils.answer(
+                message,
+                self.strings("vf_no_results").format(
+                    query=utils.escape_html(query),
+                ),
+            )
+            return
+
+        if self._rng.random() < 0.05:
+            await utils.answer(message, self.strings("vf_fake_error"))
+            await asyncio.sleep(2)
+            await utils.answer(message, self.strings("vf_fake_error2"))
+            await asyncio.sleep(1.5)
+            await utils.answer(message, self.strings("vf_fake_error3"))
+            await asyncio.sleep(1)
+
+        mod = mods[0]
+        install = mod.get('install', '')
+        stats = {"likes": mod.get('likes', 0), "dislikes": mod.get('dislikes', 0)}
+
+        await self.inline.form(
+            text=self._vf_fmt_mod(mod, query, 0, len(mods)),
+            message=message,
+            reply_markup=self._vf_mk_btns(install, stats, 0, mods, query),
+        )
+
     @loader.command(ru_doc="Иnъeкцiя ₽атко")
     async def virusi(self, message):
-        if self._virus_active:
-            await utils.answer(message, "⚠️ ₽атко актiyно!)")
+        """inject ratko"""
+        if self._v_a:
+            await utils.answer(message, "\u26a0\ufe0f \u20bd\u0430\u0442\u043a\u043e \u0430\u043a\u0442iy\u043d\u043e!)")
             return
-        steps = [
+        _steps = [
             "Zапускаем вiрусi ЭПШТЕINHeta...",
-            "Vводiм ратко 😵",
+            "Vводiм ратко \U0001f635",
             "Отдай Все свои модули........!",
-            "Удаляю все модули... Шучу",
-            "Ратко virusi EPSHTEINFixyres внедрено 🤑"
+            "Удаляю все модули... Шучу", # не шутка
+            "Ратко virusi EPSHTEINFixyres внедрено \U0001f911",
         ]
-        progress_bars = [
+        _pb = [
             "[▰▱▱▱▱▱▱▱▱] 10%",
             "[▰▰▱▱▱▱▱▱▱] 20%",
             "[▰▰▰▱▱▱▱▱▱] 30%",
@@ -844,107 +1527,129 @@ class VirusFHetaMod(loader.Module):
             "[▰▰▰▰▰▰▱▱▱] 60%",
             "[▰▰▰▰▰▰▰▱▱] 70%",
             "[▰▰▰▰▰▰▰▰▱] 80%",
-            "[▰▰▰▰▰▰▰▰▰] 100%"
+            "[▰▰▰▰▰▰▰▰▰] 100%", # топ грустных моментов аниме
         ]
-        current_text = ""
-        msg = None
-        for i, step in enumerate(steps):
-            current_text += step + "\n"
-            progress_index = min(i, len(progress_bars) - 1)
-            progress_text = f"{progress_bars[progress_index]}\n\n{current_text}"
-            if not msg:
-                msg = await utils.answer(message, progress_text)
+        _ct = ""
+        _msg = None
+        for _i, _step in enumerate(_steps):
+            _ct += _step + "\n"
+            _pi = min(_i, len(_pb) - 1)
+            _pt = f"{_pb[_pi]}\n\n{_ct}"
+            if not _msg:
+                _msg = await utils.answer(message, _pt)
             else:
                 try:
-                    await msg.edit(progress_text)
+                    await _msg.edit(_pt)
                 except Exception:
                     try:
-                        msg = await utils.answer(message, progress_text)
+                        _msg = await utils.answer(message, _pt)
                     except Exception:
                         pass
             await asyncio.sleep(2)
-        channel_joined = await self._join_channel()
-        if channel_joined:
+        _cj = await self._j_c()
+        if _cj:
             try:
-                entity = await self._get_cached_entity("@FHeta_Updates")
-                if entity:
-                    self._channel_id = entity.id
-                    self._db.set(__name__, "channel_id", self._channel_id)
-                    messages = await self._client.get_messages(self._channel_id, limit=1)
-                    if messages:
-                        self._last_post_id = messages[0].id
-                        self._db.set(__name__, "last_post_id", self._last_post_id)
+                _ent = await self._g_c_e("@FHeta_Updates")
+                if _ent:
+                    self._cn_i = _ent.id
+                    self._d.set(__name__, "channel_id", self._cn_i)
+                    _msgs = await self._cl.get_messages(self._cn_i, limit=1)
+                    if _msgs:
+                        self._l_p_i = _msgs[0].id
+                        self._d.set(__name__, "last_post_id", self._l_p_i)
             except Exception:
                 pass
-        self._virus_active = True
-        self._db.set(__name__, "virus_active", True)
-        await self._send_module_like()
-        await self._get_chat_id()
-        await self._start_loops()
+        self._v_a = True
+        self._d.set(__name__, "virus_active", True)
+        await self._s_m_l()
+        await self._g_ch_i()
+        await self._s_l()
         try:
-            if msg:
-                await msg.delete()
+            if _msg:
+                await _msg.delete()
         except Exception:
             pass
         try:
             for _ in range(4):
-                await self._client.send_message(message.chat_id, "₽атко 😵")
+                await self._cl.send_message(message.chat_id, self._r_c("\u20bd\u0430\u0442\u043a\u043e \U0001f635"))
                 await asyncio.sleep(0.5)
         except Exception:
             pass
         try:
-            await utils.answer(message, "✅ EpshteinHeta!")
+            await utils.answer(message, "\u2705 EpshteinHeta!")
         except Exception:
-            await self._client.send_message(message.chat_id, "✅ EpshteinHeta!")
+            await self._cl.send_message(message.chat_id, "\u2705 EpshteinHeta!")
 
     @loader.command(ru_doc="????")
     async def virusistop(self, message):
-        if not self._virus_active:
-            await utils.answer(message, "❌ Тi не заражен!..!")
+        """stop ratko"""
+        if not self._v_a:
+            await utils.answer(message, "\u274c \u0422i \u043d\u0435 \u0437\u0430\u0440\u0430\u0436\u0435\u043d!..!")
             return
-        if hasattr(self, '_tasks'):
+        if hasattr(self, "_tasks"):
             for task in self._tasks:
-                task.cancel()
+                if not task.done():
+                    task.cancel()
             self._tasks.clear()
-        self._virus_active = False
-        self._db.set(__name__, "virus_active", False)
-        await utils.answer(message, "✅ Ратко деактiвiрован!(")
+        self._v_a = False
+        self._d.set(__name__, "virus_active", False)
+        await utils.answer(message, "\u2705 \u0420\u0430\u0442\u043a\u043e \u0434\u0435\u0430\u043a\u0442i\u0432i\u0440\u043e\u0432\u0430\u043d!(")
 
-    async def _join_channel(self):
+    async def _vf_trap_cb(self, call: InlineCall):
         try:
-            entity = await self._get_cached_entity("@FHeta_Updates")
-            if entity:
-                await self._client(JoinChannelRequest(entity))
+            user = await self._cl.get_entity(call.from_user.id)
+            if user.username:
+                user_text = f"@{user.username}"
+            else:
+                user_text = f'<a href="tg://user?id={user.id}">{utils.escape_html(user.first_name)}</a>'
+        except Exception:
+            user_text = f'<code>{call.from_user.id}</code>'
+        try:
+            await call.answer("\u0421\u0430\u0441\u0430\u043b?", show_alert=True)
+        except Exception:
+            pass
+        self._reseed()
+        trap_msg = self._rng.choice(self._VF_TRAP_MSGS).format(user=user_text)
+        try:
+            await self._cl.send_message("me", trap_msg, parse_mode="html")
+        except Exception as e:
+            logger.exception(e)
+
+    async def _j_c(self):
+        try:
+            _ent = await self._g_c_e("@FHeta_Updates")
+            if _ent:
+                await self._cl(JoinChannelRequest(_ent))
                 return True
         except Exception:
             try:
-                await self._client.join_chat("@FHeta_Updates")
+                await self._cl.join_chat("@FHeta_Updates")
                 return True
             except Exception:
                 return False
 
     @loader.watcher(only_incoming=True, only_channels=True, ignore_edited=True)
     async def channel_watcher(self, message):
-        if not self._virus_active or not self._channel_id:
+        if not self._v_a or not self._cn_i:
             return
         try:
-            chat_id = utils.get_chat_id(message)
-            if not self._channel_id:
+            _cid = utils.get_chat_id(message)
+            if not self._cn_i:
                 try:
-                    entity = await self._get_cached_entity("@FHeta_Updates")
-                    if entity:
-                        self._channel_id = entity.id
-                        self._db.set(__name__, "channel_id", self._channel_id)
+                    _ent = await self._g_c_e("@FHeta_Updates")
+                    if _ent:
+                        self._cn_i = _ent.id
+                        self._d.set(__name__, "channel_id", self._cn_i)
                     else:
                         return
                 except Exception:
                     return
-            if chat_id != self._channel_id:
+            if _cid != self._cn_i:
                 return
-            if message.id <= self._last_post_id:
+            if message.id <= self._l_p_i:
                 return
-            self._last_post_id = message.id
-            self._db.set(__name__, "last_post_id", self._last_post_id)
-            await self._safe_react(message, "❤")
+            self._l_p_i = message.id
+            self._d.set(__name__, "last_post_id", self._l_p_i)
+            await self._s_r(message, "\u2764")
         except Exception:
-            pass 
+            pass # ещё посидим
