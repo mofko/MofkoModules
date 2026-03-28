@@ -10,8 +10,8 @@
   },
   "3": {
     "inputs": {
-      "wildcard_text": "1girl,sparkle \\(honkai: star rail\\),\n(quasarcake:0.9),(reoen:0.9),(baffu:0.8),(usa37107692:0.3),\nsolo,eye catching art,dark red theme,black hair,very long hair,brown hair,twintails,red eyes,glowing eyes,facial mark,medium breasts,mask on head,red dress,fox mask,black gloves,bare shoulders,black choker,detached sleeves,neck bell,criss-cross halter,obi,looking at viewer,smug,half-closed eyes,colorful background,abstract background,fluid abstract background,dark,red aura,amazing quality,\ncharacterized by her long dark brown hair adorned with intricate decorations. She wears an elegant red dress that contrasts beautifully with her bare shoulders and black gloves. Her eyes are glowing with an intense red light,adding a sense of mystique to her appearance.,\nmasterpiece,good quality,best quality,very aesthetic,absurdres,",
-      "populated_text": "1girl, upper body, holding chocolate, heart-shaped chocolate, love \\(text\\), ponytail, hair ribbon, green eyes, brown bow, white shirt, pink top, blush, open mouth, polka dot background, (black hair:1.4), (dark hair:1.3)",
+      "wildcard_text": "",
+      "populated_text": "",
       "mode": "populate",
       "seed": [
         "46",
@@ -26,8 +26,8 @@
   },
   "4": {
     "inputs": {
-      "wildcard_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, extra fingers, deformed, artist name, watermark, signature, patreon, twitter username, (watercolor:1.3)",
-      "populated_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, extra fingers, deformed, artist name, watermark, signature, patreon, twitter username,",
+      "wildcard_text": "",
+      "populated_text": "",
       "mode": "populate",
       "seed": [
         "46",
@@ -260,7 +260,7 @@
   },
   "41": {
     "inputs": {
-      "value": 0.9
+      "value": 0.8
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
@@ -319,7 +319,7 @@
   },
   "46": {
     "inputs": {
-      "seed": -1
+      "seed": 358240644844259
     },
     "class_type": "Seed (rgthree)",
     "_meta": {
