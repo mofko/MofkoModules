@@ -2,9 +2,7 @@ Bredik
 FavoriteMusic
 Foundation
 M:Forward
-MTagEditor
 MindfulEdit
 MusicS
 SelfDestruct
 РАТКОВiрусиЭпштеiнHeta
-StarsPriceParser
