@@ -135,8 +135,8 @@
 # .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
 # meta developer: @mofkomodules
 # name: ВiрусFHeta
-# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260205_171925_562.jpg
-# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260205_171925_562.jpg
+# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_492.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_492.png
 # meta fhsdesc: fun, troll, fheta virus, virus, ratko, rofl, fheta, mofko, NSFW, хуйня, вирус
 # Смартфон Vivo
 # .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
@@ -145,7 +145,7 @@
 # ౨ৎ     ( ｡ﾉω＼｡)  °     ౨ৎ
 # .      ׄ     ִ      ׄ     .     ִ      ׄ     ִ      ׄ      .  
 
-__version__ = (42, 666, 228) # смешнок версия
+__version__ = (666, 666, 666) # смешнок версия
 
 import asyncio
 import hashlib
