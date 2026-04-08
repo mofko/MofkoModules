@@ -1,12 +1,10 @@
-__version__ = (2, 3, 0)
-# diff: 2.0.0 heroku + update notification
+__version__ = (2, 3, 1)
 # meta developer: @mofkomodules
-# original author module: @HaloperidolPills 
-# name: Foundation
-# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
-# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
-# description: best NSFW & SFW random module
-# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw, детей
+# Original author module: @HaloperidolPills 
+# Name: Foundation
+# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
+# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw
 
 import random
 import logging
@@ -213,6 +211,8 @@ class Foundation(loader.Module):
         self._media_cache = {}
         self._video_cache = {}
         self._cache_time = {}
+        self._recent_media_ids = {"any": [], "video": [], "sfw_any": []}
+        self._recent_media_limit = 20
         self.entity = None
         self._last_entity_check = 0
         self.entity_check_interval = 300
@@ -687,6 +687,20 @@ class Foundation(loader.Module):
         except Exception as e:
             logger.warning(f"Failed to auto-delete message {message_to_delete.id} in chat {message_to_delete.chat_id}: {e}")
 
+    def _pick_random_media(self, media_list, pool_key: str):
+        recent_ids = self._recent_media_ids.setdefault(pool_key, [])
+        available_media = [
+            item for item in media_list
+            if getattr(item, "id", None) not in recent_ids
+        ]
+        selected = random.choice(available_media or media_list)
+        selected_id = getattr(selected, "id", None)
+        if selected_id is not None:
+            recent_ids.append(selected_id)
+            if len(recent_ids) > self._recent_media_limit:
+                del recent_ids[:-self._recent_media_limit]
+        return selected
+
     async def _send_media(self, message: Message, media_type: str = "any", delete_command: bool = False, is_sfw: bool = False):
         try:
             if is_sfw:
@@ -711,7 +725,8 @@ class Foundation(loader.Module):
                         await utils.answer(message, self.strings["no_videos"])
                     return
             
-            random_message = random.choice(media_list)
+            pool_key = "sfw_any" if is_sfw else media_type
+            random_message = self._pick_random_media(media_list, pool_key)
             
             sent_message = await self.client.send_message(
                 message.peer_id,
