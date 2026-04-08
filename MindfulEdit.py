@@ -1,7 +1,9 @@
-__version__ = (1, 3, 1)
+__version__ = (1, 4, 0)
 # meta developer: @mofkomodules
-# name: MindfulEdit
-# meta fhsdesc: random, edits, fun
+# Name: MindfulEdit
+# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_101.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_101.png
+# meta fhsdesc: random, edits, fun, мофко, эдиты, рандом
 
 from herokutl.types import Message
 from .. import loader, utils
@@ -61,6 +63,8 @@ class MindfulEdit(loader.Module):
         )
         self._videos_cache = {}
         self._cache_time = {}
+        self._recent_video_ids = {}
+        self._recent_video_limit = 20
         self.main_channel = "https://t.me/MindfulEdit"
         self.cache_ttl = 3600
         self.messages_limit = 1000
@@ -68,6 +72,11 @@ class MindfulEdit(loader.Module):
     async def client_ready(self, client, db):
         self.client = client
         self._db = db
+
+    async def on_unload(self):
+        self._videos_cache.clear()
+        self._cache_time.clear()
+        self._recent_video_ids.clear()
 
     def _get_all_channels(self) -> List[str]:
         channels = [self.main_channel]
@@ -111,13 +120,29 @@ class MindfulEdit(loader.Module):
         except Exception as e:
             logger.error(f"Error deleting inline message: {e}")
 
-    async def _retry_callback(self, call: InlineCall):
+    async def _retry_callback(self, call: InlineCall, chat_id: int):
         try:
             await call.delete()
-            chat_id = call.form["chat"]
+        except Exception:
+            pass
+        try:
             await self._send_random_edit_to_chat(chat_id)
         except Exception as e:
             logger.error(f"Error in retry callback: {e}")
+
+    def _pick_random_video(self, videos: List[Message], channel: str) -> Message:
+        recent_ids = self._recent_video_ids.setdefault(channel, [])
+        available_videos = [
+            video for video in videos
+            if getattr(video, "id", None) not in recent_ids
+        ]
+        selected_video = random.choice(available_videos or videos)
+        selected_id = getattr(selected_video, "id", None)
+        if selected_id is not None:
+            recent_ids.append(selected_id)
+            if len(recent_ids) > self._recent_video_limit:
+                del recent_ids[:-self._recent_video_limit]
+        return selected_video
 
     async def _send_random_edit_to_chat(self, chat_id: int, reply_to_msg_id: int = None):
         try:
@@ -133,7 +158,7 @@ class MindfulEdit(loader.Module):
             for channel in channels:
                 videos = await self._get_videos(channel)
                 if videos:
-                    selected_video = random.choice(videos)
+                    selected_video = self._pick_random_video(videos, channel)
                     break
             
             if not selected_video:
@@ -159,8 +184,8 @@ class MindfulEdit(loader.Module):
                     message=status_msg,
                     reply_markup=[
                         [
-                            {"text": self.strings["btn_retry"], "callback": self._retry_callback},
-                            {"text": self.strings["btn_close"], "callback": self._close_callback}
+                            {"text": self.strings["btn_retry"], "callback": self._retry_callback, "args": (chat_id,), "style": "success"},
+                            {"text": self.strings["btn_close"], "callback": self._close_callback, "style": "danger"}
                         ]
                     ]
                 )
