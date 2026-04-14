@@ -6,3 +6,4 @@ MindfulEdit
 MusicS
 SelfDestruct
 РАТКОВiрусиЭпштеiнHeta
+ComfyImageGen
