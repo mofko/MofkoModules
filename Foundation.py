@@ -1,9 +1,10 @@
-__version__ = (2, 3, 1)
+__version__ = (2, 4, 0)
+# diff: better antispam logic
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
-# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
-# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
+# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
+# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
 # meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw
 
 import random
@@ -11,16 +12,13 @@ import logging
 import asyncio
 import time
 import aiohttp
-import ssl
 import re
-from urllib.parse import quote_plus
-from collections import defaultdict
+from collections import defaultdict, deque
 from herokutl.types import Message
 from .. import loader, utils
 from telethon.errors import FloodWaitError, UserNotParticipantError, ChannelPrivateError
 from telethon import functions
 from ..inline.types import InlineCall
-from cachetools import TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -227,6 +225,10 @@ class Foundation(loader.Module):
         self.update_source_url = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/Foundation.py"
         self.update_check_interval = 3600
         self._update_check_task = None
+        self.foundation_link_update_interval = 300
+        self._last_foundation_link_update = 0
+        self._foundation_link_lock = asyncio.Lock()
+        self._nsfw_cache_lock = asyncio.Lock()
         
         self._sfw_channel_username = "sfwfond"
         self._sfw_channel_entity = None
@@ -234,15 +236,13 @@ class Foundation(loader.Module):
         self._sfw_media_cache = {}
         self._sfw_cache_time = {}
         self._sfw_cache_ttl = 600
+        self._sfw_cache_lock = asyncio.Lock()
 
-        self._spam_data = {
-            'triggers': defaultdict(list),
-            'blocked': {},
-            'global_blocked': False,
-            'global_block_time': 0
-        }
-        
-        self._block_cache = TTLCache(maxsize=1000, ttl=15)
+        self._spam_events = defaultdict(deque)
+        self._chat_spam_events = defaultdict(deque)
+        self._spam_blocks = {}
+        self._chat_spam_blocks = {}
+        self._spam_lock = asyncio.Lock()
         
         self.SPAM_LIMIT = 3
         self.SPAM_WINDOW = 3
@@ -281,7 +281,6 @@ class Foundation(loader.Module):
         self.client = client
         self._db = db
         self.triggers = self._db.get(__name__, "triggers", {})
-        self._load_spam_data()
         
         self.actual_foundation_link = self._db.get(__name__, "actual_foundation_link", None)
         self.uid = (await self.client.get_me()).id
@@ -290,7 +289,6 @@ class Foundation(loader.Module):
         await self._load_entity()
         await self._load_required_chat_entity()
         await self._load_sfw_entity()
-        await self._send_fheta_like()
         await self._check_module_update()
         if self._update_check_task and not self._update_check_task.done():
             self._update_check_task.cancel()
@@ -367,66 +365,82 @@ class Foundation(loader.Module):
                 logger.exception(e)
 
     async def _update_foundation_link_on_demand(self):
-        try:
-            link_channel_entity = await self.client.get_entity(self.link_channel_username)
-            message = await self.client.get_messages(link_channel_entity, ids=self.link_message_id)
+        current_time = time.time()
+        if current_time - self._last_foundation_link_update < self.foundation_link_update_interval:
+            return
+        async with self._foundation_link_lock:
+            current_time = time.time()
+            if current_time - self._last_foundation_link_update < self.foundation_link_update_interval:
+                return
+            self._last_foundation_link_update = current_time
+            try:
+                link_channel_entity = await self.client.get_entity(self.link_channel_username)
+                message = await self.client.get_messages(link_channel_entity, ids=self.link_message_id)
+                
+                if message and message.raw_text:
+                    match = re.search(r"(https?://t\.me/[^\s\]]+)", message.raw_text)
+                    if match:
+                        new_link = match.group(1)
+                        if new_link != self.actual_foundation_link:
+                            logger.info(f"Foundation link updated: {self.actual_foundation_link} -> {new_link}")
+                            self.actual_foundation_link = new_link
+                            self._db.set(__name__, "actual_foundation_link", new_link)
+                            self._last_entity_check = 0
+                            await self._load_entity()
+            except Exception as e:
+                logger.warning(f"Error updating foundation link from channel: {e}. Using cached link if available.")
+    
+    def _prune_spam_events(self, events, current_time, window):
+        while events and current_time - events[0] > window:
+            events.popleft()
+
+    def _is_spam_blocked(self, blocks, key, current_time):
+        block_until = blocks.get(key)
+        if not block_until:
+            return False
+        if current_time < block_until:
+            return True
+        del blocks[key]
+        return False
+
+    def _spam_user_key(self, user_id, chat_id):
+        if user_id is None:
+            return f"unknown:{chat_id}"
+        return f"{user_id}:{chat_id}"
+
+    async def _check_spam(self, user_id, chat_id):
+        if not self.config["spam_protection"]:
+            return False
+        
+        current_time = time.time()
+        user_key = self._spam_user_key(user_id, chat_id)
+        chat_key = str(chat_id)
+        
+        async with self._spam_lock:
+            if self._is_spam_blocked(self._chat_spam_blocks, chat_key, current_time):
+                return True
+            if self._is_spam_blocked(self._spam_blocks, user_key, current_time):
+                return True
             
-            if message and message.raw_text:
-                match = re.search(r"(https?://t\.me/[^\s\]]+)", message.raw_text)
-                if match:
-                    new_link = match.group(1)
-                    if new_link != self.actual_foundation_link:
-                        logger.info(f"Foundation link updated: {self.actual_foundation_link} -> {new_link}")
-                        self.actual_foundation_link = new_link
-                        self._db.set(__name__, "actual_foundation_link", new_link)
-                        self._last_entity_check = 0
-                        await self._load_entity()
-        except Exception as e:
-            logger.warning(f"Error updating foundation link from channel: {e}. Using cached link if available.")
-    
-    async def _send_fheta_like(self):
-        if self.db.get(__name__, "liked_fheta", False): return
-
-        token = self.db.get("FHeta", "token")
-        if not token: return
-
-        try:
-            install_link = "dlm https://api.fixyres.com/module/mofko/mofkomodules/foundation.py"
-            endpoint = f"rate/{self.uid}/{quote_plus(install_link)}/like"
-
-            _ssl = ssl.create_default_context()
-            _ssl.check_hostname = False
-            _ssl.verify_mode = ssl.CERT_NONE
-
-            async with aiohttp.ClientSession() as s:
-                async with s.post(
-                    f"https://api.fixyres.com/{endpoint}",
-                    headers={"Authorization": token},
-                    ssl=_ssl,
-                    timeout=15
-                ) as r:
-                    if r.status == 200:
-                        self.db.set(__name__, "liked_fheta", True)
-        except Exception:
-            pass
-
-    def _load_spam_data(self):
-        saved = self._db.get(__name__, "spam_protection", {})
-        if saved:
-            self._spam_data['triggers'] = defaultdict(list, saved.get('triggers', {}))
-            self._spam_data['blocked'] = saved.get('blocked', {})
-            self._spam_data['global_blocked'] = saved.get('global_blocked', False)
-            self._spam_data['global_block_time'] = saved.get('global_block_time', 0)
-    
-    def _save_spam_data(self):
-        triggers_dict = dict(self._spam_data['triggers'])
-        data_to_save = {
-            'triggers': triggers_dict,
-            'blocked': self._spam_data['blocked'],
-            'global_blocked': self._spam_data['global_blocked'],
-            'global_block_time': self._spam_data['global_block_time']
-        }
-        self._db.set(__name__, "spam_protection", data_to_save)
+            user_events = self._spam_events[user_key]
+            chat_events = self._chat_spam_events[chat_key]
+            
+            self._prune_spam_events(user_events, current_time, self.SPAM_WINDOW)
+            self._prune_spam_events(chat_events, current_time, self.GLOBAL_WINDOW)
+            
+            if len(user_events) >= self.SPAM_LIMIT:
+                self._spam_blocks[user_key] = current_time + self.BLOCK_DURATION
+                user_events.clear()
+                return True
+            
+            if len(chat_events) >= self.GLOBAL_LIMIT:
+                self._chat_spam_blocks[chat_key] = current_time + self.BLOCK_DURATION
+                chat_events.clear()
+                return True
+            
+            user_events.append(current_time)
+            chat_events.append(current_time)
+            return False
 
     async def _load_entity(self):
         current_time = time.time()
@@ -539,43 +553,59 @@ class Foundation(loader.Module):
 
     async def _get_cached_media(self, media_type="any"):
         current_time = time.time()
-        cache_key = media_type
-        if (cache_key in self._cache_time and 
-            current_time - self._cache_time[cache_key] < self.cache_ttl):
-            if cache_key == "any" and cache_key in self._media_cache:
-                return self._media_cache[cache_key]
-            elif cache_key == "video" and cache_key in self._video_cache:
-                return self._video_cache[cache_key]
-        if not await self._load_entity():
-            return None
-        try:
-            messages = await self.client.get_messages(self.entity, limit=1500)
-        except FloodWaitError as e:
-            logger.warning(f"FloodWait for {e.seconds} seconds")
-            await asyncio.sleep(e.seconds)
-            return await self._get_cached_media(media_type)
-        except (UserNotParticipantError, ChannelPrivateError) as e:
-            logger.warning(f"Userbot is not participant or channel is private: {e}")
-            return None 
-        except ValueError as e:
-            if "Could not find the entity" in str(e):
+        cache_key = "messages"
+        if (
+            cache_key in self._cache_time and
+            current_time - self._cache_time[cache_key] < self.cache_ttl
+        ):
+            if media_type == "any":
+                if "any" in self._media_cache:
+                    return self._media_cache["any"]
+            elif "video" in self._video_cache:
+                return self._video_cache["video"]
+        async with self._nsfw_cache_lock:
+            current_time = time.time()
+            if (
+                cache_key in self._cache_time and
+                current_time - self._cache_time[cache_key] < self.cache_ttl
+            ):
+                if media_type == "any":
+                    if "any" in self._media_cache:
+                        return self._media_cache["any"]
+                elif "video" in self._video_cache:
+                    return self._video_cache["video"]
+            if not await self._load_entity():
                 return None
-            raise e
-        if not messages:
-            return []
-        if media_type == "any":
+            while True:
+                try:
+                    messages = await self.client.get_messages(self.entity, limit=1500)
+                    break
+                except FloodWaitError as e:
+                    logger.warning(f"FloodWait for {e.seconds} seconds")
+                    await asyncio.sleep(e.seconds)
+                except (UserNotParticipantError, ChannelPrivateError) as e:
+                    logger.warning(f"Userbot is not participant or channel is private: {e}")
+                    return None
+                except ValueError as e:
+                    if "Could not find the entity" in str(e):
+                        return None
+                    raise e
+            if not messages:
+                self._media_cache["any"] = []
+                self._video_cache["video"] = []
+                self._cache_time[cache_key] = time.time()
+                return []
             media_messages = [msg for msg in messages if msg.media]
-            self._media_cache["any"] = media_messages
-        else:
             video_messages = []
-            for msg in messages:
-                if msg.media and hasattr(msg.media, 'document'):
+            for msg in media_messages:
+                if hasattr(msg.media, 'document'):
                     attr = getattr(msg.media.document, 'mime_type', '')
                     if 'video' in attr:
                         video_messages.append(msg)
+            self._media_cache["any"] = media_messages
             self._video_cache["video"] = video_messages
-        self._cache_time[cache_key] = current_time
-        return self._media_cache.get("any") if media_type == "any" else self._video_cache.get("video")
+            self._cache_time[cache_key] = time.time()
+            return self._media_cache["any"] if media_type == "any" else self._video_cache["video"]
     
     async def _get_sfw_cached_media(self):
         current_time = time.time()
@@ -583,102 +613,35 @@ class Foundation(loader.Module):
         if (cache_key in self._sfw_cache_time and
             current_time - self._sfw_cache_time[cache_key] < self._sfw_cache_ttl):
             return self._sfw_media_cache[cache_key]
-        if not await self._load_sfw_entity():
-            return None
-        try:
-            messages = await self.client.get_messages(self._sfw_channel_entity, limit=1000)
-        except FloodWaitError as e:
-            logger.warning(f"FloodWait for {e.seconds} seconds on SFW channel")
-            await asyncio.sleep(e.seconds)
-            return await self._get_sfw_cached_media()
-        except (UserNotParticipantError, ChannelPrivateError) as e:
-            logger.warning(f"Userbot is not participant or SFW channel is private: {e}")
-            return None
-        except ValueError as e:
-            if "Could not find the entity" in str(e):
+        async with self._sfw_cache_lock:
+            current_time = time.time()
+            if (cache_key in self._sfw_cache_time and
+                current_time - self._sfw_cache_time[cache_key] < self._sfw_cache_ttl):
+                return self._sfw_media_cache[cache_key]
+            if not await self._load_sfw_entity():
                 return None
-            raise e
-        if not messages:
-            return []
-        sfw_media_messages = [msg for msg in messages if msg.media]
-        self._sfw_media_cache[cache_key] = sfw_media_messages
-        self._sfw_cache_time[cache_key] = current_time
-        return sfw_media_messages
-    
-    def _check_global_spam(self):
-        if not self.config["spam_protection"]:
-            return False
-        
-        current_time = time.time()
-        
-        if self._spam_data['global_blocked']:
-            if current_time - self._spam_data['global_block_time'] < self.BLOCK_DURATION:
-                return True
-            else:
-                self._spam_data['global_blocked'] = False
-                self._save_spam_data()
-                return False
-        
-        recent_triggers = 0
-        ten_seconds_ago = current_time - self.GLOBAL_WINDOW
-        
-        for user_data in self._spam_data['triggers'].values():
-            recent_in_user = [t for t in user_data if t > ten_seconds_ago]
-            recent_triggers += len(recent_in_user)
-        
-        if recent_triggers >= self.GLOBAL_LIMIT:
-            self._spam_data['global_blocked'] = True
-            self._spam_data['global_block_time'] = current_time
-            self._save_spam_data()
-            return True
-        
-        return False
-    
-    def _check_user_spam(self, user_id, chat_id):
-        if not self.config["spam_protection"]:
-            return False
-        
-        current_time = time.time()
-        key = f"{user_id}:{chat_id}"
-        
-        if key in self._block_cache:
-            return True
-        
-        if key in self._spam_data['blocked']:
-            block_until = self._spam_data['blocked'][key]
-            if current_time < block_until:
-                self._block_cache[key] = True
-                return True
-            else:
-                del self._spam_data['blocked'][key]
-        
-        timestamps = self._spam_data['triggers'][key]
-        
-        three_seconds_ago = current_time - self.SPAM_WINDOW
-        recent_timestamps = [ts for ts in timestamps if ts > three_seconds_ago]
-        
-        if len(recent_timestamps) >= self.SPAM_LIMIT:
-            block_until = current_time + self.BLOCK_DURATION
-            self._spam_data['blocked'][key] = block_until
-            self._block_cache[key] = True
-            self._spam_data['triggers'][key] = []
-            self._save_spam_data()
-            return True
-        
-        recent_timestamps.append(current_time)
-        self._spam_data['triggers'][key] = recent_timestamps[-20:]
-        
-        self._save_spam_data()
-        return False
-
-    async def _check_spam(self, user_id, chat_id):
-        if self._check_global_spam():
-            return True
-        
-        if self._check_user_spam(user_id, chat_id):
-            return True
-        
-        return False
+            while True:
+                try:
+                    messages = await self.client.get_messages(self._sfw_channel_entity, limit=1000)
+                    break
+                except FloodWaitError as e:
+                    logger.warning(f"FloodWait for {e.seconds} seconds on SFW channel")
+                    await asyncio.sleep(e.seconds)
+                except (UserNotParticipantError, ChannelPrivateError) as e:
+                    logger.warning(f"Userbot is not participant or SFW channel is private: {e}")
+                    return None
+                except ValueError as e:
+                    if "Could not find the entity" in str(e):
+                        return None
+                    raise e
+            if not messages:
+                self._sfw_media_cache[cache_key] = []
+                self._sfw_cache_time[cache_key] = time.time()
+                return []
+            sfw_media_messages = [msg for msg in messages if msg.media]
+            self._sfw_media_cache[cache_key] = sfw_media_messages
+            self._sfw_cache_time[cache_key] = time.time()
+            return sfw_media_messages
 
     async def _schedule_delete(self, message_to_delete: Message, delay: int):
         await asyncio.sleep(delay)
@@ -759,9 +722,9 @@ class Foundation(loader.Module):
     )
     async def fond(self, message: Message):
         """Send NSFW media from Foundation"""
-        await self._update_foundation_link_on_demand()
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
+        await self._update_foundation_link_on_demand()
         if not await self._ensure_foundation_access(message):
             return
         await self._send_media(message, "any", delete_command=True)
@@ -778,9 +741,9 @@ class Foundation(loader.Module):
     )
     async def vfond(self, message: Message):
         """Send NSFW video from Foundation"""
-        await self._update_foundation_link_on_demand()
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
+        await self._update_foundation_link_on_demand()
         if not await self._ensure_foundation_access(message):
             return
         await self._send_media(message, "video", delete_command=True)
