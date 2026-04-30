@@ -1,0 +1,205 @@
+{
+  "9": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "39:8",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "40": {
+    "inputs": {
+      "anything": [
+        "38:18",
+        0
+      ],
+      "anything11": [
+        "38:17",
+        0
+      ],
+      "anything12": [
+        "38:16",
+        0
+      ]
+    },
+    "class_type": "Anything Everywhere",
+    "_meta": {
+      "title": "Anything Everywhere"
+    }
+  },
+  "41": {
+    "inputs": {
+      "text": ""
+    },
+    "class_type": "Textbox",
+    "_meta": {
+      "title": "Positive Prompt"
+    }
+  },
+  "47": {
+    "inputs": {
+      "images": [
+        "39:8",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "56": {
+    "inputs": {},
+    "class_type": "FancyTimerNode",
+    "_meta": {
+      "title": "Execution Timer"
+    }
+  },
+  "59": {
+    "inputs": {
+      "seed": 130
+    },
+    "class_type": "Seed Generator",
+    "_meta": {
+      "title": "Seed Generator"
+    }
+  },
+  "63": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "lora_1": {
+        "on": false,
+        "lora": "ZIT-2000s.safetensors",
+        "strength": 0.9
+      },
+      "вћ• Add Lora": ""
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "38:18": {
+    "inputs": {
+      "clip_name": "qwen_3_4b.safetensors",
+      "type": "lumina2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "38:17": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "38:16": {
+    "inputs": {
+      "unet_name": "intorealism_zitV30.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "39:39": {
+    "inputs": {
+      "text": [
+        "41",
+        0
+      ]
+    },
+    "class_type": "JWString",
+    "_meta": {
+      "title": "POSITIVE"
+    }
+  },
+  "39:8": {
+    "inputs": {
+      "samples": [
+        "39:46",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "39:41": {
+    "inputs": {
+      "value": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "JWInteger",
+    "_meta": {
+      "title": "seed"
+    }
+  },
+  "39:6": {
+    "inputs": {
+      "text": [
+        "39:39",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "39:13": {
+    "inputs": {
+      "width": 1088,
+      "height": 1920,
+      "batch_size": 1
+    },
+    "class_type": "EmptySD3LatentImage",
+    "_meta": {
+      "title": "EmptySD3LatentImage"
+    }
+  },
+  "39:46": {
+    "inputs": {
+      "seed": [
+        "39:41",
+        0
+      ],
+      "steps": 12,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1,
+      "mode": "Sequential",
+      "use_same_seed": false,
+      "positive": [
+        "39:6",
+        0
+      ],
+      "latent_image": [
+        "39:13",
+        0
+      ]
+    },
+    "class_type": "CRT_KSamplerBatch",
+    "_meta": {
+      "title": "KSampler Batch (CRT)"
+    }
+  }
+}
