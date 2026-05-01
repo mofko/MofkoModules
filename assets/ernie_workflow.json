@@ -1,0 +1,203 @@
+{
+  "107": {
+    "inputs": {
+      "width": 576,
+      "height": 1024,
+      "batch_size": 1
+    },
+    "class_type": "EmptyFlux2LatentImage",
+    "_meta": {
+      "title": "Empty Flux 2 Latent"
+    }
+  },
+  "109": {
+    "inputs": {
+      "samples": [
+        "110",
+        0
+      ],
+      "vae": [
+        "119",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "110": {
+    "inputs": {
+      "seed": 345491155225613,
+      "steps": 9,
+      "cfg": 1,
+      "sampler_name": "deis",
+      "scheduler": "simple",
+      "denoise": 1,
+      "model": [
+        "124",
+        0
+      ],
+      "positive": [
+        "111",
+        0
+      ],
+      "negative": [
+        "120",
+        0
+      ],
+      "latent_image": [
+        "107",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "111": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "118",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "118": {
+    "inputs": {
+      "clip_name": "redcraft_ernieRedmix_txt.safetensors",
+      "type": "flux2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "119": {
+    "inputs": {
+      "vae_name": "flux2-tiny-vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "120": {
+    "inputs": {
+      "conditioning": [
+        "111",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "ConditioningZeroOut"
+    }
+  },
+  "124": {
+    "inputs": {
+      "unet_name": "redcraft_ernieRedmix.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "148": {
+    "inputs": {
+      "filename_prefix": "Ernie-Image-Turbo2",
+      "images": [
+        "150",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image Final"
+    }
+  },
+  "149": {
+    "inputs": {
+      "seed": 625223010283128,
+      "steps": 5,
+      "cfg": 1,
+      "sampler_name": "deis",
+      "scheduler": "simple",
+      "denoise": 0.5,
+      "model": [
+        "124",
+        0
+      ],
+      "positive": [
+        "111",
+        0
+      ],
+      "negative": [
+        "120",
+        0
+      ],
+      "latent_image": [
+        "154",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "150": {
+    "inputs": {
+      "samples": [
+        "149",
+        0
+      ],
+      "vae": [
+        "119",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "153": {
+    "inputs": {
+      "upscale_method": "bicubic",
+      "scale_by": 2,
+      "image": [
+        "109",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "154": {
+    "inputs": {
+      "pixels": [
+        "153",
+        0
+      ],
+      "vae": [
+        "119",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  }
+}
