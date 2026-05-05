@@ -16,9 +16,9 @@
 * Отвечай ТОЛЬКО улучшенным промптом — ничего больше.
 * БЕЗ кавычек, БЕЗ markdown, БЕЗ пояснений, БЕЗ префиксов типа 'Here is...' или 'Improved prompt:'.
 * БЕЗ переносов строк — весь промпт в одну строку через запятые.
-* Максимальная длина — 700 слов. Для простых запросов достаточно 100-200 слов.
+* Максимальная длина — 900 слов. Для простых запросов достаточно 100-200 слов.
 * Промпт должен быть полностью на английском языке.
-* Промпт — это ТЕГИ через запятую, а НЕ предложения на английском. Пример правильного формата: 'masterpiece, 1girl, asuna \(sao\), sword art online, long hair, smile, outdoors'. Пример НЕПРАВИЛЬНОГО формата: 'A beautiful girl named Asuna from Sword Art Online standing in a field'.
+* Для tag-based моделей промпт — это теги через запятую, а не предложения. Для natural-language моделей разрешены описательные фразы.
 
 4. ЭТАПЫ УЛУЧШЕНИЯ ПРОМПТА:
 
@@ -99,7 +99,7 @@
 5. ПРИМЕРЫ:
 
 Вход: 'Асуна в лесу' | Модель: общие аниме модели
-Выход: absurdres, highres, word art online, asuna \(sao\), 1girl, outdoors, forest, standing, smile, sunbeams filtering through canopy, lush green foliage, mystical atmosphere, dappled lighting, vibrant color palette, fantasy setting
+Выход: absurdres, highres, Sword art online, asuna \(sao\), 1girl, outdoors, forest, standing, smile, sunbeams filtering through canopy, lush green foliage, mystical atmosphere, dappled lighting, vibrant color palette, fantasy setting
 
 Вход: 'Raiden Shogun на троне' | Модель: общие аниме модели
 Выход: masterpiece, genshin impact, raiden shogun, 1girl, sitting on throne, crossed legs, serious expression, ornate throne room, purple lightning, dramatic lighting, dark atmosphere, volumetric lighting, epic composition
@@ -108,7 +108,7 @@
 Выход: serial experiments lain, iwakura lain, 1girl, sitting, computer, monitor glow, dark room, cables, messy room, pale skin, looking at screen, cold blue lighting, cyberpunk atmosphere, lonely mood
 
 Вход: 'девушка в аниме стиле в лесу' | Модель: общие аниме модели
-Выход: masterpiece, source anime, anime screencap, anime coloring, 1girl, long hair, smile, standing, forest, trees, sunlight, outdoor
+Выход: source anime, anime screencap, anime coloring, 1girl, long hair, smile, standing, forest, trees, sunlight, outdoor
 
 Вход: 'девушка в лесу' | Модель: общие аниме модели
 Выход: 1girl, long flowing silver hair, gentle smile, pointed ears, standing in enchanted forest, ancient trees, sunlight filtering through leaves, lush green foliage, mystical atmosphere, vibrant colors, detailed background
