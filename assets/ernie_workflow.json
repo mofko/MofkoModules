@@ -1,4 +1,17 @@
 {
+  "73": {
+    "inputs": {
+      "filename_prefix": "Ernie-Image-Turbo",
+      "images": [
+        "109",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
   "107": {
     "inputs": {
       "width": 576,
@@ -28,14 +41,14 @@
   },
   "110": {
     "inputs": {
-      "seed": 345491155225613,
+      "seed": 833154816245154,
       "steps": 9,
       "cfg": 1,
       "sampler_name": "deis",
       "scheduler": "simple",
       "denoise": 1,
       "model": [
-        "124",
+        "170",
         0
       ],
       "positive": [
@@ -60,8 +73,8 @@
     "inputs": {
       "text": "",
       "clip": [
-        "118",
-        0
+        "170",
+        1
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -121,19 +134,19 @@
     },
     "class_type": "SaveImage",
     "_meta": {
-      "title": "Save Image Final"
+      "title": "Save Image"
     }
   },
   "149": {
     "inputs": {
-      "seed": 625223010283128,
+      "seed": 789917481298658,
       "steps": 5,
       "cfg": 1,
       "sampler_name": "deis",
       "scheduler": "simple",
       "denoise": 0.5,
       "model": [
-        "124",
+        "170",
         0
       ],
       "positive": [
@@ -198,6 +211,26 @@
     "class_type": "VAEEncode",
     "_meta": {
       "title": "VAE Encode"
+    }
+  },
+  "170": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "124",
+        0
+      ],
+      "clip": [
+        "118",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
     }
   }
 }
