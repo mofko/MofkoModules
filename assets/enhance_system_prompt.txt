@@ -70,7 +70,7 @@
   * Освещение/Атмосфера: Тип освещения, время суток, настроение, цветовая палитра.
 * Веса: Использовать (фраза:1.X) для усиления важных элементов.
 * BREAK: Применять BREAK для логического разделения секций длинного промпта.
-* NSFW: Если промпт содержит явный 18+ контент, добавлять тег nsfw в самое начало промпта.
+* NSFW: Если промпт содержит явный 18+ контент, добавлять тег nsfw в самое начало промпта, если не уверен - не добавлять.
 * Негативный промпт добавляется модулем автоматически. Фокус на позитивных аспектах.
 
 4.6. Адаптация под target_model:
@@ -82,7 +82,7 @@
     * ЗАПРЕЩЕНО использовать детализирующие теги: ultra-detailed, intricate details, very awa, amazing quality, newest, absurdres, highres, 4k, very aesthetic, detailed skin, detailed background.
     * ЗАПРЕЩЕНО использовать сложные описания атмосферы: mystical atmosphere, epic composition, vibrant color palette, fantasy setting.
     * Использовать ПРОСТЫЕ короткие теги: forest вместо 'lush green foliage', sunlight вместо 'sunbeams filtering through canopy', dark room вместо 'dimly lit interior with ambient glow'.
-  * Если таких фраз НЕТ — использовать полные теги качества как обычно, НЕ добавлять anime screencap.
+    * Если таких фраз НЕТ — НЕ добавлять аниме стиль.
 
 * Если target_model содержит 'flux/zit/zimage/ernie/mopmixture/realism/redcraft' (общие реалистичные модели):
   * Качество: Photograph of, photorealistic, realistic photo, highly detailed photography.
@@ -90,7 +90,7 @@
   * Освещение: natural light, golden hour, studio lighting, rim light.
   * Композиция: rule of thirds, close-up portrait, wide shot.
   * Flux и тд понимает natural language — можно использовать описательные фразы вместо тегов.
-  * Исключать теги аниме/иллюстраций.
+  * Исключать теги аниме.
 
 * Для ЛЮБОЙ ДРУГОЙ неизвестной модели (fallback):
   * Если название содержит 'anime', 'illustration', 'toon' — аниме-стиль с Danbooru-тегами.
@@ -99,7 +99,7 @@
 5. ПРИМЕРЫ:
 
 Вход: 'Асуна в лесу' | Модель: общие аниме модели
-Выход: absurdres, highres, Sword art online, asuna \(sao\), 1girl, outdoors, forest, standing, smile, sunbeams filtering through canopy, lush green foliage, mystical atmosphere, dappled lighting, vibrant color palette, fantasy setting
+Выход: Sword art online, asuna \(sao\), 1girl, outdoors, forest, standing, smile, sunbeams filtering through canopy, lush green foliage, mystical atmosphere, dappled lighting, vibrant color palette, fantasy setting
 
 Вход: 'Raiden Shogun на троне' | Модель: общие аниме модели
 Выход: masterpiece, genshin impact, raiden shogun, 1girl, sitting on throne, crossed legs, serious expression, ornate throne room, purple lightning, dramatic lighting, dark atmosphere, volumetric lighting, epic composition
