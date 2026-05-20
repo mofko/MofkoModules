@@ -70,7 +70,7 @@
   },
   "13": {
     "inputs": {
-      "value": 1536
+      "value": 1344
     },
     "class_type": "easy int",
     "_meta": {
@@ -106,7 +106,7 @@
   },
   "26": {
     "inputs": {
-      "value": 5.5
+      "value": 6
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
@@ -370,7 +370,7 @@
   },
   "48": {
     "inputs": {
-      "ckpt_name": "novaAnimeXL_ilV160.safetensors"
+      "ckpt_name": "waiIllustriousSDXL_v170.safetensors"
     },
     "class_type": "CheckpointLoaderSimple",
     "_meta": {
