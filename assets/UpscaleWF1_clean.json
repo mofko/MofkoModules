@@ -1,19 +1,95 @@
 {
   "2": {
     "inputs": {
-      "image": "input.png"
+      "image": "input_e9f0bf7f0ac44884ae034047185a6398.png"
     },
     "class_type": "LoadImage",
     "_meta": {
       "title": "Load Image"
     }
   },
-  "3": {
+  "7": {
     "inputs": {
-      "upscale_method": "lanczos",
-      "scale_by": 3,
+      "model_name": "RealESRGAN_x2.pth",
+      "rescale_after_model": true,
+      "rescale_method": "lanczos",
+      "rescale": "by percentage",
+      "percent": 50,
+      "width": 1024,
+      "height": 1024,
+      "longer_side": 1024,
+      "crop": "disabled",
+      "image_output": "Hide",
+      "link_id": 0,
+      "save_prefix": "ComfyUI",
       "image": [
         "2",
+        0
+      ],
+      "vae": [
+        "476",
+        0
+      ]
+    },
+    "class_type": "easy hiresFix",
+    "_meta": {
+      "title": "HiresFix"
+    }
+  },
+  "34": {
+    "inputs": {
+      "filename": "%time_%basemodelname_%seed",
+      "path": "",
+      "extension": "png",
+      "steps": 20,
+      "cfg": 7,
+      "modelname": "",
+      "sampler_name": "",
+      "scheduler_name": "normal",
+      "positive": "",
+      "negative": "",
+      "seed_value": 0,
+      "width": 512,
+      "height": 512,
+      "lossless_webp": true,
+      "quality_jpeg_or_webp": 100,
+      "optimize_png": false,
+      "counter": 0,
+      "denoise": 1,
+      "clip_skip": 2,
+      "time_format": "%Y-%m-%d-%H%M%S",
+      "save_workflow_as_json": false,
+      "embed_workflow": true,
+      "additional_hashes": "",
+      "download_civitai_data": true,
+      "easy_remix": false,
+      "show_preview": true,
+      "custom": "",
+      "images": [
+        "479",
+        0
+      ]
+    },
+    "class_type": "Image Saver",
+    "_meta": {
+      "title": "Image Saver"
+    }
+  },
+  "476": {
+    "inputs": {
+      "vae_name": "ae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "479": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 2,
+      "image": [
+        "483",
         0
       ]
     },
@@ -22,17 +98,18 @@
       "title": "Upscale Image By"
     }
   },
-  "5": {
+  "483": {
     "inputs": {
-      "filename_prefix": "ComfyUI",
-      "images": [
-        "3",
-        0
+      "auto_detect": "enable",
+      "compression_level": 100,
+      "image": [
+        "7",
+        1
       ]
     },
-    "class_type": "SaveImage",
+    "class_type": "JPEG artifacts removal FBCNN",
     "_meta": {
-      "title": "Save Image"
+      "title": "Compression Removal"
     }
   }
 }
