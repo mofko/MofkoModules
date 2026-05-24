@@ -14,7 +14,7 @@
       "populated_text": "",
       "mode": "populate",
       "seed": [
-        "41",
+        "33",
         0
       ],
       "Select to add Wildcard": "Select the Wildcard to add to the text"
@@ -30,7 +30,7 @@
       "populated_text": "",
       "mode": "populate",
       "seed": [
-        "41",
+        "33",
         0
       ],
       "Select to add Wildcard": "Select the Wildcard to add to the text"
@@ -40,76 +40,13 @@
       "title": "NEGATIVE"
     }
   },
-  "5": {
+  "12": {
     "inputs": {
-      "wildcard": "",
-      "Select to add LoRA": "Select the LoRA to add to the text",
-      "Select to add Wildcard": "Select the Wildcard to add to the text",
-      "model": [
-        "44",
-        0
-      ],
-      "clip": [
-        "27",
-        1
-      ],
-      "vae": [
-        "45",
-        2
-      ],
-      "positive": [
-        "36",
-        0
-      ],
-      "negative": [
-        "39",
-        0
-      ],
-      "sam_model_opt": [
-        "6",
-        0
-      ]
-    },
-    "class_type": "ToDetailerPipe",
-    "_meta": {
-      "title": "ToDetailerPipe"
-    }
-  },
-  "6": {
-    "inputs": {
-      "model_name": "sam_vit_b_01ec64.pth",
-      "device_mode": "AUTO"
-    },
-    "class_type": "SAMLoader",
-    "_meta": {
-      "title": "SAMLoader (Impact)"
-    }
-  },
-  "11": {
-    "inputs": {
-      "value": 1334
+      "value": 1344
     },
     "class_type": "easy int",
     "_meta": {
       "title": "Height"
-    }
-  },
-  "17": {
-    "inputs": {
-      "value": 27
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "Steps"
-    }
-  },
-  "18": {
-    "inputs": {
-      "value": 7
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "CFG"
     }
   },
   "19": {
@@ -129,7 +66,7 @@
         0
       ],
       "height": [
-        "11",
+        "12",
         0
       ]
     },
@@ -140,31 +77,22 @@
   },
   "22": {
     "inputs": {
+      "mask": [
+        "21",
+        0
+      ],
       "combined": false,
       "crop_factor": 1,
       "bbox_fill": false,
       "drop_size": 10,
-      "contour_fill": false,
-      "mask": [
-        "21",
-        0
-      ]
+      "contour_fill": false
     },
     "class_type": "MaskToSEGS",
     "_meta": {
-      "title": "MASK to SEGS"
+      "title": "MaskToSEGS"
     }
   },
   "23": {
-    "inputs": {
-      "value": 1
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "Batch Size"
-    }
-  },
-  "24": {
     "inputs": {
       "value": false
     },
@@ -173,48 +101,28 @@
       "title": "Tiled Detailer"
     }
   },
-  "25": {
+  "24": {
     "inputs": {
-      "width": [
-        "1",
+      "image": [
+        "82",
+        1
+      ],
+      "segs": [
+        "22",
         0
       ],
-      "height": [
-        "11",
-        0
-      ],
-      "batch_size": [
-        "23",
-        0
-      ]
-    },
-    "class_type": "EmptyLatentImage",
-    "_meta": {
-      "title": "Empty Latent Image"
-    }
-  },
-  "27": {
-    "inputs": {
-      "PowerLoraLoaderHeaderWidget": {
-        "type": "PowerLoraLoaderHeaderWidget"
-      },
-      "➕ Add Lora": "",
       "model": [
-        "45",
+        "42",
         0
       ],
       "clip": [
-        "51",
+        "55",
         0
-      ]
-    },
-    "class_type": "Power Lora Loader (rgthree)",
-    "_meta": {
-      "title": "Power Lora Loader (rgthree)"
-    }
-  },
-  "28": {
-    "inputs": {
+      ],
+      "vae": [
+        "30",
+        2
+      ],
       "guide_size": 512,
       "guide_size_for": true,
       "max_size": [
@@ -222,16 +130,21 @@
         0
       ],
       "seed": [
-        "41",
+        "33",
         0
       ],
-      "steps": 18,
-      "cfg": [
-        "18",
-        0
-      ],
+      "steps": 13,
+      "cfg": 5,
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
+      "positive": [
+        "43",
+        0
+      ],
+      "negative": [
+        "44",
+        0
+      ],
       "denoise": 0.25,
       "feather": 6,
       "noise_mask": true,
@@ -241,81 +154,104 @@
       "inpaint_model": false,
       "noise_mask_feather": 64,
       "tiled_encode": [
-        "24",
+        "23",
         0
       ],
       "tiled_decode": [
-        "24",
-        0
-      ],
-      "image": [
-        "33",
-        0
-      ],
-      "segs": [
-        "22",
-        0
-      ],
-      "model": [
-        "44",
-        0
-      ],
-      "clip": [
-        "27",
-        1
-      ],
-      "vae": [
-        "45",
-        2
-      ],
-      "positive": [
-        "36",
-        0
-      ],
-      "negative": [
-        "39",
+        "23",
         0
       ]
     },
     "class_type": "DetailerForEach",
     "_meta": {
-      "title": "Detailer (SEGS)"
+      "title": "DetailerForEach"
+    }
+  },
+  "29": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Batch Size"
+    }
+  },
+  "30": {
+    "inputs": {
+      "ckpt_name": "waiIllustriousSDXL_v170.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "CheckpointLoaderSimple"
     }
   },
   "33": {
     "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "38": {
+    "inputs": {
+      "width": [
+        "1",
+        0
+      ],
+      "height": [
+        "12",
+        0
+      ],
+      "batch_size": [
+        "29",
+        0
+      ]
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "EmptyLatentImage"
+    }
+  },
+  "40": {
+    "inputs": {
       "samples": [
-        "42",
+        "46",
         0
       ],
       "vae": [
-        "45",
+        "30",
         2
       ]
     },
     "class_type": "VAEDecode",
     "_meta": {
-      "title": "VAE Decode"
+      "title": "VAEDecode"
     }
   },
-  "35": {
+  "42": {
     "inputs": {
-      "value": 0.5
+      "model": [
+        "69",
+        0
+      ],
+      "strength": 1
     },
-    "class_type": "easy float",
+    "class_type": "DifferentialDiffusion",
     "_meta": {
-      "title": "Denoise"
+      "title": "DifferentialDiffusion"
     }
   },
-  "36": {
+  "43": {
     "inputs": {
       "text": [
-        "40",
+        "47",
         0
       ],
       "clip": [
-        "27",
-        1
+        "55",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -323,24 +259,15 @@
       "title": "CLIP Text Encode (Positive)"
     }
   },
-  "37": {
-    "inputs": {
-      "value": 3
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "BBOX Crop Factor"
-    }
-  },
-  "39": {
+  "44": {
     "inputs": {
       "text": [
         "4",
         0
       ],
       "clip": [
-        "27",
-        1
+        "55",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -348,10 +275,57 @@
       "title": "CLIP Text Encode (Negative)"
     }
   },
-  "40": {
+  "45": {
+    "inputs": {
+      "string_a": [
+        "3",
+        0
+      ],
+      "string_b": "",
+      "delimiter": ""
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "StringConcatenate"
+    }
+  },
+  "46": {
+    "inputs": {
+      "model": [
+        "69",
+        0
+      ],
+      "seed": [
+        "33",
+        0
+      ],
+      "steps": 25,
+      "cfg": 5,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "positive": [
+        "43",
+        0
+      ],
+      "negative": [
+        "44",
+        0
+      ],
+      "latent_image": [
+        "38",
+        0
+      ],
+      "denoise": 1
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "47": {
     "inputs": {
       "string": [
-        "3",
+        "45",
         0
       ],
       "regex_pattern": "^,|,$",
@@ -363,100 +337,14 @@
     },
     "class_type": "RegexReplace",
     "_meta": {
-      "title": "Text Replace (Regex)"
+      "title": "RegexReplace"
     }
   },
-  "41": {
-    "inputs": {
-      "seed": 834150686447176
-    },
-    "class_type": "Seed (rgthree)",
-    "_meta": {
-      "title": "Seed (rgthree)"
-    }
-  },
-  "42": {
-    "inputs": {
-      "seed": [
-        "41",
-        0
-      ],
-      "steps": [
-        "17",
-        0
-      ],
-      "cfg": [
-        "18",
-        0
-      ],
-      "sampler_name": "euler_ancestral",
-      "scheduler": "normal",
-      "denoise": [
-        "35",
-        0
-      ],
-      "model": [
-        "61",
-        0
-      ],
-      "positive": [
-        "36",
-        0
-      ],
-      "negative": [
-        "39",
-        0
-      ],
-      "latent_image": [
-        "25",
-        0
-      ]
-    },
-    "class_type": "KSampler",
-    "_meta": {
-      "title": "KSampler"
-    }
-  },
-  "44": {
-    "inputs": {
-      "strength": 1,
-      "model": [
-        "61",
-        0
-      ]
-    },
-    "class_type": "DifferentialDiffusion",
-    "_meta": {
-      "title": "Differential Diffusion"
-    }
-  },
-  "45": {
-    "inputs": {
-      "ckpt_name": "waiIllustriousSDXL_v170.safetensors"
-    },
-    "class_type": "CheckpointLoaderSimple",
-    "_meta": {
-      "title": "Load Checkpoint"
-    }
-  },
-  "50": {
-    "inputs": {
-      "filename_prefix": "ComfyUI",
-      "images": [
-        "71",
-        1
-      ]
-    },
-    "class_type": "SaveImage",
-    "_meta": {
-      "title": "Save Image"
-    }
-  },
-  "51": {
+  "55": {
     "inputs": {
       "stop_at_clip_layer": -2,
       "clip": [
-        "45",
+        "30",
         1
       ]
     },
@@ -465,40 +353,23 @@
       "title": "CLIP Set Last Layer"
     }
   },
-  "53": {
-    "inputs": {
-      "rgthree_comparer": {
-        "images": [
-          {
-            "name": "A",
-            "selected": true,
-            "url": "/api/view?filename=rgthree.compare._temp_tffup_00005_.png&type=temp&subfolder=&rand=0.22639098679940317"
-          },
-          {
-            "name": "B",
-            "selected": true,
-            "url": "/api/view?filename=rgthree.compare._temp_tffup_00006_.png&type=temp&subfolder=&rand=0.2797823625108019"
-          }
-        ]
-      },
-      "image_a": [
-        "28",
-        0
-      ],
-      "image_b": [
-        "33",
-        0
-      ]
-    },
-    "class_type": "Image Comparer (rgthree)",
-    "_meta": {
-      "title": "Image Detailer"
-    }
-  },
-  "61": {
+  "60": {
     "inputs": {
       "model": [
-        "27",
+        "30",
+        0
+      ],
+      "scaling_factor": 1.005
+    },
+    "class_type": "Epsilon Scaling",
+    "_meta": {
+      "title": "Epsilon Scaling"
+    }
+  },
+  "69": {
+    "inputs": {
+      "model": [
+        "60",
         0
       ]
     },
@@ -508,6 +379,25 @@
     }
   },
   "71": {
+    "inputs": {
+      "image_target": [
+        "83",
+        1
+      ],
+      "image_ref": [
+        "40",
+        0
+      ],
+      "method": "mkl",
+      "strength": 1,
+      "multithread": true
+    },
+    "class_type": "ColorMatchV2",
+    "_meta": {
+      "title": "ColorMatchV2"
+    }
+  },
+  "82": {
     "inputs": {
       "model_name": "RealESRGAN_x2.pth",
       "rescale_after_model": true,
@@ -522,17 +412,72 @@
       "link_id": 0,
       "save_prefix": "ComfyUI",
       "image": [
-        "28",
+        "40",
         0
       ],
       "vae": [
-        "45",
+        "30",
         2
       ]
     },
     "class_type": "easy hiresFix",
     "_meta": {
-      "title": "HiresFix"
+      "title": "easy hiresFix"
+    }
+  },
+  "83": {
+    "inputs": {
+      "model_name": "RealESRGAN_x2.pth",
+      "rescale_after_model": true,
+      "rescale_method": "lanczos",
+      "rescale": "by percentage",
+      "percent": 50,
+      "width": 1024,
+      "height": 1024,
+      "longer_side": 1024,
+      "crop": "disabled",
+      "image_output": "Hide",
+      "link_id": 0,
+      "save_prefix": "ComfyUI",
+      "image": [
+        "24",
+        0
+      ],
+      "vae": [
+        "30",
+        2
+      ]
+    },
+    "class_type": "easy hiresFix",
+    "_meta": {
+      "title": "easy hiresFix"
+    }
+  },
+  "100": {
+    "inputs": {
+      "image": [
+        "71",
+        0
+      ],
+      "auto_detect": "enable",
+      "compression_level": 100
+    },
+    "class_type": "JPEG artifacts removal FBCNN",
+    "_meta": {
+      "title": "Compression Removal"
+    }
+  },
+  "101": {
+    "inputs": {
+      "images": [
+        "100",
+        0
+      ],
+      "filename_prefix": "Standard_V35_API"
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
     }
   }
 }
