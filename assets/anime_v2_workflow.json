@@ -100,21 +100,12 @@
       "title": "KSampler"
     }
   },
-  "6": {
-    "inputs": {
-      "model_name": "bbox/face_yolov9c.pt"
-    },
-    "class_type": "UltralyticsDetectorProvider",
-    "_meta": {
-      "title": "Default DetectorProvider"
-    }
-  },
   "13": {
     "inputs": {
       "filename_prefix": "Anima",
       "images": [
-        "55",
-        1
+        "58",
+        0
       ]
     },
     "class_type": "SaveImage",
@@ -133,41 +124,6 @@
       "title": "Load CLIP"
     }
   },
-  "20": {
-    "inputs": {
-      "wildcard": "",
-      "Select to add LoRA": "Select the LoRA to add to the text",
-      "Select to add Wildcard": "Select the Wildcard to add to the text",
-      "model": [
-        "28",
-        0
-      ],
-      "clip": [
-        "2",
-        1
-      ],
-      "vae": [
-        "24",
-        0
-      ],
-      "positive": [
-        "45",
-        0
-      ],
-      "negative": [
-        "48",
-        0
-      ],
-      "bbox_detector": [
-        "6",
-        0
-      ]
-    },
-    "class_type": "ToDetailerPipe",
-    "_meta": {
-      "title": "ToDetailerPipe"
-    }
-  },
   "24": {
     "inputs": {
       "vae_name": "qwen_image_vae.safetensors"
@@ -179,65 +135,16 @@
   },
   "25": {
     "inputs": {
-      "value": 768
+      "value": 920
     },
     "class_type": "easy int",
     "_meta": {
       "title": "Width"
     }
   },
-  "27": {
-    "inputs": {
-      "seed": [
-        "40",
-        0
-      ],
-      "steps": 16,
-      "cfg": [
-        "44",
-        0
-      ],
-      "sampler_name": "er_sde",
-      "scheduler": "simple",
-      "denoise": 0.2,
-      "model": [
-        "52",
-        0
-      ],
-      "positive": [
-        "45",
-        0
-      ],
-      "negative": [
-        "48",
-        0
-      ],
-      "latent_image": [
-        "5",
-        0
-      ]
-    },
-    "class_type": "KSampler",
-    "_meta": {
-      "title": "KSampler"
-    }
-  },
-  "28": {
-    "inputs": {
-      "strength": 1,
-      "model": [
-        "52",
-        0
-      ]
-    },
-    "class_type": "DifferentialDiffusion",
-    "_meta": {
-      "title": "Differential Diffusion"
-    }
-  },
   "34": {
     "inputs": {
-      "value": 1280
+      "value": 1536
     },
     "class_type": "easy int",
     "_meta": {
@@ -251,15 +158,6 @@
     "class_type": "easy int",
     "_meta": {
       "title": "Batch Size"
-    }
-  },
-  "39": {
-    "inputs": {
-      "value": 1536
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "Max Size"
     }
   },
   "40": {
@@ -280,18 +178,9 @@
       "title": "Steps"
     }
   },
-  "43": {
-    "inputs": {
-      "value": 512
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "Guide Size"
-    }
-  },
   "44": {
     "inputs": {
-      "value": 5.5
+      "value": 4
     },
     "class_type": "PrimitiveFloat",
     "_meta": {
@@ -312,15 +201,6 @@
     "class_type": "CLIPTextEncode",
     "_meta": {
       "title": "CLIP Text Encode (Positive Prompt)"
-    }
-  },
-  "47": {
-    "inputs": {
-      "value": 2.5
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "BBOX Crop Factor"
     }
   },
   "48": {
@@ -362,7 +242,7 @@
   "51": {
     "inputs": {
       "samples": [
-        "27",
+        "5",
         0
       ],
       "vae": [
@@ -385,15 +265,6 @@
     "class_type": "CFGZeroStar",
     "_meta": {
       "title": "CFGZeroStar"
-    }
-  },
-  "53": {
-    "inputs": {
-      "value": false
-    },
-    "class_type": "PrimitiveBoolean",
-    "_meta": {
-      "title": "Tiled Detailer"
     }
   },
   "54": {
@@ -450,6 +321,34 @@
     "class_type": "easy hiresFix",
     "_meta": {
       "title": "HiresFix"
+    }
+  },
+  "57": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "55",
+        1
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "58": {
+    "inputs": {
+      "auto_detect": "enable",
+      "compression_level": 100,
+      "image": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "JPEG artifacts removal FBCNN",
+    "_meta": {
+      "title": "Compression Removal"
     }
   }
 }
