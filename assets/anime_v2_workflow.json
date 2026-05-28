@@ -115,7 +115,7 @@
   },
   "19": {
     "inputs": {
-      "clip_name": "miaomiaoHarem_animaBase.safetensors",
+      "clip_name": "anima_baseV10_txt.safetensors",
       "type": "stable_diffusion",
       "device": "default"
     },
