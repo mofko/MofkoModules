@@ -3,8 +3,8 @@ __version__ = (2, 4, 0)
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
-# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
-# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260314_095253_702.jpg
+# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
 # meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw
 
 import random
