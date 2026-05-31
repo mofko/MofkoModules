@@ -8,16 +8,17 @@
       "title": "Load Image"
     }
   },
-  "18": {
+  "27": {
     "inputs": {
+      "filename_prefix": "ComfyUI",
       "images": [
         "19:16",
         0
       ]
     },
-    "class_type": "PreviewImage",
+    "class_type": "SaveImage",
     "_meta": {
-      "title": "Preview Image"
+      "title": "Save Image"
     }
   },
   "19:13": {
