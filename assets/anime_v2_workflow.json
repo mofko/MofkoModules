@@ -1,7 +1,7 @@
 {
   "1": {
     "inputs": {
-      "unet_name": "miaomiaoHarem_animaBase.safetensors",
+      "unet_name": "miaomiaoHarem_anima11.safetensors",
       "weight_dtype": "default"
     },
     "class_type": "UNETLoader",
@@ -115,7 +115,7 @@
   },
   "19": {
     "inputs": {
-      "clip_name": "anima_baseV10_txt.safetensors",
+      "clip_name": "miaomiaoHarem_anima11_txt.safetensors",
       "type": "stable_diffusion",
       "device": "default"
     },
