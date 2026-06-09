@@ -1,11 +1,11 @@
-__version__ = (1, 0, 1)
+__version__ = (1, 0, 2)
 # meta developer: @mofkomodules, @pureoffic
 # Name: ComfyImageGen
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
 # meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
 # meta fhsdesc: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
 # meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py
-# Diff: change module url (fix Github error)
+# Diff: Добавлено: команда .cmon (мониторинг задач), расчёт примерного времени генерации, пинг юб в .ci для удобства. Фиксы: исправлена генерация от имени канала, исправлена генерация в под постом, исправлено получение рандом промпта (-i), другие мини-фиксы.
 # requires: aiohttp pillow cachetools google-genai
 
 import logging
@@ -290,6 +290,9 @@ _CUPSCALE_TIMEOUT = 1800
 _GENERATION_IDLE_WARNING = 360
 _QUEUE_POLL_INTERVAL = 5
 _HISTORY_POLL_INTERVAL = 5
+_CMON_POLL_INTERVAL = 10
+_CMON_IDLE_CLOSE_AFTER = 600
+_GENERATION_STATS_LIMIT = 30
 _CT_PROBE_TIMEOUT = 180
 _INLINE_TEXT_SOFT_LIMIT = 3800
 _INLINE_TEXT_RETRY_LIMITS = (3500, 3000, 2500, 2000, 1500, 1000)
@@ -458,6 +461,7 @@ class ComfyImageGenMod(loader.Module):
         "info_pytorch": "PyTorch: {}",
         "info_frontend": "Frontend: {}",
         "info_total_generations": "Total generations: {}",
+        "info_userbot_ping": "Userbot ping: {} ms",
         "ct_checking": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Checking ComfyUI tunnel API...",
         "ct_title": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> ComfyUI tunnel probe",
         "ct_url": "URL: <code>{}</code>",
@@ -654,9 +658,24 @@ class ComfyImageGenMod(loader.Module):
         "queue_comfy_submitted": "Task submitted to ComfyUI. Waiting for status... <i>(WebSocket may be unavailable)</i>",
         "queue_comfy_pending": "Waiting in ComfyUI queue... Position: {}",
         "queue_comfy_pending_unknown": "Waiting in ComfyUI queue...",
+        "queue_comfy_other_running": "Another ComfyUI task is running. Waiting in queue... Position: {}",
+        "queue_comfy_other_running_unknown": "Another ComfyUI task is running. Waiting in ComfyUI queue...",
         "queue_comfy_running": "ComfyUI is still executing the task...",
         "queue_comfy_running_ws_fallback": "ComfyUI is still executing the task... <i>(websocket temporarily unavailable)</i>",
         "queue_idle_warning": "No progress from ComfyUI for 6 minutes. Checking queue...",
+        "fmt_generation_eta": "Remaining: {}",
+        "cmon_title": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> ComfyUI task monitor",
+        "cmon_starting": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Monitoring...",
+        "cmon_loading": "Checking ComfyUI tasks...",
+        "cmon_no_tasks": "No active tasks.",
+        "cmon_closed_idle": "No active tasks for 10 minutes. Monitor closed.",
+        "cmon_active": "Active task: <code>{}</code>",
+        "cmon_active_other": "Active task: <code>{}</code> <i>(not ours)</i>",
+        "cmon_active_unknown": "Active task: detected",
+        "cmon_current_node": "Current process: {}",
+        "cmon_progress": "Progress: {}%",
+        "cmon_last_check": "Updated: {}",
+        "cmon_unavailable": "Could not read ComfyUI queue.",
         "fmt_decoding_image": "Decoding image...",
         "fmt_processing_image": "Processing image...",
         "fmt_upscaling_image": "Upscaling image...",
@@ -981,6 +1000,7 @@ class ComfyImageGenMod(loader.Module):
         "info_pytorch": "PyTorch: {}",
         "info_frontend": "Frontend: {}",
         "info_total_generations": "Генераций всего: {}",
+        "info_userbot_ping": "Пинг юзербота: {} ms",
         "ct_checking": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Проверяю API туннеля ComfyUI...",
         "ct_title": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Проверка туннеля ComfyUI",
         "ct_url": "URL: <code>{}</code>",
@@ -1154,9 +1174,24 @@ class ComfyImageGenMod(loader.Module):
         "queue_comfy_submitted": "Задача отправлена в ComfyUI. Жду статус... <i>(возможно, WebSocket недоступен)</i>",
         "queue_comfy_pending": "Ожидание в очереди ComfyUI... Место: {}",
         "queue_comfy_pending_unknown": "Ожидание в очереди ComfyUI...",
+        "queue_comfy_other_running": "Сейчас выполняется чужая задача ComfyUI. Ожидание в очереди... Место: {}",
+        "queue_comfy_other_running_unknown": "Сейчас выполняется чужая задача ComfyUI. Ожидание в очереди...",
         "queue_comfy_running": "ComfyUI всё еще выполняет задачу...",
         "queue_comfy_running_ws_fallback": "ComfyUI всё еще выполняет задачу... <i>(websocket временно недоступен)</i>",
         "queue_idle_warning": "Нет прогресса от ComfyUI 6 минут. Проверяю очередь...",
+        "fmt_generation_eta": "Осталось: {}",
+        "cmon_title": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Мониторинг задач ComfyUI",
+        "cmon_starting": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Мониторим...",
+        "cmon_loading": "Проверяю задачи ComfyUI...",
+        "cmon_no_tasks": "Активных задач нет.",
+        "cmon_closed_idle": "Активных задач нет 10 минут. Мониторинг закрыт.",
+        "cmon_active": "Активная задача: <code>{}</code>",
+        "cmon_active_other": "Активная задача: <code>{}</code> <i>(не наша)</i>",
+        "cmon_active_unknown": "Активная задача: обнаружена",
+        "cmon_current_node": "Текущий процесс: {}",
+        "cmon_progress": "Прогресс: {}%",
+        "cmon_last_check": "Обновлено: {}",
+        "cmon_unavailable": "Не удалось прочитать очередь ComfyUI.",
         "fmt_decoding_image": "Декодирую изображение...",
         "fmt_processing_image": "Обрабатываю изображение...",
         "fmt_upscaling_image": "Апскейлю изображение...",
@@ -1513,6 +1548,7 @@ class ComfyImageGenMod(loader.Module):
         self._argset_lora_states = TTLCache(maxsize=20, ttl=1800)
         self._cshare_preview_states = TTLCache(maxsize=30, ttl=900)
         self._ctools_states = TTLCache(maxsize=30, ttl=600)
+        self._cmon_tasks = {}
         self._trigger_queue_counts = {}
         self._trigger_queue_lock = asyncio.Lock()
         self._trigger_queue_cooldowns = TTLCache(maxsize=1000, ttl=180)
@@ -2297,6 +2333,17 @@ class ComfyImageGenMod(loader.Module):
                 task.cancel()
             await asyncio.gather(*self._auto_delete_tasks, return_exceptions=True)
             self._auto_delete_tasks.clear()
+        if self._cmon_tasks:
+            cmon_entries = list(self._cmon_tasks.values())
+            cmon_tasks = [
+                entry.get("task") if isinstance(entry, dict) else entry
+                for entry in cmon_entries
+            ]
+            cmon_tasks = [task for task in cmon_tasks if task]
+            for task in cmon_tasks:
+                task.cancel()
+            await asyncio.gather(*cmon_tasks, return_exceptions=True)
+            self._cmon_tasks.clear()
         if self._input_cleanup_task:
             self._input_cleanup_task.cancel()
             try:
@@ -4706,6 +4753,44 @@ class ComfyImageGenMod(loader.Module):
         body = self._strip_leading_custom_emoji(self._to_inline_emoji(text))
         return f"{_PREFLIGHT_EYES_INLINE} {body}"
 
+    async def _measure_userbot_ping_ms(self):
+        start = time.perf_counter()
+        await self.client.get_me()
+        return max(0, int((time.perf_counter() - start) * 1000))
+
+    def _format_ci_ping_quote(self, ping_ms):
+        try:
+            ping_ms = int(ping_ms)
+        except (TypeError, ValueError):
+            return ""
+        return f"<blockquote>{self.strings('info_userbot_ping').format(ping_ms)}</blockquote>"
+
+    def _format_ci_loading_text(self, ping_ms=None):
+        text = self._format_generation_preflight_inline(self.strings("ci_loading"))
+        ping_quote = self._format_ci_ping_quote(ping_ms)
+        if ping_quote:
+            text = f"{text}\n{ping_quote}"
+        return text
+
+    async def _ci_ping_loop(self, target, ping_state, stop_event):
+        while not stop_event.is_set() and not self._unloading:
+            try:
+                ping_ms = await self._measure_userbot_ping_ms()
+                ping_state["value"] = ping_ms
+                text = self._format_ci_loading_text(ping_ms)
+                if isinstance(target, Message):
+                    await utils.answer(target, self._apply_emoji_theme(text))
+                elif hasattr(target, "edit") and callable(target.edit):
+                    await target.edit(text=self._apply_emoji_theme(text))
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug("Failed to update ci ping: %s", e)
+            try:
+                await asyncio.wait_for(stop_event.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                pass
+
     @staticmethod
     def _plain_text(text: str) -> str:
         return re.sub(r"<[^>]+>", "", text)
@@ -5033,9 +5118,19 @@ class ComfyImageGenMod(loader.Module):
             else:
                 logger.debug("Failed to answer message: %s", e)
 
+    @staticmethod
+    def _message_sent_as_channel(message):
+        from_id = getattr(message, "from_id", None)
+        if isinstance(from_id, PeerChannel) or type(from_id).__name__ == "PeerChannel":
+            return True
+        sender = getattr(message, "sender", None)
+        return bool(getattr(sender, "broadcast", False))
+
     async def _create_generation_preflight(self, message, string_key="preflight_preparing"):
         text = self.strings(string_key)
         inline_text = self._format_generation_preflight_inline(text)
+        if self._message_sent_as_channel(message):
+            return await self._safe_answer(message, text)
         try:
             if not self._self_has_premium:
                 form = await self.inline.form(message=message, text=inline_text)
@@ -7110,6 +7205,7 @@ class ComfyImageGenMod(loader.Module):
             "sort": "Most Reactions",
             "period": "Month",
             "nsfw": "false",
+            "withMeta": "true",
         }
         try:
             async with self._session_get(
@@ -7140,6 +7236,8 @@ class ComfyImageGenMod(loader.Module):
                 continue
             negative = meta.get("negativePrompt")
             if not isinstance(negative, str):
+                negative = ""
+            elif negative.strip().lower() in {"none", "null"}:
                 negative = ""
             prompts.append(
                 {
@@ -7691,10 +7789,42 @@ class ComfyImageGenMod(loader.Module):
                 return index
         return None
 
-    async def _get_prompt_queue_info(self, prompt_id, timeout=None):
+    @staticmethod
+    def _looks_like_prompt_id(value):
+        value = str(value or "")
+        return bool(re.fullmatch(
+            r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
+            value,
+        ))
+
+    @classmethod
+    def _extract_queue_prompt_id(cls, item):
+        if isinstance(item, dict):
+            for key in ("prompt_id", "id"):
+                value = item.get(key)
+                if cls._looks_like_prompt_id(value):
+                    return str(value)
+            for value in item.values():
+                prompt_id = cls._extract_queue_prompt_id(value)
+                if prompt_id:
+                    return prompt_id
+            return None
+        if isinstance(item, (list, tuple)):
+            if len(item) > 1 and cls._looks_like_prompt_id(item[1]):
+                return str(item[1])
+            for value in item:
+                prompt_id = cls._extract_queue_prompt_id(value)
+                if prompt_id:
+                    return prompt_id
+            return None
+        if cls._looks_like_prompt_id(item):
+            return str(item)
+        return None
+
+    async def _get_queue_snapshot(self, timeout=None):
         base = self._base_url()
-        if not base or not prompt_id:
-            return {"state": None, "position": None}
+        if not base:
+            return {"ok": False, "queue_running": [], "queue_pending": []}
         timeout = _COMFY_TIMEOUTS["queue_status"] if timeout is None else timeout
         try:
             async with self._session_get(
@@ -7702,19 +7832,66 @@ class ComfyImageGenMod(loader.Module):
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
                 if resp.status != 200:
-                    return {"state": None, "position": None}
+                    return {"ok": False, "queue_running": [], "queue_pending": []}
                 data = await resp.json(content_type=None)
         except Exception as e:
-            logger.debug("ComfyUI queue status check failed: %s", e)
-            return {"state": None, "position": None}
+            logger.debug("ComfyUI queue snapshot failed: %s", e)
+            return {"ok": False, "queue_running": [], "queue_pending": []}
+        if not isinstance(data, dict):
+            return {"ok": False, "queue_running": [], "queue_pending": []}
+        running = data.get("queue_running") or []
+        pending = data.get("queue_pending") or []
+        if not isinstance(running, list):
+            running = []
+        if not isinstance(pending, list):
+            pending = []
+        running_prompt_id = self._extract_queue_prompt_id(running[0]) if running else None
+        return {
+            "ok": True,
+            "queue_running": running,
+            "queue_pending": pending,
+            "running_count": len(running),
+            "pending_count": len(pending),
+            "running_prompt_id": running_prompt_id,
+            "active": bool(running or pending),
+        }
 
-        for item in data.get("queue_running", []):
+    async def _get_prompt_queue_info(self, prompt_id, timeout=None):
+        if not prompt_id:
+            return {"state": None, "position": None}
+        snapshot = await self._get_queue_snapshot(timeout=timeout)
+        if not snapshot.get("ok"):
+            return {"state": None, "position": None}
+        running = snapshot.get("queue_running") or []
+        pending = snapshot.get("queue_pending") or []
+        for item in running:
             if self._queue_item_has_prompt(item, prompt_id):
-                return {"state": "running", "position": None}
-        position = self._find_prompt_queue_position(data.get("queue_pending", []), prompt_id)
+                return {
+                    "state": "running",
+                    "position": None,
+                    "running_other": False,
+                    "running_count": snapshot.get("running_count", 0),
+                    "pending_count": snapshot.get("pending_count", 0),
+                    "running_prompt_id": snapshot.get("running_prompt_id"),
+                }
+        position = self._find_prompt_queue_position(pending, prompt_id)
         if position is not None:
-            return {"state": "pending", "position": position}
-        return {"state": None, "position": None}
+            return {
+                "state": "pending",
+                "position": position,
+                "running_other": bool(running),
+                "running_count": snapshot.get("running_count", 0),
+                "pending_count": snapshot.get("pending_count", 0),
+                "running_prompt_id": snapshot.get("running_prompt_id"),
+            }
+        return {
+            "state": None,
+            "position": None,
+            "running_other": bool(running),
+            "running_count": snapshot.get("running_count", 0),
+            "pending_count": snapshot.get("pending_count", 0),
+            "running_prompt_id": snapshot.get("running_prompt_id"),
+        }
 
     async def _get_prompt_queue_state(self, prompt_id):
         return (await self._get_prompt_queue_info(prompt_id)).get("state")
@@ -7760,8 +7937,20 @@ class ComfyImageGenMod(loader.Module):
         self._cancel_flags.pop(client_id, None)
         self._generation_runtime.pop(client_id, None)
 
+    def _set_cancel_reason(self, client_id: str, reason: str):
+        runtime = self._generation_runtime.get(client_id)
+        if isinstance(runtime, dict) and not runtime.get("cancel_reason"):
+            runtime["cancel_reason"] = str(reason or "unknown")
+
+    def _get_cancel_reason(self, client_id: str):
+        runtime = self._generation_runtime.get(client_id)
+        if isinstance(runtime, dict):
+            return runtime.get("cancel_reason")
+        return None
+
     async def _raise_if_generation_cancelled(self, client_id: str):
         if self._cancel_flags.get(client_id, False):
+            self._set_cancel_reason(client_id, "cancel_flag")
             await self._cancel_runtime_generation(client_id)
             raise asyncio.CancelledError()
 
@@ -7769,6 +7958,10 @@ class ComfyImageGenMod(loader.Module):
         state = (queue_info or {}).get("state")
         if state == "pending":
             position = (queue_info or {}).get("position")
+            if (queue_info or {}).get("running_other"):
+                if position is not None:
+                    return self.strings("queue_comfy_other_running").format(position)
+                return self.strings("queue_comfy_other_running_unknown")
             if position is not None:
                 return self.strings("queue_comfy_pending").format(position)
             return self.strings("queue_comfy_pending_unknown")
@@ -7779,6 +7972,177 @@ class ComfyImageGenMod(loader.Module):
         if idle:
             return self.strings("queue_idle_warning")
         return self.strings("queue_comfy_submitted")
+
+    def _runtime_by_prompt_id(self, prompt_id):
+        if not prompt_id:
+            return None
+        target = str(prompt_id)
+        for runtime in list(self._generation_runtime.values()):
+            if isinstance(runtime, dict) and str(runtime.get("prompt_id")) == target:
+                return runtime
+        return None
+
+    def _format_cmon_text(self, snapshot):
+        lines = [self.strings("cmon_title")]
+        if not snapshot.get("ok"):
+            lines.append(f"<blockquote>{self.strings('cmon_unavailable')}</blockquote>")
+            return self._to_inline_emoji("\n".join(lines))
+
+        running_prompt_id = snapshot.get("running_prompt_id")
+        details = []
+        runtime = self._runtime_by_prompt_id(running_prompt_id)
+        if running_prompt_id and runtime:
+            details.append(self.strings("cmon_active").format(utils.escape_html(running_prompt_id)))
+        elif running_prompt_id:
+            details.append(self.strings("cmon_active_other").format(utils.escape_html(running_prompt_id)))
+        elif snapshot.get("running_count"):
+            details.append(self.strings("cmon_active_unknown"))
+        else:
+            details.append(self.strings("cmon_no_tasks"))
+
+        if runtime:
+            current_node_id = runtime.get("current_node_id")
+            if current_node_id is not None:
+                node_info = self._get_node_status_info(runtime.get("workflow"), current_node_id)
+                node_status = (
+                    node_info.get("text")
+                    if isinstance(node_info, dict) and node_info.get("text")
+                    else self.strings("fmt_running_node").format(utils.escape_html(str(current_node_id)))
+                )
+                details.append(self.strings("cmon_current_node").format(node_status))
+            progress_pct = runtime.get("progress_pct")
+            if progress_pct is not None:
+                details.append(self.strings("cmon_progress").format(int(progress_pct)))
+
+        details.append(self.strings("cmon_last_check").format(time.strftime("%H:%M:%S")))
+        lines.append(f"<blockquote expandable>{chr(10).join(details)}</blockquote>")
+        return self._to_inline_emoji("\n".join(lines))
+
+    async def _cmon_loop(self, state_id, form):
+        idle_since = None
+        try:
+            while not self._unloading:
+                snapshot = await self._get_queue_snapshot(timeout=5)
+                now = time.monotonic()
+                if snapshot.get("running_count"):
+                    idle_since = None
+                else:
+                    if idle_since is None:
+                        idle_since = now
+                    elif now - idle_since >= _CMON_IDLE_CLOSE_AFTER:
+                        try:
+                            await self._edit_cmon_form(
+                                form,
+                                self._to_inline_emoji(self.strings("cmon_closed_idle")),
+                                None,
+                            )
+                        except Exception:
+                            pass
+                        try:
+                            await asyncio.sleep(2)
+                            await form.delete()
+                        except Exception:
+                            pass
+                        return
+                markup = [[{
+                    "text": self.strings("btn_close"),
+                    "callback": self._cmon_close,
+                    "args": (state_id,),
+                    "style": "danger",
+                }]]
+                try:
+                    await self._edit_cmon_form(form, self._format_cmon_text(snapshot), markup)
+                except Exception as e:
+                    if self._is_cmon_dead_form_error(e):
+                        logger.debug("Stopping cmon loop for dead form: %s", e)
+                        return
+                    logger.debug("Failed to update cmon form: %s", e)
+                await asyncio.sleep(_CMON_POLL_INTERVAL)
+        except asyncio.CancelledError:
+            raise
+        finally:
+            entry = self._cmon_tasks.get(state_id)
+            if isinstance(entry, dict) and entry.get("task") is asyncio.current_task():
+                self._cmon_tasks.pop(state_id, None)
+
+    async def _cmon_close(self, call: InlineCall, state_id: str):
+        entry = self._cmon_tasks.pop(state_id, None)
+        task = entry.get("task") if isinstance(entry, dict) else entry
+        if task:
+            task.cancel()
+        try:
+            await call.delete()
+        except Exception as e:
+            if not self._is_cmon_dead_form_error(e):
+                logger.debug("Failed to close cmon form: %s", e)
+        try:
+            await call.answer()
+        except Exception:
+            pass
+
+    async def _close_cmon_entry(self, state_id):
+        entry = self._cmon_tasks.pop(state_id, None)
+        if not entry:
+            return
+        task = entry.get("task") if isinstance(entry, dict) else entry
+        form = entry.get("form") if isinstance(entry, dict) else None
+        if task:
+            task.cancel()
+        if form:
+            try:
+                await form.delete()
+            except Exception as e:
+                if not self._is_cmon_dead_form_error(e):
+                    logger.debug("Failed to delete previous cmon form: %s", e)
+
+    def _cmon_state_id(self, message):
+        try:
+            chat_id = utils.get_chat_id(message)
+        except Exception:
+            chat_id = getattr(message, "chat_id", None) or "unknown"
+        sender_id = getattr(message, "sender_id", None) or self.tg_id or 0
+        return f"{chat_id}:{sender_id}"
+
+    @staticmethod
+    def _is_cmon_dead_form_error(error):
+        text = f"{type(error).__name__}: {error}".lower()
+        return any(
+            marker in text
+            for marker in (
+                "msg not found",
+                "messageidinvalid",
+                "message id invalid",
+                "messagedeleteforbidden",
+                "message delete forbidden",
+                "message to delete not found",
+                "inline message id invalid",
+                "message not found",
+            )
+        )
+
+    async def _edit_cmon_form(self, form, text, reply_markup):
+        text = self._apply_emoji_theme(text)
+        if hasattr(form, "edit") and callable(form.edit):
+            await form.edit(text=text, reply_markup=reply_markup)
+            return True
+        form_data = form if isinstance(form, dict) else getattr(form, "form", {}) or {}
+        if isinstance(form_data, dict):
+            unit_id = form_data.get("id") or form_data.get("uid") or getattr(form, "unit_id", None)
+            if unit_id and hasattr(self.inline, "_edit_unit"):
+                await self.inline._edit_unit(
+                    text=text,
+                    reply_markup=reply_markup,
+                    unit_id=unit_id,
+                )
+                return True
+        return False
+
+    async def _create_cmon_form(self, message, text, reply_markup):
+        return await self.inline.form(
+            message=message,
+            text=self._apply_emoji_theme(text),
+            reply_markup=reply_markup,
+        )
 
     @staticmethod
     def _extract_ws_progress_pct(dtype, ddata, prompt_id, current_node_id=None):
@@ -7987,7 +8351,7 @@ class ComfyImageGenMod(loader.Module):
         idle_warned = False
         ws_update_interval = self._ws_update_interval()
 
-        async def _update_status(status_text=None, is_progress=False, progress_pct=0):
+        async def _update_status(status_text=None, is_progress=False, progress_pct=0, queue_info=None):
             if not status_form:
                 return
             runtime = self._generation_runtime.get(client_id) or {}
@@ -8003,6 +8367,17 @@ class ComfyImageGenMod(loader.Module):
                     time.monotonic(),
                 )
                 duration_text = self._format_generation_time_value(duration)
+            eta_text = None
+            eta_seconds = self._estimate_generation_eta(
+                generation_state,
+                runtime,
+                queue_info=queue_info,
+                progress_pct=progress_pct if is_progress else None,
+            )
+            if eta_seconds is not None:
+                eta_text = self._format_eta_value(eta_seconds)
+                if eta_text and generation_state is not None and generation_state.get("generation_eta_initial") is None:
+                    generation_state["generation_eta_initial"] = eta_seconds
             progress_text = self._format_status_text(
                 display_positive,
                 display_model,
@@ -8013,6 +8388,7 @@ class ComfyImageGenMod(loader.Module):
                 easter_egg=easter_egg,
                 status_text=effective_status,
                 generation_time=duration_text,
+                generation_eta=eta_text,
             )
             if status_is_inline:
                 await status_form.edit(text=progress_text, reply_markup=cancel_markup)
@@ -8041,6 +8417,7 @@ class ComfyImageGenMod(loader.Module):
                 runtime["phase"] = "queued"
                 runtime["queued_at"] = time.monotonic()
             if self._cancel_flags.get(client_id, False):
+                self._set_cancel_reason(client_id, "cancel_flag_after_queue")
                 await self._cancel_runtime_generation(client_id)
                 raise asyncio.CancelledError()
             try:
@@ -8076,7 +8453,7 @@ class ComfyImageGenMod(loader.Module):
             if force or idle or state == "running" or status_text != last_queue_status:
                 last_queue_status = status_text
                 try:
-                    await _update_status(status_text)
+                    await _update_status(status_text, queue_info=queue_info)
                 except Exception:
                     pass
             return queue_info
@@ -8126,9 +8503,11 @@ class ComfyImageGenMod(loader.Module):
                             await _poll_queue(force=True, idle=True)
                         raise asyncio.TimeoutError()
                     if self._unloading:
+                        self._set_cancel_reason(client_id, "unloading")
                         await self._interrupt_generation(prompt_id)
                         raise asyncio.CancelledError()
                     if self._cancel_flags.get(client_id, False):
+                        self._set_cancel_reason(client_id, "cancel_flag_wait_loop")
                         await self._cancel_runtime_generation(client_id)
                         raise asyncio.CancelledError()
                     if await _poll_history():
@@ -8199,6 +8578,8 @@ class ComfyImageGenMod(loader.Module):
                                     self._mark_runtime_finished(client_id, ddata, generation_state)
                     runtime = self._generation_runtime.get(client_id) or {}
                     pct = self._extract_ws_progress_pct(dtype, ddata, prompt_id, runtime.get("current_node_id"))
+                    if pct is not None and runtime is not None:
+                        runtime["progress_pct"] = pct
                     if status_form and ws_update_interval:
                         now = time.time()
                         if now - last_edit >= ws_update_interval:
@@ -8230,6 +8611,7 @@ class ComfyImageGenMod(loader.Module):
                         self._mark_runtime_finished(client_id, ddata, generation_state)
                         break
                     if dtype == "execution_interrupted" and ddata.get("prompt_id") == prompt_id:
+                        self._set_cancel_reason(client_id, "execution_interrupted")
                         self._mark_runtime_finished(client_id, ddata, generation_state)
                         raise asyncio.CancelledError()
                     if dtype == "execution_error" and ddata.get("prompt_id") == prompt_id:
@@ -8285,6 +8667,7 @@ class ComfyImageGenMod(loader.Module):
             pass
 
     async def _cancel_generation(self, call: InlineCall, client_id: str):
+        self._set_cancel_reason(client_id, "manual_cancel_button")
         self._cancel_flags[client_id] = True
         await self._cancel_runtime_generation(client_id)
         try:
@@ -9530,7 +9913,102 @@ class ComfyImageGenMod(loader.Module):
             return f"{seconds:.1f}s"
         return self._format_duration(seconds)
 
-    def _format_gen_text(self, prompt_display, model, wf_name, header, is_inline=False, selected_loras=None, generation_time=None, quote_details=False):
+    @staticmethod
+    def _generation_stats_key(wf_name, model_name=None):
+        wf_key = str(wf_name or "default").strip() or "default"
+        model_key = str(model_name or "").strip()
+        if not model_key:
+            return wf_key
+        return f"{wf_key}::{model_key}"
+
+    def _duration_average_from_values(self, values):
+        if not isinstance(values, list) or not values:
+            return None
+        clean = []
+        for value in values[-_GENERATION_STATS_LIMIT:]:
+            try:
+                value = float(value)
+            except (TypeError, ValueError):
+                continue
+            if value > 0:
+                clean.append(value)
+        if not clean:
+            return None
+        return sum(clean) / len(clean)
+
+    def _get_generation_duration_average(self, wf_name, model_name=None):
+        stats = self.get("generation_duration_stats", {})
+        if not isinstance(stats, dict):
+            return None
+        avg = self._duration_average_from_values(
+            stats.get(self._generation_stats_key(wf_name, model_name))
+        )
+        if avg is not None:
+            return avg
+        return self._duration_average_from_values(
+            stats.get(self._generation_stats_key(wf_name))
+        )
+
+    def _record_generation_duration_stat(self, generation_state):
+        if not isinstance(generation_state, dict):
+            return
+        duration = generation_state.get("generation_duration")
+        try:
+            duration = float(duration)
+        except (TypeError, ValueError):
+            return
+        if duration <= 0:
+            return
+        stats = self.get("generation_duration_stats", {})
+        if not isinstance(stats, dict):
+            stats = {}
+        key = self._generation_stats_key(
+            generation_state.get("wf_name"),
+            generation_state.get("model"),
+        )
+        values = stats.get(key)
+        if not isinstance(values, list):
+            values = []
+        values.append(round(duration, 3))
+        stats[key] = values[-_GENERATION_STATS_LIMIT:]
+        self.set("generation_duration_stats", stats)
+
+    def _format_eta_value(self, seconds):
+        value = self._format_generation_time_value(seconds)
+        return f"~{value}" if value else None
+
+    def _estimate_generation_eta(self, generation_state, runtime=None, queue_info=None, progress_pct=None):
+        if not isinstance(generation_state, dict):
+            return None
+        runtime = runtime if isinstance(runtime, dict) else {}
+        queue_info = queue_info if isinstance(queue_info, dict) else {}
+        if queue_info.get("state") == "pending":
+            return None
+        if runtime.get("phase") not in ("running", "finishing", "uploading"):
+            return None
+
+        eta_total = runtime.get("eta_total")
+        eta_started_at = runtime.get("eta_started_at")
+        if eta_total is not None and eta_started_at is not None:
+            try:
+                remaining = float(eta_total) - (time.monotonic() - float(eta_started_at))
+            except (TypeError, ValueError):
+                remaining = None
+            if remaining is not None and remaining > 1:
+                return remaining
+            return None
+
+        avg = self._get_generation_duration_average(
+            generation_state.get("wf_name"),
+            generation_state.get("model"),
+        )
+        if not avg:
+            return None
+        runtime["eta_total"] = avg
+        runtime["eta_started_at"] = time.monotonic()
+        return avg
+
+    def _format_gen_text(self, prompt_display, model, wf_name, header, is_inline=False, selected_loras=None, generation_time=None, generation_eta=None, quote_details=False):
         model_short = utils.escape_html(self._format_model_name(model))
         if is_inline:
             prompt_emoji = '<tg-emoji emoji-id="5879841310902324730">\u270f\ufe0f</tg-emoji>'
@@ -9551,7 +10029,12 @@ class ComfyImageGenMod(loader.Module):
             f"{wf_emoji} {self.strings('fmt_workflow')} {utils.escape_html(wf_name)}",
         ]
         if generation_time:
-            detail_lines.append(f"{time_emoji} {self.strings('fmt_generation_time').format(utils.escape_html(generation_time))}")
+            time_line = self.strings("fmt_generation_time").format(utils.escape_html(generation_time))
+            if generation_eta:
+                time_line = f"{time_line} / {self.strings('fmt_generation_eta').format(utils.escape_html(generation_eta))}"
+            detail_lines.append(f"{time_emoji} {time_line}")
+        elif generation_eta:
+            detail_lines.append(f"{time_emoji} {self.strings('fmt_generation_eta').format(utils.escape_html(generation_eta))}")
         lora_display = self._format_loras_for_display(selected_loras, is_inline)
         if lora_display:
             detail_lines.append(lora_display)
@@ -9659,7 +10142,7 @@ class ComfyImageGenMod(loader.Module):
 
         return {"text": self.strings(key), "show_progress": show_progress, "known": True}
 
-    def _format_status_text(self, prompt_display, model, wf_name, is_inline=False, is_progress=False, progress_pct=0, easter_egg=None, status_key=None, status_text=None, generation_time=None):
+    def _format_status_text(self, prompt_display, model, wf_name, is_inline=False, is_progress=False, progress_pct=0, easter_egg=None, status_key=None, status_text=None, generation_time=None, generation_eta=None):
         if is_inline:
             gen_emoji = '<tg-emoji emoji-id="4904936030232117798">\u2699\ufe0f</tg-emoji>'
         else:
@@ -9684,6 +10167,7 @@ class ComfyImageGenMod(loader.Module):
             header,
             is_inline,
             generation_time=generation_time,
+            generation_eta=generation_eta,
             quote_details=True,
         ))
 
@@ -11336,6 +11820,9 @@ class ComfyImageGenMod(loader.Module):
                     )
 
                 self._sync_generation_state_from_workflow(state, wf_data, prepared_workflow)
+                runtime = self._generation_runtime.get(client_id)
+                if runtime is not None:
+                    runtime["workflow"] = prepared_workflow
 
                 async def _do_queue():
                     await self._raise_if_generation_cancelled(client_id)
@@ -11463,6 +11950,7 @@ class ComfyImageGenMod(loader.Module):
                     self._increment_total_generation_count()
                     if auto_delete_delay and sent_message:
                         self._track_auto_delete(sent_message, auto_delete_delay)
+                    self._record_generation_duration_stat(state)
                     await self._send_generation_duplicate(
                         media_bytes if media_bytes is not None else media_bio,
                         caption,
@@ -11481,8 +11969,15 @@ class ComfyImageGenMod(loader.Module):
                 except Exception:
                     pass
             except asyncio.CancelledError:
+                cancel_reason = self._get_cancel_reason(client_id) or "unknown"
+                logger.warning("Generation cancelled: client_id=%s reason=%s", client_id, cancel_reason)
                 try:
-                    await status_form.delete()
+                    cancelled_text = f"{self.strings('cancelled')} <code>{utils.escape_html(cancel_reason)}</code>"
+                    cancelled_text = self._to_inline_emoji(cancelled_text)
+                    if status_is_inline:
+                        await status_form.edit(text=cancelled_text, reply_markup=None)
+                    else:
+                        await utils.answer(status_form, self._apply_emoji_theme(cancelled_text))
                 except Exception:
                     pass
             except Exception as e:
@@ -13945,6 +14440,71 @@ class ComfyImageGenMod(loader.Module):
         except Exception as e:
             logger.debug("Failed to send trigger unavailable reply: %s", e)
 
+    def _reply_media_is_source_post(self, message, reply):
+        if not reply:
+            return False
+        if getattr(reply, "post", False):
+            return True
+        reply_id = getattr(reply, "id", None)
+        reply_to = getattr(message, "reply_to", None)
+        reply_to_top_id = getattr(reply_to, "reply_to_top_id", None)
+        if (
+            reply_id is not None
+            and reply_to_top_id is not None
+            and str(reply_id) == str(reply_to_top_id)
+            and getattr(reply, "media", None)
+        ):
+            return True
+        reply_to_msg_id = (
+            getattr(reply_to, "reply_to_msg_id", None)
+            or getattr(message, "reply_to_msg_id", None)
+        )
+        fwd_from = getattr(reply, "fwd_from", None)
+        from_id = getattr(reply, "from_id", None)
+        sender = getattr(reply, "sender", None)
+        looks_like_channel_post = bool(
+            fwd_from
+            or isinstance(from_id, PeerChannel)
+            or type(from_id).__name__ == "PeerChannel"
+            or getattr(sender, "broadcast", False)
+        )
+        if (
+            reply_id is not None
+            and reply_to_msg_id is not None
+            and str(reply_id) == str(reply_to_msg_id)
+            and looks_like_channel_post
+            and getattr(reply, "media", None)
+        ):
+            return True
+        try:
+            message_chat_id = utils.get_chat_id(message)
+            reply_chat_id = utils.get_chat_id(reply)
+        except Exception:
+            return False
+        return bool(
+            message_chat_id is not None
+            and reply_chat_id is not None
+            and int(message_chat_id) != int(reply_chat_id)
+            and getattr(reply, "media", None)
+        )
+
+    def _reply_media_kind_for_message(self, message, reply, context="generation"):
+        if self._reply_media_is_source_post(message, reply):
+            logger.debug(
+                "Ignoring %s reply media from source post: message_id=%s reply_id=%s",
+                context,
+                getattr(message, "id", None),
+                getattr(reply, "id", None),
+            )
+            return None
+        return self._reply_media_kind(reply)
+
+    def _trigger_reply_media_is_source_post(self, message, reply):
+        return self._reply_media_is_source_post(message, reply)
+
+    def _trigger_reply_media_kind(self, message, reply):
+        return self._reply_media_kind_for_message(message, reply, context="trigger")
+
     async def _make_trigger_inline_anchor(self, message):
         try:
             return await self.client.send_message(
@@ -14108,7 +14668,7 @@ class ComfyImageGenMod(loader.Module):
         parsed_cfg = parsed["cfg"]
 
         reply = await message.get_reply_message()
-        reply_kind = self._reply_media_kind(reply)
+        reply_kind = self._trigger_reply_media_kind(message, reply)
         has_photo = reply_kind == "image"
         has_video = reply_kind == "video"
         input_filename = None
@@ -14675,13 +15235,19 @@ class ComfyImageGenMod(loader.Module):
             return await self._safe_answer(message, text)
 
         preloaded_reply = None
+        preloaded_reply_kind = None
         preloaded_wf_name = None
         preloaded_wf_data = None
         image_only_workflow = False
 
         if not raw_args:
             preloaded_reply = await message.get_reply_message()
-            if not (preloaded_reply and getattr(preloaded_reply, "media", None)):
+            preloaded_reply_kind = self._reply_media_kind_for_message(
+                message,
+                preloaded_reply,
+                context="generation",
+            )
+            if not preloaded_reply_kind:
                 return await self._safe_answer(message, self.strings("no_prompt"))
             await _ensure_preflight("preflight_workflow")
             preloaded_wf_name = self._canonical_workflow_name(self.get("default_workflow", _DEFAULT_WORKFLOW_NAME))
@@ -14735,7 +15301,11 @@ class ComfyImageGenMod(loader.Module):
         parsed_cfg = parsed["cfg"]
 
         reply = preloaded_reply or await message.get_reply_message()
-        reply_kind = self._reply_media_kind(reply)
+        reply_kind = preloaded_reply_kind or self._reply_media_kind_for_message(
+            message,
+            reply,
+            context="generation",
+        )
         has_photo = reply_kind == "image"
         has_video = reply_kind == "video"
         input_filename = None
@@ -14944,9 +15514,55 @@ class ComfyImageGenMod(loader.Module):
         """ - ComfyUI connection status"""
         status = await self._safe_answer(
             message,
-            self._format_generation_preflight_inline(self.strings("ci_loading")),
+            self._format_ci_loading_text(),
         )
-        await self._render_comfyinfo(status or message)
+        ping_state = {}
+        ping_stop = asyncio.Event()
+        ping_task = asyncio.create_task(self._ci_ping_loop(status or message, ping_state, ping_stop))
+        try:
+            await self._render_comfyinfo(
+                status or message,
+                userbot_ping_state=ping_state,
+                ping_stop_event=ping_stop,
+                ping_task=ping_task,
+            )
+        finally:
+            ping_stop.set()
+            if not ping_task.done():
+                ping_task.cancel()
+                try:
+                    await ping_task
+                except asyncio.CancelledError:
+                    pass
+
+    @loader.command(ru_doc=" - мониторинг задач ComfyUI")
+    async def cmon(self, message: Message):
+        """ - ComfyUI task monitor"""
+        if not self._base_url():
+            return await self._safe_answer(message, self.strings("no_url"))
+        state_id = self._cmon_state_id(message)
+        status = await self._safe_answer(message, self.strings("cmon_starting"))
+        await self._close_cmon_entry(state_id)
+        snapshot = await self._get_queue_snapshot(timeout=5)
+        markup = [[{
+            "text": self.strings("btn_close"),
+            "callback": self._cmon_close,
+            "args": (state_id,),
+            "style": "danger",
+        }]]
+        try:
+            form = await self._create_cmon_form(
+                status or message,
+                self._format_cmon_text(snapshot),
+                markup,
+            )
+        except Exception as e:
+            logger.debug("Failed to create cmon inline form: %s", e)
+            form = None
+        if not form:
+            return await self._safe_answer(status or message, self._plain_text(self._format_cmon_text(snapshot)))
+        task = asyncio.create_task(self._cmon_loop(state_id, form))
+        self._cmon_tasks[state_id] = {"task": task, "form": form}
 
     @loader.command(
         ru_doc=" [URL] - API проверка текущего туннеля ComfyUI",
@@ -14969,7 +15585,7 @@ class ComfyImageGenMod(loader.Module):
 
         await self._ct_run_probe(message, base_url)
 
-    async def _render_comfyinfo(self, target):
+    async def _render_comfyinfo(self, target, userbot_ping_state=None, ping_stop_event=None, ping_task=None):
         base = self._base_url()
         if not base:
             if isinstance(target, Message):
@@ -15059,7 +15675,27 @@ class ComfyImageGenMod(loader.Module):
         total_generations = self.strings("info_total_generations").format(
             self._get_total_generation_count()
         )
-        lines.append(f"<blockquote expandable>{total_generations}</blockquote>")
+        bottom_lines = [total_generations]
+        if ping_stop_event:
+            ping_stop_event.set()
+        if ping_task and not ping_task.done():
+            ping_task.cancel()
+            try:
+                await ping_task
+            except asyncio.CancelledError:
+                pass
+        userbot_ping_ms = None
+        if isinstance(userbot_ping_state, dict):
+            userbot_ping_ms = userbot_ping_state.get("value")
+        if userbot_ping_ms is None:
+            try:
+                userbot_ping_ms = await self._measure_userbot_ping_ms()
+            except Exception as e:
+                logger.debug("Failed to measure ci final ping: %s", e)
+        ping_quote = self._format_ci_ping_quote(userbot_ping_ms)
+        if ping_quote:
+            bottom_lines.append(self.strings("info_userbot_ping").format(int(userbot_ping_ms)))
+        lines.append(f"<blockquote expandable>{chr(10).join(bottom_lines)}</blockquote>")
 
         text = self._to_inline_emoji("\n".join(lines))
         markup = [
