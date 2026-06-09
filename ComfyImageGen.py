@@ -1,11 +1,11 @@
-__version__ = (1, 0, 0)
+__version__ = (1, 0, 1)
 # meta developer: @mofkomodules, @pureoffic
 # Name: ComfyImageGen
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
 # meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
 # meta fhsdesc: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
-# meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen
-# Diff: релиз
+# meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py
+# Diff: change module url (fix Github error)
 # requires: aiohttp pillow cachetools google-genai
 
 import logging
@@ -92,7 +92,7 @@ _FLUX_EDIT_WF_URL = f"{_ASSETS_BASE_URL}/flux_i2i.json"
 _UPSCALE_WF_URL = f"{_ASSETS_BASE_URL}/UpscaleWF1_clean.json"
 _BGRM_WF_URL = f"{_ASSETS_BASE_URL}/bgremove.json"
 _FRAMES_WF_URL = f"{_ASSETS_BASE_URL}/frames.json"
-_MODULE_UPDATE_URL = "https://github.com/mofko/MofkoModules/raw/refs/heads/main/ComfyImageGen"
+_MODULE_UPDATE_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py"
 _CIVITAI_IMAGES_URL = "https://civitai.com/api/v1/images"
 _CSHARE_TOP_CHAT = "comfyideas"
 _CSHARE_TOP_MESSAGE_ID = 5
