@@ -6,7 +6,7 @@ __version__ = (1, 0, 2)
 # meta fhsdesc: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
 # meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py
 # Diff: Добавлено: команда .cmon (мониторинг задач), расчёт примерного времени генерации, пинг юб в .ci для удобства. Фиксы: исправлена генерация от имени канала, исправлена генерация в под постом, исправлено получение рандом промпта (-i), другие мини-фиксы.
-# requires: aiohttp pillow cachetools google-genai
+# requires: aiohttp pillow cachetools google-genai 
 
 import logging
 import asyncio
