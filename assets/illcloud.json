@@ -1,0 +1,180 @@
+{
+  "4": {
+    "inputs": {
+      "ckpt_name": "wai-illustrious-sdxl.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint - BASE"
+    }
+  },
+  "5": {
+    "inputs": {
+      "width": 896,
+      "height": 1152,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "6": {
+    "inputs": {
+      "text": "",
+      "clip": [
+        "4",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "7": {
+    "inputs": {
+      "text": "lowres, worst quality, low quality, normal quality, bad anatomy, bad \neyes, bad hands, extra digits, fewer digits, missing fingers, fused fingers, malformed limbs, bad feet, extra arms, extra legs, long neck, cropped, jpeg artifacts, text, signature, watermark, username, artist name, blurry, censored, mosaic censoring",
+      "clip": [
+        "4",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "10": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 963796275280913,
+      "steps": 30,
+      "cfg": 6,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "beta",
+      "start_at_step": 0,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "model": [
+        "56",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "5",
+        0
+      ]
+    },
+    "class_type": "KSamplerAdvanced",
+    "_meta": {
+      "title": "KSampler (Advanced) - BASE"
+    }
+  },
+  "19": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "53",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "53": {
+    "inputs": {
+      "samples": [
+        "55",
+        0
+      ],
+      "vae": [
+        "4",
+        2
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Decode Final"
+    }
+  },
+  "54": {
+    "inputs": {
+      "upscale_method": "bislerp",
+      "scale_by": 1.5,
+      "samples": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "LatentUpscaleBy",
+    "_meta": {
+      "title": "Latent Hires Upscale 1.5x"
+    }
+  },
+  "55": {
+    "inputs": {
+      "seed": 345715273299719,
+      "steps": 14,
+      "cfg": 5.5,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "beta",
+      "denoise": 0.38,
+      "model": [
+        "56",
+        0
+      ],
+      "positive": [
+        "6",
+        0
+      ],
+      "negative": [
+        "7",
+        0
+      ],
+      "latent_image": [
+        "54",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "Hires Sampler"
+    }
+  },
+  "56": {
+    "inputs": {
+      "model": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "CFGZeroStar",
+    "_meta": {
+      "title": "CFGZeroStar"
+    }
+  },
+  "58": {
+    "inputs": {
+      "lora_name": "illustrious-hands.safetensors",
+      "strength_model": 1,
+      "model": [
+        "4",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  }
+}
