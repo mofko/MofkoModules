@@ -1,23 +1,24 @@
 # meta developer: @mofkomodules
 # Name: MusicS
-# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
-# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
+# meta banner: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260209_182634_445.jpg
+#metapic https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260209_182634_445.jpg
 # meta fhsdesc: tool, music, finder, mofko, поиск, музыка
-# requires: aiohttp ShazamAPI ffmpeg ffprobe
+# meta tags: tool, music, finder, mofko, поиск, музыка
+# requires: cachetools ShazamAPI audioop-lts
+# packages: ffmpeg
 
-__version__ = (1, 3, 0)
+__version__ = (1, 4, 0)
 
 import asyncio
 import contextlib
 import logging
 import os
-import ssl
 import tempfile
 import time
-from typing import Dict, Optional
-from urllib.parse import quote, quote_plus
+from typing import Optional
+from urllib.parse import quote
 
-import aiohttp
+from cachetools import TTLCache
 from ShazamAPI import Shazam
 from telethon.tl.types import (
     DocumentAttributeAudio,
@@ -33,7 +34,7 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class MusicSMod(loader.Module):
-    """Recognize music from replied media."""
+    """Распознавание музыки из медиа."""
 
     strings = {
         "name": "MusicS",
@@ -49,11 +50,13 @@ class MusicSMod(loader.Module):
         "ffmpeg_not_found_log": "Install ffmpeg and ffprobe to use this module.",
         "cfg_max_file_size": "Maximum file size in MB",
         "cfg_shazam_attempts": "Number of Shazam attempts per segment",
+        "cfg_max_segments": "Maximum audio segments per media",
+        "busy": "<tg-emoji emoji-id=5913376703312302899>📣</tg-emoji> Music recognition is already running. Try again after it finishes.",
         "no_links": "<tg-emoji emoji-id=5258503720928288433>ℹ️</tg-emoji> Links were not found.",
     }
 
     strings_ru = {
-        "_cls_doc": "Распознаёт музыку из видео, войсов и аудио в реплае.",
+        "_cls_doc": "Распознавание музыки из медиа.",
         "processing": "<tg-emoji emoji-id=5325543345760509967>🔄</tg-emoji> Обрабатываю медиа...",
         "downloading": "<tg-emoji emoji-id=5873225338984599714>📤</tg-emoji> Скачиваю медиа...",
         "extracting": "<tg-emoji emoji-id=5325543345760509967>🔄</tg-emoji> Подготавливаю аудиофрагменты...",
@@ -65,8 +68,10 @@ class MusicSMod(loader.Module):
         "ffmpeg_not_found": "<tg-emoji emoji-id=5913376703312302899>📣</tg-emoji> Установите <code>ffmpeg</code> и <code>ffprobe</code> для работы модуля.",
         "cfg_max_file_size": "Максимальный размер файла в МБ",
         "cfg_shazam_attempts": "Количество попыток Shazam на один фрагмент",
+        "cfg_max_segments": "Максимальное количество аудиофрагментов на медиа",
+        "busy": "<tg-emoji emoji-id=5913376703312302899>📣</tg-emoji> Распознавание музыки уже выполняется. Попробуйте после завершения.",
         "no_links": "<tg-emoji emoji-id=5258503720928288433>ℹ️</tg-emoji> Ссылки не найдены.",
-        "_cmd_doc_song": "Распознать музыку из медиа в реплае",
+        "_cmd_doc_song": "Распознать музыку",
     }
 
     _SEGMENT_DURATION = 14
@@ -78,20 +83,27 @@ class MusicSMod(loader.Module):
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "max_file_size",
-                50,
+                30,
                 lambda: self.strings("cfg_max_file_size"),
-                validator=loader.validators.Integer(minimum=10, maximum=100),
+                validator=loader.validators.Integer(minimum=10, maximum=50),
             ),
             loader.ConfigValue(
                 "shazam_attempts",
-                8,
+                3,
                 lambda: self.strings("cfg_shazam_attempts"),
-                validator=loader.validators.Integer(minimum=1, maximum=20),
+                validator=loader.validators.Integer(minimum=1, maximum=5),
+            ),
+            loader.ConfigValue(
+                "max_segments",
+                2,
+                lambda: self.strings("cfg_max_segments"),
+                validator=loader.validators.Integer(minimum=1, maximum=4),
             ),
         )
         self.ffmpeg_available = False
         self.uid = None
-        self._result_cache: Dict[str, Dict[str, object]] = {}
+        self._recognition_lock = asyncio.Lock()
+        self._result_cache = TTLCache(maxsize=200, ttl=self._CACHE_TTL)
 
     async def client_ready(self, client, db):
         self.client = client
@@ -104,37 +116,9 @@ class MusicSMod(loader.Module):
             self.uid = me.id
         except Exception as e:
             logger.exception(e)
-        await self._send_fheta_like()
 
     async def on_unload(self):
         self._result_cache.clear()
-
-    async def _send_fheta_like(self):
-        if self.db.get(__name__, "liked_fheta", False):
-            return
-        token = self.db.get("FHeta", "token")
-        if not token:
-            return
-        try:
-            if not self.uid:
-                me = await self.client.get_me()
-                self.uid = me.id
-            install_link = "dlm https://api.fixyres.com/module/mofko/MofkoModules/MusicS.py"
-            endpoint = f"rate/{self.uid}/{quote_plus(install_link)}/like"
-            ssl_context = ssl.create_default_context()
-            ssl_context.check_hostname = False
-            ssl_context.verify_mode = ssl.CERT_NONE
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    f"https://api.fixyres.com/{endpoint}",
-                    headers={"Authorization": token},
-                    ssl=ssl_context,
-                    timeout=15,
-                ) as response:
-                    if response.status == 200:
-                        self.db.set(__name__, "liked_fheta", True)
-        except Exception as e:
-            logger.exception(e)
 
     async def _check_ffmpeg(self) -> bool:
         for command in ("ffmpeg", "ffprobe"):
@@ -201,23 +185,16 @@ class MusicSMod(loader.Module):
         return f"msg:{utils.get_chat_id(message)}:{message.id}"
 
     def _prune_cache(self):
-        now = time.time()
-        expired = [
-            key for key, value in self._result_cache.items()
-            if now - float(value["ts"]) > self._CACHE_TTL
-        ]
-        for key in expired:
-            self._result_cache.pop(key, None)
+        # TTLCache removes expired items lazily on access/mutation.
+        with contextlib.suppress(Exception):
+            self._result_cache.expire()
 
     def _get_cached_result(self, cache_key: str) -> Optional[dict]:
         self._prune_cache()
-        cached = self._result_cache.get(cache_key)
-        if not cached:
-            return None
-        return cached.get("result")
+        return self._result_cache.get(cache_key)
 
     def _store_cached_result(self, cache_key: str, result: dict):
-        self._result_cache[cache_key] = {"ts": time.time(), "result": result}
+        self._result_cache[cache_key] = result
 
     def _get_file_size_mb(self, message: Message) -> float:
         document = self._get_document(message)
@@ -292,7 +269,7 @@ class MusicSMod(loader.Module):
                 offsets.append(rounded)
         if max_offset not in offsets:
             offsets.append(round(max_offset, 2))
-        return offsets
+        return offsets[: self.config["max_segments"]]
 
     async def _extract_segment(self, source_path: str, offset: float, fallback: bool, output_path: str) -> bool:
         command = [
@@ -351,30 +328,31 @@ class MusicSMod(loader.Module):
 
     def _recognize_shazam_sync(self, audio_bytes: bytes, attempts: int) -> Optional[dict]:
         shazam = Shazam(audio_bytes)
-        for _ in range(attempts):
+        for attempt in range(max(1, attempts)):
             try:
                 result = next(shazam.recognizeSong())
+                if not isinstance(result, tuple) or len(result) < 2 or not isinstance(result[1], dict):
+                    continue
                 track = result[1].get("track")
                 if track:
                     return track
             except StopIteration:
                 break
             except Exception as e:
-                logger.exception(e)
+                logger.debug("Shazam recognize attempt %s/%s failed: %s", attempt + 1, attempts, e)
                 time.sleep(0.4)
         return None
 
     async def _recognize_audio_file(self, audio_path: str) -> Optional[dict]:
         try:
+            if not os.path.exists(audio_path) or os.path.getsize(audio_path) <= 0:
+                return None
             with open(audio_path, "rb") as file:
                 audio_bytes = file.read()
             if not audio_bytes:
                 return None
-            track = await utils.run_sync(
-                self._recognize_shazam_sync,
-                audio_bytes,
-                self.config["shazam_attempts"],
-            )
+            attempts = max(1, int(self.config["shazam_attempts"]))
+            track = await asyncio.to_thread(self._recognize_shazam_sync, audio_bytes, attempts)
             if not track:
                 return None
             return {
@@ -493,9 +471,9 @@ class MusicSMod(loader.Module):
             await status_msg.delete()
         await reply.respond(self.strings("recognition_failed"))
 
-    @loader.command(ru_doc=" - распознать музыку из медиа в реплае")
+    @loader.command(ru_doc=" - Распознать музыку")
     async def song(self, message: Message):
-        """Recognize music from replied media."""
+        """Распознать музыку"""
         if not self.ffmpeg_available:
             await utils.answer(message, self.strings("ffmpeg_not_found"))
             return
@@ -520,26 +498,30 @@ class MusicSMod(loader.Module):
         if cached_result:
             await self._send_result(message, reply, status_msg, cached_result)
             return
-        try:
-            with tempfile.TemporaryDirectory() as temp_dir:
-                source_path = os.path.join(temp_dir, f"source{self._get_source_suffix(reply)}")
-                downloaded = await self._download_media(reply, source_path)
-                if not downloaded:
-                    await self._send_failure(reply, status_msg)
-                    return
-                status_msg = await self._send_status(message, status_msg, self.strings("extracting"))
-                duration = await self._probe_duration(source_path, reply)
-                result, status_msg = await self._recognize_from_source(
-                    source_path,
-                    duration,
-                    message,
-                    status_msg,
-                )
-                if not result:
-                    await self._send_failure(reply, status_msg)
-                    return
-                self._store_cached_result(cache_key, result)
-                await self._send_result(message, reply, status_msg, result)
-        except Exception as e:
-            logger.exception(e)
-            await self._send_failure(reply, status_msg)
+        if self._recognition_lock.locked():
+            await self._send_status(message, status_msg, self.strings("busy"))
+            return
+        async with self._recognition_lock:
+            try:
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    source_path = os.path.join(temp_dir, f"source{self._get_source_suffix(reply)}")
+                    downloaded = await self._download_media(reply, source_path)
+                    if not downloaded:
+                        await self._send_failure(reply, status_msg)
+                        return
+                    status_msg = await self._send_status(message, status_msg, self.strings("extracting"))
+                    duration = await self._probe_duration(source_path, reply)
+                    result, status_msg = await self._recognize_from_source(
+                        source_path,
+                        duration,
+                        message,
+                        status_msg,
+                    )
+                    if not result:
+                        await self._send_failure(reply, status_msg)
+                        return
+                    self._store_cached_result(cache_key, result)
+                    await self._send_result(message, reply, status_msg, result)
+            except Exception as e:
+                logger.exception(e)
+                await self._send_failure(reply, status_msg)
