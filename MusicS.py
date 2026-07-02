@@ -1,7 +1,7 @@
 # meta developer: @mofkomodules
 # Name: MusicS
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
-#metapic https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
+#metapic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
 # meta fhsdesc: tool, music, finder, mofko, поиск, музыка
 # meta tags: tool, music, finder, mofko, поиск, музыка
 # requires: cachetools ShazamAPI audioop-lts
