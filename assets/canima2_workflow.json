@@ -1,0 +1,198 @@
+{
+  "1": {
+    "inputs": {
+      "unet_name": "miaomiaoHarem_anima13.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "3": {
+    "inputs": {
+      "wildcard_text": "",
+      "populated_text": "",
+      "mode": "populate",
+      "seed": 676044868754470,
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "POSITIVE"
+    }
+  },
+  "4": {
+    "inputs": {
+      "wildcard_text": "Score_6, score_5, score_4, worst quality, low quality, jpeg artifacts, blurry, text, watermark, logo, signature, bad anatomy, bad hands, extra limbs, missing limbs, fused fingers, bad face, realistic, photorealistic, 3d, render, flat shading, unnatural shadows, aliasing, distortion, compression artifacts, corrupted, oversaturated, washed out colors",
+      "populated_text": "",
+      "mode": "populate",
+      "seed": 922454687838554,
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "NEGATIVE"
+    }
+  },
+  "5": {
+    "inputs": {
+      "seed": 180050911057993,
+      "steps": 30,
+      "cfg": [
+        "44",
+        0
+      ],
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "52",
+        0
+      ],
+      "positive": [
+        "45",
+        0
+      ],
+      "negative": [
+        "48",
+        0
+      ],
+      "latent_image": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "13": {
+    "inputs": {
+      "filename_prefix": "Anima",
+      "images": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "44": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "45": {
+    "inputs": {
+      "text": [
+        "3",
+        0
+      ],
+      "clip": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "48": {
+    "inputs": {
+      "text": [
+        "4",
+        0
+      ],
+      "clip": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative Prompt)"
+    }
+  },
+  "49": {
+    "inputs": {
+      "width": 920,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "51": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "60",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "52": {
+    "inputs": {
+      "model": [
+        "1",
+        0
+      ]
+    },
+    "class_type": "CFGZeroStar",
+    "_meta": {
+      "title": "CFGZeroStar"
+    }
+  },
+  "57": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "51",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "59": {
+    "inputs": {
+      "clip_name": "qwen_3_06b_base.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "60": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  }
+}
