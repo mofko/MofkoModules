@@ -1,12 +1,14 @@
-__version__ = (1, 0, 2)
+__version__ = (1, 0, 3)
 # meta developer: @mofkomodules, @pureoffic
 # Name: ComfyImageGen
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
-# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
+#metapic:https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
 # meta fhsdesc: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
+# meta tags: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
 # meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py
-# Diff: Добавлено: команда .cmon (мониторинг задач), расчёт примерного времени генерации, пинг юб в .ci для удобства. Фиксы: исправлена генерация от имени канала, исправлена генерация в под постом, исправлено получение рандом промпта (-i), другие мини-фиксы.
+# Diff: Добавлена почти полная поддержка comfy cloud, новые вф эксклюзивно под cloud режим. Новые функции и переработка старых в .ultcomfy, новая команда .cmode для переключение бекенда комфи (Ключи комфи клауд с ротацией)
 # requires: aiohttp pillow cachetools google-genai
+# scope: heroku_min 2.0.0
 
 import logging
 import asyncio
@@ -21,13 +23,16 @@ import re
 import string
 import tempfile
 import mimetypes
+import contextvars
 from urllib.parse import urlparse
+from urllib.parse import quote
 
 import aiohttp
 from cachetools import TTLCache
 from PIL import Image
 from herokutl.extensions import html
 from herokutl.errors.rpcerrorlist import ChannelPrivateError, ChatAdminRequiredError, UserNotParticipantError
+from herokutl.tl.functions.channels import GetFullChannelRequest
 from herokutl.tl.functions.messages import GetForumTopicsByIDRequest, SendMediaRequest, SendMessageRequest
 
 try:
@@ -52,6 +57,10 @@ except ImportError:
     InputMediaUploadedPhoto = None
     InputReplyToMessage = None
     InputReplyToMonoForum = None
+try:
+    from herokutl.tl.types import InputPeerSelf
+except ImportError:
+    InputPeerSelf = None
 from .. import loader, utils
 from ..inline.types import InlineCall
 
@@ -90,9 +99,94 @@ _SDXL_REAL2_WF_URL = f"{_ASSETS_BASE_URL}/sdxl_real2_workflow.json"
 _ERNIE_WF_URL = f"{_ASSETS_BASE_URL}/ernie_workflow.json"
 _FLUX_EDIT_WF_URL = f"{_ASSETS_BASE_URL}/flux_i2i.json"
 _UPSCALE_WF_URL = f"{_ASSETS_BASE_URL}/UpscaleWF1_clean.json"
+_VIDEO_UPSCALE_WF_URL = f"{_ASSETS_BASE_URL}/utility-gan_upscaler.json"
+_CLOUD_QWEN_EDIT_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/QwenEditCloud.json"
+_CLOUD_ILL_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/illcloud.json"
+_CLOUD_ZIT_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/zitcloud.json"
+_CLOUD_ANIMA_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/animacloud.json"
+_CLOUD_ANIMA2_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/canima2_workflow.json"
+_CLOUD_UPSCALE_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/cloud%20upscale.json"
+_CLOUD_VIDEO_UPSCALE_WF_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/cloud%20vupscaler.json"
+_CDOWN_TYPE_CHECKPOINT = "checkpoint"
+_CDOWN_TYPE_LORA = "lora"
+_CDOWN_TYPE_VAE = "vae"
+_CDOWN_TYPE_CONTROLNET = "controlnet"
+_CDOWN_TYPE_UPSCALER = "upscaler"
+_CDOWN_TYPE_TEXT_ENCODER = "text_encoder"
+_CDOWN_TYPE_UNET = "unet"
+_CDOWN_TYPE_CLIP_VISION = "clip_vision"
+_CDOWN_TYPE_IPADAPTER = "ipadapter"
+_CDOWN_TYPE_STYLE_MODEL = "style_model"
+_CDOWN_TYPE_MODEL_PATCH = "model_patch"
+_CDOWN_TYPE_SAM = "sam"
+_CDOWN_TYPES = {
+    _CDOWN_TYPE_CHECKPOINT: {
+        "label_key": "cdown_type_checkpoint",
+        "tags": ("models", "checkpoint"),
+        "folder_aliases": ("checkpoints", "checkpoint"),
+    },
+    _CDOWN_TYPE_LORA: {
+        "label_key": "cdown_type_lora",
+        "tags": ("models", "lora"),
+        "folder_aliases": ("loras", "lora"),
+    },
+    _CDOWN_TYPE_VAE: {
+        "label_key": "cdown_type_vae",
+        "tags": ("models", "vae"),
+        "folder_aliases": ("vae", "vaes"),
+    },
+    _CDOWN_TYPE_CONTROLNET: {
+        "label_key": "cdown_type_controlnet",
+        "tags": ("models", "controlnet"),
+        "folder_aliases": ("controlnet", "controlnets"),
+    },
+    _CDOWN_TYPE_UPSCALER: {
+        "label_key": "cdown_type_upscaler",
+        "tags": ("models", "upscale_model"),
+        "folder_aliases": ("upscale_models", "upscale_model", "upscaler", "upscalers"),
+    },
+    _CDOWN_TYPE_TEXT_ENCODER: {
+        "label_key": "cdown_type_text_encoder",
+        "tags": ("models", "text_encoder"),
+        "folder_aliases": ("text_encoders", "text_encoder"),
+    },
+    _CDOWN_TYPE_UNET: {
+        "label_key": "cdown_type_unet",
+        "tags": ("models", "unet"),
+        "folder_aliases": ("diffusion_models", "diffusion_model", "unet", "unets"),
+    },
+    _CDOWN_TYPE_CLIP_VISION: {
+        "label_key": "cdown_type_clip_vision",
+        "tags": ("models", "clip_vision"),
+        "folder_aliases": ("clip_vision", "clipvision"),
+    },
+    _CDOWN_TYPE_IPADAPTER: {
+        "label_key": "cdown_type_ipadapter",
+        "tags": ("models", "ipadapter"),
+        "folder_aliases": ("ipadapter", "ip_adapter", "ip-adapter"),
+    },
+    _CDOWN_TYPE_STYLE_MODEL: {
+        "label_key": "cdown_type_style_model",
+        "tags": ("models", "style_model"),
+        "folder_aliases": ("style_models", "style_model"),
+    },
+    _CDOWN_TYPE_MODEL_PATCH: {
+        "label_key": "cdown_type_model_patch",
+        "tags": ("models", "model_patch"),
+        "folder_aliases": ("model_patches", "model_patch", "patches", "patch"),
+    },
+    _CDOWN_TYPE_SAM: {
+        "label_key": "cdown_type_sam",
+        "tags": ("models", "sam"),
+        "folder_aliases": ("sams", "sam"),
+    },
+}
 _BGRM_WF_URL = f"{_ASSETS_BASE_URL}/bgremove.json"
 _FRAMES_WF_URL = f"{_ASSETS_BASE_URL}/frames.json"
 _MODULE_UPDATE_URL = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py"
+_COMFY_BACKEND_LOCAL = "local"
+_COMFY_BACKEND_CLOUD = "cloud"
+_COMFY_CLOUD_BASE_URL = "https://cloud.comfy.org"
 _CIVITAI_IMAGES_URL = "https://civitai.com/api/v1/images"
 _CSHARE_TOP_CHAT = "comfyideas"
 _CSHARE_TOP_MESSAGE_ID = 5
@@ -285,6 +379,34 @@ _EMOJI_THEME_ERROR_ID_FALLBACKS = {
         "*": ("5422458393736536101", "\u26d1"),
     },
 }
+_EMOJI_THEME_CUSTOM_PREFIX = "custom:"
+_EMOJI_THEME_MAX_CUSTOM = 20
+_EMOJI_THEME_ID_RE = re.compile(r"^\d{8,25}$")
+_EMOJI_THEME_INLINE_ID_RE = re.compile(
+    r'(?:document_id|emoji-id)=["\']?(?P<id>\d{8,25})["\']?'
+)
+_EMOJI_THEME_SLOT_SOURCES = {
+    "success": (("5206607081334906820", "\u2705"),),
+    "error": (("5121063440311386962", "\U0001f44e"),),
+    "cancel": (("5121063440311386962", "\u274c"),),
+    "loading": (("4904936030232117798", "\u2699"),),
+    "warning": (("4904936030232117798", "\u26a0"),),
+    "off": (("5985346521103604145", "\u2b1c"),),
+    "folder": (("5444965220663458467", "\U0001f4c1"),),
+    "ai": (("5188678912883827293", "\U0001f916"),),
+    "style": (("5764779661028495989", "\U0001f3a8"),),
+    "model": (("5206591666697306436", "\U0001f36d"),),
+    "prompt": (("5879841310902324730", "\u270f"),),
+    "negative": (("5407001145740631266", "\U0001f910"),),
+    "device": (("5839354140261619193", "\U0001f6dc"),),
+    "upload": (("5873225338984599714", "\U0001f4e4"),),
+    "memory": (("5373342633798167891", "\U0001f4be"),),
+    "time": (("5870921681735781843", "\u23f1"),),
+    "heart": (("5325547803936572038", "\u2764"),),
+    "random": (("5334544901428229844", "\U0001f3b2"),),
+    "update": (("5361979468887893611", "\U0001f195"),),
+}
+_EMOJI_THEME_SLOT_ORDER = tuple(_EMOJI_THEME_SLOT_SOURCES.keys())
 _GENERATION_TIMEOUT = 7200
 _CUPSCALE_TIMEOUT = 1800
 _GENERATION_IDLE_WARNING = 360
@@ -294,8 +416,17 @@ _CMON_POLL_INTERVAL = 10
 _CMON_IDLE_CLOSE_AFTER = 600
 _GENERATION_STATS_LIMIT = 30
 _CT_PROBE_TIMEOUT = 180
-_INLINE_TEXT_SOFT_LIMIT = 3800
-_INLINE_TEXT_RETRY_LIMITS = (3500, 3000, 2500, 2000, 1500, 1000)
+_TUNNEL_CHECK_INTERVAL = 600
+_TUNNEL_FAILURE_THRESHOLD = 3
+_TUNNEL_WATCH_OWNER_KEY = "tunnel_watch_owner"
+_TUNNEL_WATCH_STATE_KEY = "tunnel_watch_state"
+_TG_TEXT_LIMIT_DEFAULT = 4096
+_TG_TEXT_LIMIT_PREMIUM = 8192
+_TG_RICH_TEXT_LIMIT = 32768
+_INLINE_TEXT_SOFT_LIMIT = 4096
+_INLINE_TEXT_RETRY_LIMITS = (4096, 3500, 3000, 2500, 2000, 1500, 1000)
+_PLAIN_TEXT_RETRY_LIMITS_DEFAULT = (4096, 3500, 3000, 2500, 2000, 1500, 1000)
+_PLAIN_TEXT_RETRY_LIMITS_PREMIUM = (8192, 4096, 3500, 3000, 2500, 2000, 1500, 1000)
 _COMFY_TIMEOUTS = {
     "ws_connect": 15,
     "queue_prompt": 60,
@@ -315,7 +446,13 @@ _SDXL_REAL1_WORKFLOW_NAME = "SDXLReal1"
 _SDXL_REAL2_WORKFLOW_NAME = "SDXLReal2"
 _ERNIE_WORKFLOW_NAME = "Ernie"
 _FLUX_EDIT_WORKFLOW_NAME = "FluxEdit"
-_DEFAULT_WORKFLOW_NAME = _ANIME_WORKFLOW_NAME
+_CLOUD_QWEN_EDIT_WORKFLOW_NAME = "QwenEdit"
+_CLOUD_ILL_WORKFLOW_NAME = "Cill"
+_CLOUD_ZIT_WORKFLOW_NAME = "Czit"
+_CLOUD_ANIMA_WORKFLOW_NAME = "CAnima"
+_CLOUD_ANIMA2_WORKFLOW_NAME = "CAnima2"
+_DEFAULT_WORKFLOW_NAME = _ANIME_V2_WORKFLOW_NAME
+_DEFAULT_CLOUD_WORKFLOW_NAME = _CLOUD_ANIMA2_WORKFLOW_NAME
 _ANIME_POSITIVE_EMBEDDING = "embedding:lazypos,"
 _GLOBAL_POSITIVE_DEFAULT = ""
 _BUILTIN_WORKFLOW_POSITIVE_DEFAULTS = {
@@ -341,6 +478,13 @@ _BUILTIN_WORKFLOW_URLS = {
     _ERNIE_WORKFLOW_NAME: _ERNIE_WF_URL,
     _FLUX_EDIT_WORKFLOW_NAME: _FLUX_EDIT_WF_URL,
 }
+_CLOUD_WORKFLOW_URLS = {
+    _CLOUD_ANIMA2_WORKFLOW_NAME: _CLOUD_ANIMA2_WF_URL,
+    _CLOUD_QWEN_EDIT_WORKFLOW_NAME: _CLOUD_QWEN_EDIT_WF_URL,
+    _CLOUD_ILL_WORKFLOW_NAME: _CLOUD_ILL_WF_URL,
+    _CLOUD_ZIT_WORKFLOW_NAME: _CLOUD_ZIT_WF_URL,
+    _CLOUD_ANIMA_WORKFLOW_NAME: _CLOUD_ANIMA_WF_URL,
+}
 _BUILTIN_WORKFLOW_TELEGRAM_URLS = {
     _ANIME_WORKFLOW_NAME: "https://t.me/comfystorage/12",
     _ANIME_V2_WORKFLOW_NAME: "https://t.me/comfystorage/15",
@@ -350,10 +494,20 @@ _BUILTIN_WORKFLOW_TELEGRAM_URLS = {
     _ERNIE_WORKFLOW_NAME: "https://t.me/comfystorage/20",
     _FLUX_EDIT_WORKFLOW_NAME: "https://t.me/comfystorage/27",
 }
+_CLOUD_WORKFLOW_TELEGRAM_URLS = {
+    _CLOUD_ANIMA2_WORKFLOW_NAME: "https://t.me/comfystorage/35",
+    _CLOUD_QWEN_EDIT_WORKFLOW_NAME: "https://t.me/comfystorage/29",
+    _CLOUD_ILL_WORKFLOW_NAME: "https://t.me/comfystorage/30",
+    _CLOUD_ZIT_WORKFLOW_NAME: "https://t.me/comfystorage/31",
+    _CLOUD_ANIMA_WORKFLOW_NAME: "https://t.me/comfystorage/32",
+}
 _UPSCALE_WORKFLOW_TELEGRAM_URL = "https://t.me/comfystorage/21"
+_CLOUD_UPSCALE_WORKFLOW_TELEGRAM_URL = "https://t.me/comfystorage/33"
+_CLOUD_VIDEO_UPSCALE_WORKFLOW_TELEGRAM_URL = "https://t.me/comfystorage/34"
 _BGRM_WORKFLOW_TELEGRAM_URL = "https://t.me/comfystorage/25"
 _FRAMES_WORKFLOW_TELEGRAM_URL = "https://t.me/comfystorage/26"
 _CTOOL_UPSCALE = "upscale"
+_CTOOL_VIDEO_UPSCALE = "video_upscale"
 _CTOOL_RMBG = "rmbg"
 _CTOOL_FPS = "fps"
 
@@ -368,16 +522,18 @@ class ComfyImageGenMod(loader.Module):
     strings = {
         "name": "ComfyImageGen",
         "cfg_url": "ComfyUI Base URL (e.g., http://127.0.0.1:8188)",
+        "cfg_backend": "ComfyUI backend: local or cloud",
+        "cfg_cloud_api_key": "ComfyUI Cloud API key(s). Use comma to add multiple keys.",
         "cfg_model": "Default model file (e.g., waiIllustriousSDXL_v170)",
         "cfg_max_mb": "Max input image size in MB for img2img",
         "cfg_max_output_mb": "Max output media size in MB",
         "cfg_output_format": "Result output format: photo (Telegram compressed image), document_png (PNG file lossless)",
         "cfg_ws_update_interval": "Generation status update interval in seconds: 1-5, 0 disables",
-        "cfg_gemini_api_key": "Gemini API key for AI prompt enhancement",
-        "cfg_groq_api_key": "Groq API key for AI prompt enhancement",
-        "cfg_openrouter_api_key": "OpenRouter API key for AI prompt enhancement",
-        "cfg_grok_api_key": "Grok/xAI API key for AI prompt enhancement",
-        "cfg_deepseek_api_key": "DeepSeek API key for AI prompt enhancement",
+        "cfg_gemini_api_key": "Gemini API key(s) for AI prompt enhancement. Use comma to add multiple keys.",
+        "cfg_groq_api_key": "Groq API key(s) for AI prompt enhancement. Use comma to add multiple keys.",
+        "cfg_openrouter_api_key": "OpenRouter API key(s) for AI prompt enhancement. Use comma to add multiple keys.",
+        "cfg_grok_api_key": "Grok/xAI API key(s) for AI prompt enhancement. Use comma to add multiple keys.",
+        "cfg_deepseek_api_key": "DeepSeek API key(s) for AI prompt enhancement. Use comma to add multiple keys.",
         "cfg_update_assets": "Background module assets update interval in seconds. 0 disables it. Range: 60-14400.",
         "cfg_info_banner_url": "Banner URL for .ci and .chelp inline menus. Set 0 to disable.",
         "lora_title": '<tg-emoji emoji-id="5764779661028495989">\U0001f3a8</tg-emoji> LoRA selection',
@@ -397,6 +553,105 @@ class ComfyImageGenMod(loader.Module):
         "fmt_loras": "LoRA:",
         "fmt_loras_more": "and {} more",
         "no_url": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI URL is not specified. Use .cfg ComfyImageGen comfyui_url",
+        "cloud_no_key": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI Cloud API key is not set. Open <code>.cmode</code> and add a key.",
+        "cloud_bad_key": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI Cloud API key is invalid or has no access.",
+        "cloud_no_balance": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI Cloud has no credits/balance for this request.",
+        "cloud_rate_limit": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI Cloud limit or subscription restriction. Try later or use another key.",
+        "cloud_unavailable": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI Cloud is temporarily unavailable.",
+        "cloud_workflow_unsupported": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> This workflow is not supported in ComfyUI Cloud: required nodes are not installed.\n\n<blockquote expandable>{}</blockquote>",
+        "cloud_media_unsupported": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> This media input is not supported by ComfyUI Cloud.",
+        "mode_title": '<tg-emoji emoji-id="5839354140261619193">\U0001f6dc</tg-emoji> ComfyUI backend mode',
+        "mode_current": "Current mode: {}",
+        "mode_local": "Local ComfyUI",
+        "mode_cloud": "ComfyUI Cloud",
+        "mode_local_url": "Local URL: <code>{}</code>",
+        "mode_cloud_keys": "Cloud API keys: {}",
+        "mode_keys_set": "{} set",
+        "mode_keys_missing": "not set",
+        "mode_balance": "Balance: {}",
+        "mode_balance_unavailable": "unavailable",
+        "mode_balance_no_key": "key not set",
+        "mode_btn_local": "Local",
+        "mode_btn_cloud": "Cloud",
+        "mode_btn_url": "Local URL",
+        "mode_btn_key": "API keys",
+        "mode_btn_check": "Check",
+        "mode_btn_balance": "Balance",
+        "mode_input_url": "Enter local ComfyUI URL:",
+        "mode_input_key": "Enter ComfyUI Cloud API key(s), comma-separated:",
+        "mode_saved": "Mode saved: {}",
+        "mode_url_saved": "Local URL saved",
+        "mode_key_saved": "Cloud API key(s) saved",
+        "mode_check_ok": "Connection OK.",
+        "mode_check_fail": "Connection failed.",
+        "mode_local_url_set": "Local URL: set",
+        "mode_local_url_missing": "Local URL: not set",
+        "tunnel_notify_status": "Tunnel notification: {}",
+        "tunnel_available": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> ComfyUI tunnel is available.',
+        "tunnel_menu_title": '<tg-emoji emoji-id="5444965220663458467">📁</tg-emoji> <b>Tunnel notifications</b>',
+        "tunnel_menu_desc": "The local tunnel is checked every 10 minutes. A notification is sent only when it becomes available.",
+        "tunnel_targets": "Enabled in:\n{}",
+        "tunnel_target_bot_pm": "bot private messages",
+        "tunnel_targets_empty": "Not enabled anywhere.",
+        "tunnel_btn_add_chat": "Add chat",
+        "tunnel_btn_add_bot_pm": "Add bot private messages",
+        "tunnel_btn_remove_target": "Remove target",
+        "tunnel_btn_clear_targets": "Clear targets",
+        "tunnel_target_input": "Enter chat_id, chat_id topic_id, chat_id:topic_id, or a t.me/c link:",
+        "tunnel_target_bad": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> Could not parse chat/topic.',
+        "tunnel_target_bind_failed": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> The inline bot cannot access this target: {}',
+        "tunnel_target_bound": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Notification target added.',
+        "tunnel_target_already_bound": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> This notification target is already added.',
+        "tunnel_target_removed": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Notification target removed.',
+        "tunnel_targets_cleared": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Notification targets cleared.',
+        "cdown_title": '<tg-emoji emoji-id="5873225338984599714">📤</tg-emoji> Cloud model downloader',
+        "cdown_type": "Type: <code>{}</code>",
+        "cdown_url": "URL: <code>{}</code>",
+        "cdown_url_missing": "URL: not set",
+        "cdown_file": "File: <code>{}</code>",
+        "cdown_size": "Size: <code>{}</code>",
+        "cdown_validation_ok": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Validation: OK',
+        "cdown_validation_fail": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> Validation: {}',
+        "cdown_folder": "Cloud folder: <code>{}</code>",
+        "cdown_folder_unknown": "Cloud folder was not found in model folders; download can still be started.",
+        "cdown_result_ready": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Asset is already available.',
+        "cdown_result_started": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Background download started.',
+        "cdown_result_failed": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> Download failed: <code>{}</code>',
+        "cdown_btn_url": "Set URL",
+        "cdown_btn_install": "Install",
+        "cdown_input_url": "Send Hugging Face or Civitai download URL:",
+        "cdown_no_key": "ComfyUI Cloud API key is not set. Open .cmode and add a key.",
+        "cdown_need_url": "Set URL first.",
+        "cdown_need_valid": "Fix URL validation before install.",
+        "cdown_checking": "Checking URL...",
+        "cdown_installing": "Starting download...",
+        "cdown_bad_url": "Only huggingface.co, civitai.com and civitai.red URLs are supported.",
+        "cdown_type_checkpoint": "Checkpoint",
+        "cdown_type_lora": "LoRA",
+        "cdown_type_vae": "VAE",
+        "cdown_type_controlnet": "ControlNet",
+        "cdown_type_upscaler": "Upscaler",
+        "cdown_type_text_encoder": "Text Encoder",
+        "cdown_type_unet": "UNET",
+        "cdown_type_clip_vision": "CLIP Vision",
+        "cdown_type_ipadapter": "IPAdapter",
+        "cdown_type_style_model": "Style Model",
+        "cdown_type_model_patch": "Model Patch",
+        "cdown_type_sam": "SAM",
+        "cloud_confirm_title": "ComfyUI Cloud",
+        "cloud_confirm_balance": "Balance: {}",
+        "cloud_confirm_cost": "Cost: {}",
+        "cloud_confirm_cost_unavailable": "unavailable",
+        "cloud_confirm_batch": "Batch: {}",
+        "cloud_confirm_workflow": "Workflow: {}",
+        "cloud_confirm_model": "Model: {}",
+        "cloud_confirm_prompt": "Prompt:",
+        "cloud_confirm_btn_generate": "Generate",
+        "cloud_confirm_btn_batch": "Batch: {}",
+        "cloud_confirm_btn_edit": "Edit prompt",
+        "cloud_confirm_input_batch": "Enter batch size (1-8):",
+        "cloud_confirm_batch_saved": "Batch set: {}",
+        "cloud_confirm_batch_bad": "Batch must be a number from 1 to 8.",
         "no_prompt": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Please provide a prompt.",
         "prompt_empty": "No prompt",
         "status_civitai_inspire": "<emoji document_id=5334544901428229844>\U0001f3b2</emoji> Getting a random Civitai prompt...",
@@ -429,6 +684,9 @@ class ComfyImageGenMod(loader.Module):
         "wf_title": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Select workflow',
         "wf_builtin_btn": "\U0001f4e6 Built-in",
         "wf_custom_btn": "\U0001f4dd Custom",
+        "wf_cloud_btn": "Cloud workflows",
+        "wf_list_title_cloud": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Cloud workflows',
+        "toast_no_cloud_wf": "No Cloud workflows yet.",
         "wf_list_title_builtin": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Built-in workflows',
         "wf_list_title_custom": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Custom workflows',
         "wf_desc_anime": "Anime image generation, accepts all ill, pony, SD models and similar ones.",
@@ -438,6 +696,11 @@ class ComfyImageGenMod(loader.Module):
         "wf_desc_sdxl_real2": "If you do not really like SDXLReal1, this is the second realistic SDXL workflow, using xxxRay_dmd2 [https://civitai.red/models/1064836/xxx-ray].",
         "wf_desc_ernie": "Workflow with the newest Ernie model. On a mid-range GPU generation takes about 2-3 minutes on average. Works great with text, infographics and any requests when the prompt is good. Uses RedCraft [https://civitai.red/models/958009/redcraft-or].",
         "wf_desc_fluxedit": "Image editing for mid-range PCs, uses Flux2-Klein.",
+        "wf_desc_cloud_qwenedit": "Редактирование изображений с QwenEdit (4-15 кред/генерация)",
+        "wf_desc_cloud_ill": "Illustrious вф с wai-ill (1-2 кред/генерация)",
+        "wf_desc_cloud_zit": "ZImageTurbo вф (1-5 кред/генерация)",
+        "wf_desc_cloud_anima": "Анима вф с дефолт моделькой (1-3 кред/генерация)",
+        "wf_desc_cloud_anima2": "Анима 2 (Нужен статус Creator) (1-3 кред/генерация)",
         "wf_page": "Page {}/{}",
         "wf_current": "Current: {}",
         "wf_limited_hint": 'Second tap on a workflow enables <tg-emoji emoji-id="5271842287326863410">🔵</tg-emoji> limited mode. Only positive prompt, negative prompt, and media inputs remain editable. This beta feature is mainly made for video generation.',
@@ -462,6 +725,8 @@ class ComfyImageGenMod(loader.Module):
         "info_frontend": "Frontend: {}",
         "info_total_generations": "Total generations: {}",
         "info_userbot_ping": "Userbot ping: {} ms",
+        "info_backend": "Mode: {}",
+        "info_balance": "Balance: {}",
         "ct_checking": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Checking ComfyUI tunnel API...",
         "ct_title": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> ComfyUI tunnel probe",
         "ct_url": "URL: <code>{}</code>",
@@ -481,6 +746,19 @@ class ComfyImageGenMod(loader.Module):
         "models_empty": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> No checkpoint or UNET models found.",
         "models_manual_btn": "\u270f\ufe0f Enter manually",
         "models_manual_input": "Enter model filename:",
+        "models_as_workflow_btn": "As in workflow",
+        "models_as_workflow": "Cloud model: as in workflow ({})",
+        "toast_model_as_workflow": "Cloud model: as in workflow",
+        "models_cloud_title": '<tg-emoji emoji-id="5764779661028495989">🎨</tg-emoji> Select ComfyUI Cloud model',
+        "models_cloud_current": "Current: {}",
+        "models_cloud_default_btn": "Cloud default",
+        "models_cloud_custom_btn": "My models",
+        "models_cloud_default_title": "Cloud default folders",
+        "models_cloud_custom_title": "My model folders",
+        "models_cloud_folder_title": "Folder: <code>{}</code>",
+        "models_cloud_empty_folders": "No model folders found.",
+        "models_cloud_empty_models": "No models in this folder.",
+        "models_cloud_empty_custom": "No imported model assets found.",
 
         "setwf_ok": "Workflow set: {}",
         "mlwf_no_name": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Specify workflow name to export.",
@@ -507,10 +785,12 @@ class ComfyImageGenMod(loader.Module):
         "enhance_chat_input": "What should be changed in the prompt?",
         "enhance_chat_limit": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Edit limit reached: 100/100.",
         "enhance_chat_empty": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Send what should be changed.",
+        "comments_generation_disabled": "<emoji document_id=4904936030232117798>\u26a0\ufe0f</emoji> Generation in post comments is unavailable. Run the command in a regular chat or PM.",
         "err_connection": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Failed to connect to ComfyUI. Make sure the server is running and the URL is correct.",
         "err_node_missing": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Component '{}' is not installed in ComfyUI. Install the missing custom node.",
         "err_model_not_found": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Model '{}' not found on server. Check the name or download the model.",
         "err_model_value_not_in_list": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Selected model does not exist or is not suitable for this workflow.\n\nModel: <code>{}</code>\nAvailable models:\n{}",
+        "cloud_model_not_found": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> This model is not downloaded in ComfyUI Cloud.",
         "err_vram": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Insufficient VRAM. Try reducing image size or number of steps.",
         "err_image_invalid": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Failed to process image. File is corrupted or format is not supported.",
         "err_img2img_unsupported": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> This workflow does not support img2img. Add an image input or latent switch node.",
@@ -811,11 +1091,64 @@ class ComfyImageGenMod(loader.Module):
         "ult_btn_trigger": "\u26a1 Trigger generation",
         "ult_btn_time": "\u23f1 Generation time",
         "ult_btn_theme": "Theme",
+        "ult_btn_tunnel_notify": "Tunnel notify",
+        "ult_btn_update_assets": "Update assets",
+        "ult_assets_update_started": "Asset update started.",
+        "ult_assets_updating": "<b>Updating module assets...</b>",
+        "ult_assets_updated": '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji> Module assets updated.',
+        "ult_assets_update_partial": '<tg-emoji emoji-id="4904936030232117798">\u26a0</tg-emoji> Some assets could not be updated. Cached versions remain available.',
         "ult_btn_theme_default": "Default",
         "ult_btn_theme_colored": "Colored",
         "ult_btn_theme_cute": "Cute",
         "ult_btn_theme_black": "Black",
         "ult_btn_theme_trollface": "Trollface",
+        "ult_theme_builtin": "Built-in themes",
+        "ult_theme_custom": "Custom themes",
+        "ult_theme_custom_empty": "No custom themes yet.",
+        "ult_theme_create": "Add custom theme",
+        "ult_theme_create_input": "Enter custom theme name:",
+        "ult_theme_edit": "Edit custom theme",
+        "ult_theme_rename": "Rename",
+        "ult_theme_rename_input": "Enter new theme name:",
+        "ult_theme_renamed": "Custom theme renamed.",
+        "ult_theme_delete": "Delete custom theme",
+        "ult_theme_created": "Custom theme created: {}",
+        "ult_theme_deleted": "Custom theme deleted.",
+        "ult_theme_bad_name": "Invalid theme name.",
+        "ult_theme_limit": "Custom theme limit reached.",
+        "ult_theme_not_custom": "Select or create a custom theme first.",
+        "ult_theme_editor_title": "Custom emoji theme: {}",
+        "ult_theme_editor_hint": "Choose a slot, then send a custom emoji or enter document_id.",
+        "ult_theme_slot_title": "Slot: {}",
+        "ult_theme_slot_default": "Default: {}",
+        "ult_theme_slot_custom": "Custom: {}",
+        "ult_theme_slot_custom_empty": "Custom: not set",
+        "ult_theme_slot_wait": "Set from next message",
+        "ult_theme_slot_input": "Enter document_id or <emoji ...>:",
+        "ult_theme_slot_reset": "Reset slot",
+        "ult_theme_slot_waiting": "Send one custom emoji in this chat.",
+        "ult_theme_slot_saved": "Emoji slot saved: {}",
+        "ult_theme_slot_reset_done": "Emoji slot reset.",
+        "ult_theme_no_emoji": "No custom emoji/document_id found.",
+        "emoji_slot_success": "Success",
+        "emoji_slot_error": "Error",
+        "emoji_slot_cancel": "Cancel",
+        "emoji_slot_loading": "Loading",
+        "emoji_slot_warning": "Warning",
+        "emoji_slot_off": "Off",
+        "emoji_slot_folder": "Folder",
+        "emoji_slot_ai": "AI",
+        "emoji_slot_style": "Style",
+        "emoji_slot_model": "Model",
+        "emoji_slot_prompt": "Prompt",
+        "emoji_slot_negative": "Negative",
+        "emoji_slot_device": "Device",
+        "emoji_slot_upload": "Upload",
+        "emoji_slot_memory": "Memory",
+        "emoji_slot_time": "Time",
+        "emoji_slot_heart": "Enhance",
+        "emoji_slot_random": "Random",
+        "emoji_slot_update": "Update",
         "ult_btn_time_progress": "\u23f1 During",
         "ult_btn_time_result": "\u23f1 Result",
         "ult_btn_trigger_word": "\u270d Trigger word",
@@ -880,14 +1213,15 @@ class ComfyImageGenMod(loader.Module):
         "ctools_btn_upscale": "Upscale",
         "ctools_btn_rmbg": "Remove background",
         "ctools_btn_fps": "FPS boost",
-        "ctools_desc_upscale": "<code>-upscale (0.1-8x)</code> - upscale image.",
+        "ctools_desc_upscale": "<code>-upscale (0.1-8x)</code> - upscale media.",
         "ctools_desc_rmbg": "<code>-rmbg</code> - remove background.",
         "ctools_desc_fps": "<code>-fps</code> - boost video FPS.",
         "ctools_bad_mode": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Unknown tool. Available: <code>-upscale</code>, <code>-rmbg</code>, <code>-fps</code>.",
         "ctools_bad_scale": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Scale must be from 0.1x to 8x. Recommended: 2x.",
         "ctools_no_reply_image": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Reply to an image.",
         "ctools_no_reply_video": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Reply to a video.",
-        "ctools_processing_upscale": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Upscaling image...",
+        "ctools_no_reply_media": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Reply to media.",
+        "ctools_processing_upscale": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Upscaling media...",
         "ctools_processing_rmbg": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Removing background...",
         "ctools_processing_fps": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Boosting video FPS...",
         "ctools_uploading": "<emoji document_id=5873225338984599714>\U0001f4e4</emoji> Uploading tool result...",
@@ -906,16 +1240,18 @@ class ComfyImageGenMod(loader.Module):
     strings_ru = {
         "name": "ComfyImageGen",
         "cfg_url": "Базовый URL ComfyUI (например: http://127.0.0.1:8188)",
+        "cfg_backend": "Режим ComfyUI: local или cloud",
+        "cfg_cloud_api_key": "API ключ(и) ComfyUI Cloud. Несколько ключей можно указать через запятую.",
         "cfg_model": "Файл модели по умолчанию (например: waiIllustriousSDXL_v170)",
         "cfg_max_mb": "Макс. размер входного изображения в МБ для img2img",
         "cfg_max_output_mb": "Макс. размер результата в МБ",
         "cfg_output_format": "Формат отправки результата: photo (сжатое изображение Telegram), document_png (PNG файлом без потерь)",
         "cfg_ws_update_interval": "Обновление статуса генераций в секундах: 1-5, 0 отключить",
-        "cfg_gemini_api_key": "API ключ Gemini для AI улучшения промпта",
-        "cfg_groq_api_key": "API ключ Groq для AI улучшения промпта",
-        "cfg_openrouter_api_key": "API ключ OpenRouter для AI улучшения промпта",
-        "cfg_grok_api_key": "API ключ Grok/xAI для AI улучшения промпта",
-        "cfg_deepseek_api_key": "API ключ DeepSeek для AI улучшения промпта",
+        "cfg_gemini_api_key": "API ключ(и) Gemini для AI улучшения промпта. Несколько ключей можно указать через запятую.",
+        "cfg_groq_api_key": "API ключ(и) Groq для AI улучшения промпта. Несколько ключей можно указать через запятую.",
+        "cfg_openrouter_api_key": "API ключ(и) OpenRouter для AI улучшения промпта. Несколько ключей можно указать через запятую.",
+        "cfg_grok_api_key": "API ключ(и) Grok/xAI для AI улучшения промпта. Несколько ключей можно указать через запятую.",
+        "cfg_deepseek_api_key": "API ключ(и) DeepSeek для AI улучшения промпта. Несколько ключей можно указать через запятую.",
         "cfg_update_assets": "Фоновое обновление ресурсов модуля в секундах. 0 отключает. Диапазон: 60-14400.",
         "cfg_info_banner_url": "URL баннера для меню ci и chelp. 0 - отключает.",
         "lora_title": '<tg-emoji emoji-id="5764779661028495989">\U0001f3a8</tg-emoji> Выбор LoRA',
@@ -935,6 +1271,105 @@ class ComfyImageGenMod(loader.Module):
         "fmt_loras": "LoRA:",
         "fmt_loras_more": "и ещё {}",
         "no_url": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> URL ComfyUI не указан. Используйте .cfg ComfyImageGen comfyui_url",
+        "cloud_no_key": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> API ключ ComfyUI Cloud не задан. Откройте <code>.cmode</code> и добавьте ключ.",
+        "cloud_bad_key": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> API ключ ComfyUI Cloud неверный или без доступа.",
+        "cloud_no_balance": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> В ComfyUI Cloud не хватает кредитов/баланса для запроса.",
+        "cloud_rate_limit": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Лимит или ограничение подписки ComfyUI Cloud. Попробуйте позже или используйте другой ключ.",
+        "cloud_unavailable": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> ComfyUI Cloud временно недоступен.",
+        "cloud_workflow_unsupported": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Этот workflow не поддерживается в ComfyUI Cloud: в облаке не установлены нужные ноды.\n\n<blockquote expandable>{}</blockquote>",
+        "cloud_media_unsupported": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Этот входной медиа-файл не поддерживается ComfyUI Cloud.",
+        "mode_title": '<tg-emoji emoji-id="5839354140261619193">\U0001f6dc</tg-emoji> Режим ComfyUI',
+        "mode_current": "Текущий режим: {}",
+        "mode_local": "Локальный ComfyUI",
+        "mode_cloud": "ComfyUI Cloud",
+        "mode_local_url": "Локальный URL: <code>{}</code>",
+        "mode_cloud_keys": "Cloud API ключи: {}",
+        "mode_keys_set": "задано: {}",
+        "mode_keys_missing": "не заданы",
+        "mode_balance": "Баланс: {}",
+        "mode_balance_unavailable": "недоступен",
+        "mode_balance_no_key": "ключ не задан",
+        "mode_btn_local": "Локальный",
+        "mode_btn_cloud": "Cloud",
+        "mode_btn_url": "Локальный URL",
+        "mode_btn_key": "API ключи",
+        "mode_btn_check": "Проверить",
+        "mode_btn_balance": "Баланс",
+        "mode_input_url": "Введите локальный URL ComfyUI:",
+        "mode_input_key": "Введите API ключ(и) ComfyUI Cloud через запятую:",
+        "mode_saved": "Режим сохранён: {}",
+        "mode_url_saved": "Локальный URL сохранён",
+        "mode_key_saved": "Cloud API ключ(и) сохранены",
+        "mode_check_ok": "Подключение работает.",
+        "mode_check_fail": "Подключение не работает.",
+        "mode_local_url_set": "Локальный URL: задан",
+        "mode_local_url_missing": "Локальный URL: не задан",
+        "tunnel_notify_status": "Уведомления о туннеле: {}",
+        "tunnel_available": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Туннель ComfyUI доступен.',
+        "tunnel_menu_title": '<tg-emoji emoji-id="5444965220663458467">📁</tg-emoji> <b>Уведомления о туннеле</b>',
+        "tunnel_menu_desc": "Локальный туннель проверяется раз в 10 минут. Уведомление отправляется только когда он становится доступен.",
+        "tunnel_targets": "Включено в:\n{}",
+        "tunnel_target_bot_pm": "личные сообщения с ботом",
+        "tunnel_targets_empty": "Нигде не включено.",
+        "tunnel_btn_add_chat": "Добавить чат",
+        "tunnel_btn_add_bot_pm": "Добавить ЛС с ботом",
+        "tunnel_btn_remove_target": "Удалить цель",
+        "tunnel_btn_clear_targets": "Очистить цели",
+        "tunnel_target_input": "Введите chat_id, chat_id topic_id, chat_id:topic_id или ссылку t.me/c:",
+        "tunnel_target_bad": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> Не удалось распознать чат/топик.',
+        "tunnel_target_bind_failed": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> У inline-бота нет доступа к этой цели: {}',
+        "tunnel_target_bound": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Цель уведомлений добавлена.',
+        "tunnel_target_already_bound": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Эта цель уведомлений уже добавлена.',
+        "tunnel_target_removed": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Цель уведомлений удалена.',
+        "tunnel_targets_cleared": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Цели уведомлений очищены.',
+        "cdown_title": '<tg-emoji emoji-id="5873225338984599714">📤</tg-emoji> Загрузка моделей в Cloud',
+        "cdown_type": "Тип: <code>{}</code>",
+        "cdown_url": "URL: <code>{}</code>",
+        "cdown_url_missing": "URL: не задан",
+        "cdown_file": "Файл: <code>{}</code>",
+        "cdown_size": "Размер: <code>{}</code>",
+        "cdown_validation_ok": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Проверка: OK',
+        "cdown_validation_fail": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> Проверка: {}',
+        "cdown_folder": "Папка Cloud: <code>{}</code>",
+        "cdown_folder_unknown": "Папка Cloud не найдена в списке моделей; загрузку всё равно можно запустить.",
+        "cdown_result_ready": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Ассет уже доступен.',
+        "cdown_result_started": '<tg-emoji emoji-id="5206607081334906820">✅</tg-emoji> Фоновая загрузка запущена.',
+        "cdown_result_failed": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji> Ошибка загрузки: <code>{}</code>',
+        "cdown_btn_url": "Задать URL",
+        "cdown_btn_install": "Установить",
+        "cdown_input_url": "Отправьте ссылку Hugging Face или Civitai для скачивания:",
+        "cdown_no_key": "API ключ ComfyUI Cloud не задан. Откройте .cmode и добавьте ключ.",
+        "cdown_need_url": "Сначала задайте URL.",
+        "cdown_need_valid": "Исправьте ошибку проверки URL перед установкой.",
+        "cdown_checking": "Проверяю URL...",
+        "cdown_installing": "Запускаю загрузку...",
+        "cdown_bad_url": "Поддерживаются только ссылки huggingface.co, civitai.com и civitai.red.",
+        "cdown_type_checkpoint": "Checkpoint",
+        "cdown_type_lora": "LoRA",
+        "cdown_type_vae": "VAE",
+        "cdown_type_controlnet": "ControlNet",
+        "cdown_type_upscaler": "Upscaler",
+        "cdown_type_text_encoder": "Text Encoder",
+        "cdown_type_unet": "UNET",
+        "cdown_type_clip_vision": "CLIP Vision",
+        "cdown_type_ipadapter": "IPAdapter",
+        "cdown_type_style_model": "Style Model",
+        "cdown_type_model_patch": "Model Patch",
+        "cdown_type_sam": "SAM",
+        "cloud_confirm_title": "ComfyUI Cloud",
+        "cloud_confirm_balance": "Баланс: {}",
+        "cloud_confirm_cost": "Стоимость: {}",
+        "cloud_confirm_cost_unavailable": "недоступно",
+        "cloud_confirm_batch": "Batch: {}",
+        "cloud_confirm_workflow": "Воркфлоу: {}",
+        "cloud_confirm_model": "Модель: {}",
+        "cloud_confirm_prompt": "Промпт:",
+        "cloud_confirm_btn_generate": "Генерировать",
+        "cloud_confirm_btn_batch": "Batch: {}",
+        "cloud_confirm_btn_edit": "Правка промпта",
+        "cloud_confirm_input_batch": "Введите размер batch (1-8):",
+        "cloud_confirm_batch_saved": "Batch установлен: {}",
+        "cloud_confirm_batch_bad": "Batch должен быть числом от 1 до 8.",
         "no_prompt": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Укажите промпт.",
         "prompt_empty": "Без промпта",
         "status_civitai_inspire": "<emoji document_id=5334544901428229844>\U0001f3b2</emoji> Беру случайный промпт с Civitai...",
@@ -968,6 +1403,9 @@ class ComfyImageGenMod(loader.Module):
         "wf_title": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Выбор воркфлоу',
         "wf_builtin_btn": "\U0001f4e6 Встроенные",
         "wf_custom_btn": "\U0001f4dd Пользовательские",
+        "wf_cloud_btn": "Cloud workflows",
+        "wf_list_title_cloud": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Cloud воркфлоу',
+        "toast_no_cloud_wf": "Cloud workflows пока пустые.",
         "wf_list_title_builtin": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Встроенные воркфлоу',
         "wf_list_title_custom": '<tg-emoji emoji-id="5444965220663458467">\U0001f4c1</tg-emoji> Пользовательские воркфлоу',
         "wf_desc_anime": "Генерация аниме изображений, принимает все ill, pony, sd модели и похожие.",
@@ -977,6 +1415,11 @@ class ComfyImageGenMod(loader.Module):
         "wf_desc_sdxl_real2": "Если вам не особо нравится SDXLReal1, то это второй реалистичный SDXL workflow, тут уже модель xxxRay_dmd2 [https://civitai.red/models/1064836/xxx-ray].",
         "wf_desc_ernie": "Воркфлоу с новейшей моделью Ernie (На средней видюхе генерация в среднем 2-3 минуты), отлично работает с текстами, инфографикой и любыми запросами, главное хороший промпт. Используется модель RedCraft [https://civitai.red/models/958009/redcraft-or].",
         "wf_desc_fluxedit": "Редактирование изображений для средних пк, использует Flux2-Klein",
+        "wf_desc_cloud_qwenedit": "Редактирование изображений с QwenEdit (4-15 кред/генерация)",
+        "wf_desc_cloud_ill": "Illustrious вф с wai-ill (1-2 кред/генерация)",
+        "wf_desc_cloud_zit": "ZImageTurbo вф (1-5 кред/генерация)",
+        "wf_desc_cloud_anima": "Анима вф с дефолт моделькой (1-3 кред/генерация)",
+        "wf_desc_cloud_anima2": "Анима 2 (Нужен статус Creator) (1-3 кред/генерация)",
         "wf_page": "Стр. {}/{}",
         "wf_current": "Текущий: {}",
         "wf_limited_hint": 'Второе нажатие по воркфлоу включает <tg-emoji emoji-id="5271842287326863410">🔵</tg-emoji> ограниченный режим, для изменения становятся доступны только инпуты позитивного, негативного промпта и медиа. Функция в бете, сделано в основном под генерацию видео',
@@ -1001,6 +1444,8 @@ class ComfyImageGenMod(loader.Module):
         "info_frontend": "Frontend: {}",
         "info_total_generations": "Генераций всего: {}",
         "info_userbot_ping": "Пинг юзербота: {} ms",
+        "info_backend": "Режим: {}",
+        "info_balance": "Баланс: {}",
         "ct_checking": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Проверяю API туннеля ComfyUI...",
         "ct_title": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Проверка туннеля ComfyUI",
         "ct_url": "URL: <code>{}</code>",
@@ -1020,6 +1465,19 @@ class ComfyImageGenMod(loader.Module):
         "models_empty": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Checkpoint и UNET модели не найдены.",
         "models_manual_btn": "\u270f\ufe0f Ввести вручную",
         "models_manual_input": "Введите имя файла модели:",
+        "models_as_workflow_btn": "Как в воркфлоу",
+        "models_as_workflow": "Cloud модель: как в воркфлоу ({})",
+        "toast_model_as_workflow": "Cloud модель: как в воркфлоу",
+        "models_cloud_title": '<tg-emoji emoji-id="5764779661028495989">🎨</tg-emoji> Выберите модель ComfyUI Cloud',
+        "models_cloud_current": "Текущая: {}",
+        "models_cloud_default_btn": "Cloud default",
+        "models_cloud_custom_btn": "Мои модели",
+        "models_cloud_default_title": "Папки Cloud default",
+        "models_cloud_custom_title": "Папки моих моделей",
+        "models_cloud_folder_title": "Папка: <code>{}</code>",
+        "models_cloud_empty_folders": "Папки моделей не найдены.",
+        "models_cloud_empty_models": "В этой папке нет моделей.",
+        "models_cloud_empty_custom": "Импортированные модели не найдены.",
 
         "help_text": (
             "<b>Руководство ComfyImageGen</b>\n\n"
@@ -1046,6 +1504,7 @@ class ComfyImageGenMod(loader.Module):
         "err_node_missing": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Компонент «{}» не установлен в ComfyUI. Установите недостающий кастомный узел.",
         "err_model_not_found": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Модель «{}» не найдена на сервере. Проверьте название или загрузите модель.",
         "err_model_value_not_in_list": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Выбранная модель не существует или не подходит для этого воркфлоу.\n\nМодель: <code>{}</code>\nДоступные модели:\n{}",
+        "cloud_model_not_found": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Данная модель не скачана в облаке.",
         "err_vram": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Недостаточно видеопамяти. Попробуйте уменьшить размер изображения или количество шагов.",
         "err_image_invalid": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Не удалось обработать изображение. Файл повреждён или формат не поддерживается.",
         "err_img2img_unsupported": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Этот воркфлоу не поддерживает img2img. Добавьте вход изображения или latent switch ноду.",
@@ -1082,6 +1541,7 @@ class ComfyImageGenMod(loader.Module):
         "enhance_chat_input": "Что изменить в промпте?",
         "enhance_chat_limit": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Лимит правок достигнут: 100/100.",
         "enhance_chat_empty": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Напишите, что изменить.",
+        "comments_generation_disabled": "<emoji document_id=4904936030232117798>\u26a0\ufe0f</emoji> Генерация в комментариях под постами недоступна. Запустите команду в обычном чате или в ЛС.",
         "argset_title": '<tg-emoji emoji-id="4904936030232117798">\u2699\ufe0f</tg-emoji> Дефолтные аргументы генерации',
         "argset_limited_mode": "🔵 Включён ограниченный режим воркфлоу. Настройки, меняющие workflow, игнорируются.",
         "argset_params": '<tg-emoji emoji-id="5764779661028495989">\U0001f3a8</tg-emoji> Параметры генерации (значения по дефолту берутся из текущего воркфлоу)',
@@ -1344,11 +1804,64 @@ class ComfyImageGenMod(loader.Module):
         "ult_btn_trigger": "\u26a1 Генерация по триггеру",
         "ult_btn_time": "\u23f1 Время генерации",
         "ult_btn_theme": "Тема",
+        "ult_btn_tunnel_notify": "Уведомления о туннеле",
+        "ult_btn_update_assets": "Обновить ассеты",
+        "ult_assets_update_started": "Обновление ассетов запущено.",
+        "ult_assets_updating": "<b>Обновляю ассеты модуля...</b>",
+        "ult_assets_updated": '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji> Ассеты модуля обновлены.',
+        "ult_assets_update_partial": '<tg-emoji emoji-id="4904936030232117798">\u26a0</tg-emoji> Часть ассетов обновить не удалось. Доступные версии остались в кэше.',
         "ult_btn_theme_default": "Дефолт",
         "ult_btn_theme_colored": "Цветная",
         "ult_btn_theme_cute": "Милая",
         "ult_btn_theme_black": "Чёрная",
         "ult_btn_theme_trollface": "Trollface",
+        "ult_theme_builtin": "Встроенные темы",
+        "ult_theme_custom": "Свои темы",
+        "ult_theme_custom_empty": "Своих тем пока нет.",
+        "ult_theme_create": "Добавить свою тему",
+        "ult_theme_create_input": "Введите название своей темы:",
+        "ult_theme_edit": "Редактировать свою тему",
+        "ult_theme_rename": "Переименовать",
+        "ult_theme_rename_input": "Введите новое название темы:",
+        "ult_theme_renamed": "Своя тема переименована.",
+        "ult_theme_delete": "Удалить свою тему",
+        "ult_theme_created": "Своя тема создана: {}",
+        "ult_theme_deleted": "Своя тема удалена.",
+        "ult_theme_bad_name": "Некорректное название темы.",
+        "ult_theme_limit": "Лимит своих тем достигнут.",
+        "ult_theme_not_custom": "Сначала выберите или создайте свою тему.",
+        "ult_theme_editor_title": "Своя тема эмодзи: {}",
+        "ult_theme_editor_hint": "Выберите слот, затем отправьте кастомный эмодзи или введите document_id.",
+        "ult_theme_slot_title": "Слот: {}",
+        "ult_theme_slot_default": "Дефолт: {}",
+        "ult_theme_slot_custom": "Свой: {}",
+        "ult_theme_slot_custom_empty": "Свой: не задан",
+        "ult_theme_slot_wait": "Задать следующим сообщением",
+        "ult_theme_slot_input": "Введите document_id или <emoji ...>:",
+        "ult_theme_slot_reset": "Сбросить слот",
+        "ult_theme_slot_waiting": "Отправьте один кастомный эмодзи в этот чат.",
+        "ult_theme_slot_saved": "Слот эмодзи сохранён: {}",
+        "ult_theme_slot_reset_done": "Слот эмодзи сброшен.",
+        "ult_theme_no_emoji": "Кастомный эмодзи/document_id не найден.",
+        "emoji_slot_success": "Успех",
+        "emoji_slot_error": "Ошибка",
+        "emoji_slot_cancel": "Отмена",
+        "emoji_slot_loading": "Загрузка",
+        "emoji_slot_warning": "Предупреждение",
+        "emoji_slot_off": "Выключено",
+        "emoji_slot_folder": "Папка",
+        "emoji_slot_ai": "AI",
+        "emoji_slot_style": "Стиль",
+        "emoji_slot_model": "Модель",
+        "emoji_slot_prompt": "Промпт",
+        "emoji_slot_negative": "Негатив",
+        "emoji_slot_device": "Устройство",
+        "emoji_slot_upload": "Загрузка",
+        "emoji_slot_memory": "Память",
+        "emoji_slot_time": "Время",
+        "emoji_slot_heart": "Улучшение",
+        "emoji_slot_random": "Рандом",
+        "emoji_slot_update": "Обновление",
         "ult_btn_time_progress": "\u23f1 В процессе",
         "ult_btn_time_result": "\u23f1 В результате",
         "ult_btn_trigger_word": "\u270d Триггер-слово",
@@ -1413,14 +1926,15 @@ class ComfyImageGenMod(loader.Module):
         "ctools_btn_upscale": "Апскейл",
         "ctools_btn_rmbg": "Убрать фон",
         "ctools_btn_fps": "Повысить FPS",
-        "ctools_desc_upscale": "<code>-upscale (0.1-8x)</code> - апскейл изображения.",
+        "ctools_desc_upscale": "<code>-upscale (0.1-8x)</code> - апскейл медиа.",
         "ctools_desc_rmbg": "<code>-rmbg</code> - убрать фон.",
         "ctools_desc_fps": "<code>-fps</code> - повысить FPS видео.",
         "ctools_bad_mode": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Неизвестный инструмент. Доступно: <code>-upscale</code>, <code>-rmbg</code>, <code>-fps</code>.",
         "ctools_bad_scale": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Размер должен быть от 0.1x до 8x. Рекомендуется: 2x.",
         "ctools_no_reply_image": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Ответьте на изображение.",
         "ctools_no_reply_video": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Ответьте на видео.",
-        "ctools_processing_upscale": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Апскейлю изображение...",
+        "ctools_no_reply_media": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Ответьте на медиа.",
+        "ctools_processing_upscale": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Апскейлю медиа...",
         "ctools_processing_rmbg": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Убираю фон...",
         "ctools_processing_fps": "<emoji document_id=4904936030232117798>\u2699\ufe0f</emoji> Повышаю FPS видео...",
         "ctools_uploading": "<emoji document_id=5873225338984599714>\U0001f4e4</emoji> Загружаю результат инструмента...",
@@ -1449,8 +1963,20 @@ class ComfyImageGenMod(loader.Module):
                 validator=loader.validators.Hidden(),
             ),
             loader.ConfigValue(
+                "comfyui_backend",
+                _COMFY_BACKEND_LOCAL,
+                lambda: self.strings("cfg_backend"),
+                validator=loader.validators.Choice([_COMFY_BACKEND_LOCAL, _COMFY_BACKEND_CLOUD]),
+            ),
+            loader.ConfigValue(
+                "comfyui_cloud_api_key",
+                "",
+                lambda: self.strings("cfg_cloud_api_key"),
+                validator=loader.validators.Hidden(),
+            ),
+            loader.ConfigValue(
                 "model_name",
-                "waiIllustriousSDXL_v170.safetensors",
+                "",
                 lambda: self.strings("cfg_model"),
                 validator=loader.validators.String(),
             ),
@@ -1535,6 +2061,13 @@ class ComfyImageGenMod(loader.Module):
             _ANIME_V2_WORKFLOW_NAME,
             _Z_IMAGE_TURBO_WORKFLOW_NAME,
         )
+        self._CLOUD_WORKFLOWS = (
+            _CLOUD_ANIMA2_WORKFLOW_NAME,
+            _CLOUD_QWEN_EDIT_WORKFLOW_NAME,
+            _CLOUD_ILL_WORKFLOW_NAME,
+            _CLOUD_ZIT_WORKFLOW_NAME,
+            _CLOUD_ANIMA_WORKFLOW_NAME,
+        )
         self._available_sam_models = None
         self._lora_states = TTLCache(maxsize=50, ttl=600)
         self._models_page_cache = TTLCache(maxsize=50, ttl=300)
@@ -1545,9 +2078,16 @@ class ComfyImageGenMod(loader.Module):
         self._comfy_cache = TTLCache(maxsize=256, ttl=300)
         self._enhance_confirm_states = TTLCache(maxsize=50, ttl=1800)
         self._enhance_chat_states = TTLCache(maxsize=50, ttl=1800)
+        self._cloud_confirm_states = TTLCache(maxsize=50, ttl=1800)
         self._argset_lora_states = TTLCache(maxsize=20, ttl=1800)
         self._cshare_preview_states = TTLCache(maxsize=30, ttl=900)
         self._ctools_states = TTLCache(maxsize=30, ttl=600)
+        self._cdown_states = TTLCache(maxsize=30, ttl=1800)
+        self._emoji_theme_pending = TTLCache(maxsize=30, ttl=300)
+        self._cdown_watch_tasks = {}
+        self._cloud_balance_cache = TTLCache(maxsize=10, ttl=60)
+        self._cloud_prompt_keys = TTLCache(maxsize=200, ttl=7200)
+        self._active_cloud_api_key = contextvars.ContextVar("comfyimagegen_cloud_api_key", default=None)
         self._cmon_tasks = {}
         self._trigger_queue_counts = {}
         self._trigger_queue_lock = asyncio.Lock()
@@ -1559,6 +2099,9 @@ class ComfyImageGenMod(loader.Module):
         self._genai_api_key = None
         self._active_generations = 0
         self._unloading = False
+        self._archive_semaphore = asyncio.Semaphore(1)
+        self._archive_tasks = set()
+        self._archive_target_ok = TTLCache(maxsize=50, ttl=600)
         self._last_builtin_wf_retry = {}
         self._builtin_wf_retry_interval = 60
         self._builtin_wf_load_failed = False
@@ -1567,6 +2110,10 @@ class ComfyImageGenMod(loader.Module):
         self._startup_update_check_task = None
         self._assets_update_task = None
         self._input_cleanup_task = None
+        self._tunnel_watch_task = None
+        self._tunnel_watch_token = uuid.uuid4().hex
+        self._tunnel_failed_checks = 0
+        self._tunnel_last_available = False
         self._update_notice_lock = asyncio.Lock()
         self._auto_delete_tasks = set()
         self._input_temp_paths = set()
@@ -1763,6 +2310,21 @@ class ComfyImageGenMod(loader.Module):
     def _builtin_workflow_source_key(self, wf_name):
         return "builtin_anime_wf_source" if wf_name == _ANIME_WORKFLOW_NAME else f"builtin_wf_source_{wf_name}"
 
+    def _all_builtin_workflows(self):
+        return tuple(self._BUILTIN_WORKFLOWS) + tuple(self._CLOUD_WORKFLOWS)
+
+    def _is_builtin_workflow(self, wf_name):
+        return wf_name in self._all_builtin_workflows()
+
+    def _is_cloud_workflow_name(self, wf_name):
+        return wf_name in self._CLOUD_WORKFLOWS
+
+    def _builtin_workflow_url(self, wf_name):
+        return _BUILTIN_WORKFLOW_URLS.get(wf_name) or _CLOUD_WORKFLOW_URLS.get(wf_name)
+
+    def _builtin_workflow_telegram_url(self, wf_name):
+        return _BUILTIN_WORKFLOW_TELEGRAM_URLS.get(wf_name) or _CLOUD_WORKFLOW_TELEGRAM_URLS.get(wf_name)
+
     @staticmethod
     def _parse_telegram_message_url(url):
         parsed = urlparse(str(url or ""))
@@ -1830,7 +2392,7 @@ class ComfyImageGenMod(loader.Module):
         if not force and cached_version == __version__ and self.get(cache_key):
             return
 
-        url = _BUILTIN_WORKFLOW_URLS.get(wf_name)
+        url = self._builtin_workflow_url(wf_name)
         if not url:
             raise RuntimeError(self._plain_text(self.strings("err_workflow_download")))
 
@@ -1844,7 +2406,7 @@ class ComfyImageGenMod(loader.Module):
             github_error = e
             logger.warning("Failed to fetch builtin workflow %s from GitHub: %s", wf_name, e)
 
-        telegram_url = _BUILTIN_WORKFLOW_TELEGRAM_URLS.get(wf_name)
+        telegram_url = self._builtin_workflow_telegram_url(wf_name)
         telegram_error = None
         if telegram_url:
             try:
@@ -1871,14 +2433,27 @@ class ComfyImageGenMod(loader.Module):
         logger.warning("Using cached builtin workflow %s after remote fetch failure", wf_name)
 
     def _ctool_definitions(self):
+        cloud = self._is_comfy_cloud()
+        upscale_url = _CLOUD_UPSCALE_WF_URL if cloud else _UPSCALE_WF_URL
+        upscale_telegram_url = _CLOUD_UPSCALE_WORKFLOW_TELEGRAM_URL if cloud else _UPSCALE_WORKFLOW_TELEGRAM_URL
+        video_upscale_url = _CLOUD_VIDEO_UPSCALE_WF_URL if cloud else _VIDEO_UPSCALE_WF_URL
+        video_upscale_telegram_url = _CLOUD_VIDEO_UPSCALE_WORKFLOW_TELEGRAM_URL if cloud else None
         return {
             _CTOOL_UPSCALE: {
                 "label": self.strings("ctools_btn_upscale"),
                 "processing_key": "ctools_processing_upscale",
                 "input_kind": "image",
                 "output_kind": "image",
-                "url": _UPSCALE_WF_URL,
-                "telegram_url": _UPSCALE_WORKFLOW_TELEGRAM_URL,
+                "url": upscale_url,
+                "telegram_url": upscale_telegram_url,
+            },
+            _CTOOL_VIDEO_UPSCALE: {
+                "label": self.strings("ctools_btn_upscale"),
+                "processing_key": "ctools_processing_upscale",
+                "input_kind": "video",
+                "output_kind": "video",
+                "url": video_upscale_url,
+                "telegram_url": video_upscale_telegram_url,
             },
             _CTOOL_RMBG: {
                 "label": self.strings("ctools_btn_rmbg"),
@@ -1920,8 +2495,9 @@ class ComfyImageGenMod(loader.Module):
         tool = self._ctool_definitions().get(tool_id)
         if not tool:
             raise ValueError("unknown ctool")
-        cache_key = f"ctool_wf_{tool_id}"
-        version_key = f"ctool_wf_version_{tool_id}"
+        backend = self._comfy_backend()
+        cache_key = f"ctool_wf_{backend}_{tool_id}"
+        version_key = f"ctool_wf_version_{backend}_{tool_id}"
         cached = self.get(cache_key)
         if not force and self.get(version_key) == __version__ and cached:
             return self._normalize_builtin_workflow_payload(cached)
@@ -1936,16 +2512,21 @@ class ComfyImageGenMod(loader.Module):
             github_error = e
             logger.warning("Failed to fetch ctool workflow %s from GitHub: %s", tool_id, e)
 
-        try:
-            workflow = await self._fetch_builtin_workflow_from_telegram(tool_id, tool["telegram_url"])
-            self.set(cache_key, workflow)
-            self.set(version_key, __version__)
-            return workflow
-        except Exception as e:
-            logger.warning("Failed to fetch ctool workflow %s from Telegram: %s", tool_id, e)
-            if cached:
-                return self._normalize_builtin_workflow_payload(cached)
-            raise RuntimeError(f"{github_error}; telegram fallback: {e}") from e
+        telegram_url = tool.get("telegram_url")
+        if telegram_url:
+            try:
+                workflow = await self._fetch_builtin_workflow_from_telegram(tool_id, telegram_url)
+                self.set(cache_key, workflow)
+                self.set(version_key, __version__)
+                return workflow
+            except Exception as e:
+                logger.warning("Failed to fetch ctool workflow %s from Telegram: %s", tool_id, e)
+                if cached:
+                    return self._normalize_builtin_workflow_payload(cached)
+                raise RuntimeError(f"{github_error}; telegram fallback: {e}") from e
+        if cached:
+            return self._normalize_builtin_workflow_payload(cached)
+        raise RuntimeError(str(github_error)) from github_error
 
     def _normalize_enhance_prompt_url(self, url):
         url = str(url or "").strip()
@@ -1996,9 +2577,9 @@ class ComfyImageGenMod(loader.Module):
         return cache if isinstance(cache, dict) else {}
 
     async def _fetch_enhance_prompt(self, provider=None, force=False):
-        provider = str(provider or self._get_prompt_provider() or "gemini").strip().lower()
+        provider = str(provider or self._get_prompt_provider() or "deepseek").strip().lower()
         if provider not in self._provider_ids():
-            provider = "gemini"
+            provider = "deepseek"
         url = self._get_enhance_prompt_url(provider)
         cache = self._get_enhance_prompt_cache()
         cached = cache.get(provider, {})
@@ -2233,7 +2814,7 @@ class ComfyImageGenMod(loader.Module):
 
     async def _update_assets(self, force=False):
         ok = True
-        for wf_name in self._BUILTIN_WORKFLOWS:
+        for wf_name in self._all_builtin_workflows():
             if not await self._ensure_builtin_workflow(wf_name, force=force):
                 ok = False
         for tool_id in self._ctool_definitions():
@@ -2262,8 +2843,153 @@ class ComfyImageGenMod(loader.Module):
                 logger.warning("Background assets update failed: %s", e)
             await asyncio.sleep(interval)
 
+    def _tunnel_watch_is_owner(self):
+        return self.get(_TUNNEL_WATCH_OWNER_KEY) == self._tunnel_watch_token
+
+    def _claim_tunnel_watch(self):
+        self.set(_TUNNEL_WATCH_OWNER_KEY, self._tunnel_watch_token)
+
+    def _saved_tunnel_available(self):
+        state = self.get(_TUNNEL_WATCH_STATE_KEY, {})
+        if not isinstance(state, dict):
+            return False
+        current_url = self._local_base_url()
+        if not current_url or state.get("url") != current_url:
+            return False
+        return bool(state.get("available", False))
+
+    def _save_tunnel_available(self, available):
+        current_url = self._local_base_url()
+        if not current_url:
+            return
+        self.set(
+            _TUNNEL_WATCH_STATE_KEY,
+            {
+                "url": current_url,
+                "available": bool(available),
+                "updated_at": int(time.time()),
+            },
+        )
+
+    def _restore_tunnel_watch_state(self):
+        self._tunnel_failed_checks = 0
+        self._tunnel_last_available = self._saved_tunnel_available()
+
+    async def _cancel_stale_tunnel_watch_tasks(self):
+        current_task = asyncio.current_task()
+        stale_tasks = []
+        for task in asyncio.all_tasks():
+            if task is current_task or task.done():
+                continue
+            try:
+                coro = task.get_coro()
+                code = getattr(coro, "cr_code", None)
+                frame = getattr(coro, "cr_frame", None)
+                task_owner = frame.f_locals.get("self") if frame is not None else None
+            except Exception:
+                continue
+            if (
+                getattr(code, "co_name", None) == "_tunnel_watch_loop"
+                and task_owner is not self
+                and type(task_owner).__name__ == type(self).__name__
+            ):
+                task.cancel()
+                stale_tasks.append(task)
+        if stale_tasks:
+            await asyncio.gather(*stale_tasks, return_exceptions=True)
+            logger.debug("Cancelled %d stale tunnel watcher task(s)", len(stale_tasks))
+
+    def _start_tunnel_watch_task(self):
+        self._claim_tunnel_watch()
+        if self._tunnel_watch_task is None or self._tunnel_watch_task.done():
+            self._tunnel_watch_task = asyncio.create_task(self._tunnel_watch_loop())
+        return self._tunnel_watch_task
+
+    async def _quick_tunnel_available(self):
+        if self._is_comfy_cloud():
+            return False
+        base = self._local_base_url()
+        if not base:
+            return False
+        try:
+            async with self._session_get(
+                f"{base}/system_stats",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                await resp.read()
+                return resp.status == 200
+        except Exception as e:
+            logger.debug("ComfyUI tunnel quick check failed: %s", e)
+            return False
+
+    async def _send_tunnel_available_notice(self):
+        text = self.strings("tunnel_available")
+        sent_any = False
+        targets = self._get_tunnel_notify_targets()
+        for target in targets:
+            chat_id = target.get("chat_id")
+            if not chat_id:
+                continue
+            kwargs = {"disable_web_page_preview": True}
+            if target.get("topic_id") is not None:
+                kwargs["message_thread_id"] = target["topic_id"]
+            try:
+                await self.inline.bot.send_message(chat_id, text, **kwargs)
+                sent_any = True
+            except Exception as e:
+                logger.debug(
+                    "Inline tunnel notice failed for %s/%s: %s",
+                    chat_id,
+                    target.get("topic_id"),
+                    e,
+                )
+                if target.get("bot_pm"):
+                    try:
+                        await self.client.send_message(
+                            self.tg_id,
+                            text,
+                            link_preview=False,
+                        )
+                        sent_any = True
+                    except Exception as fallback_error:
+                        logger.debug("Client tunnel notice fallback failed: %s", fallback_error)
+        return sent_any
+
+    async def _tunnel_watch_loop(self):
+        while not self._unloading:
+            if not self._tunnel_watch_is_owner():
+                return
+            try:
+                if self._tunnel_notify_enabled() and not self._is_comfy_cloud():
+                    available = await self._quick_tunnel_available()
+                    if not self._tunnel_watch_is_owner():
+                        return
+                    if available:
+                        self._tunnel_failed_checks = 0
+                        if not self._tunnel_last_available:
+                            notified = await self._send_tunnel_available_notice()
+                            if notified:
+                                self._tunnel_last_available = True
+                                self._save_tunnel_available(True)
+                    else:
+                        self._tunnel_failed_checks += 1
+                        if self._tunnel_failed_checks >= _TUNNEL_FAILURE_THRESHOLD:
+                            if self._tunnel_last_available or self._tunnel_failed_checks == _TUNNEL_FAILURE_THRESHOLD:
+                                self._save_tunnel_available(False)
+                            self._tunnel_last_available = False
+                else:
+                    self._tunnel_failed_checks = 0
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.debug("ComfyUI tunnel watcher failed: %s", e)
+            await asyncio.sleep(_TUNNEL_CHECK_INTERVAL)
+
     async def client_ready(self, client, db):
         self._unloading = False
+        self._claim_tunnel_watch()
+        await self._cancel_stale_tunnel_watch_tasks()
+        self._restore_tunnel_watch_state()
         self._ensure_session()
         self._cleanup_all_input_files()
 
@@ -2309,7 +3035,7 @@ class ComfyImageGenMod(loader.Module):
         if canonical_workflow != current_workflow:
             self.set("default_workflow", canonical_workflow)
 
-        if canonical_workflow in self._BUILTIN_WORKFLOWS:
+        if self._is_builtin_workflow(canonical_workflow):
             await self._ensure_builtin_workflow(canonical_workflow)
         self._ensure_positive_settings()
         self._ensure_negative_settings()
@@ -2325,14 +3051,22 @@ class ComfyImageGenMod(loader.Module):
             self._assets_update_task = asyncio.create_task(self._assets_update_loop())
         if self._input_cleanup_task is None or self._input_cleanup_task.done():
             self._input_cleanup_task = asyncio.create_task(self._input_cleanup_loop())
+        self._start_tunnel_watch_task()
 
     async def on_unload(self):
         self._unloading = True
+        if self._tunnel_watch_is_owner():
+            self.set(_TUNNEL_WATCH_OWNER_KEY, None)
         if self._auto_delete_tasks:
             for task in list(self._auto_delete_tasks):
                 task.cancel()
             await asyncio.gather(*self._auto_delete_tasks, return_exceptions=True)
             self._auto_delete_tasks.clear()
+        if self._archive_tasks:
+            for task in list(self._archive_tasks):
+                task.cancel()
+            await asyncio.gather(*self._archive_tasks, return_exceptions=True)
+            self._archive_tasks.clear()
         if self._cmon_tasks:
             cmon_entries = list(self._cmon_tasks.values())
             cmon_tasks = [
@@ -2344,6 +3078,12 @@ class ComfyImageGenMod(loader.Module):
                 task.cancel()
             await asyncio.gather(*cmon_tasks, return_exceptions=True)
             self._cmon_tasks.clear()
+        if self._cdown_watch_tasks:
+            cdown_tasks = list(self._cdown_watch_tasks.values())
+            for task in cdown_tasks:
+                task.cancel()
+            await asyncio.gather(*cdown_tasks, return_exceptions=True)
+            self._cdown_watch_tasks.clear()
         if self._input_cleanup_task:
             self._input_cleanup_task.cancel()
             try:
@@ -2368,6 +3108,12 @@ class ComfyImageGenMod(loader.Module):
                 await self._update_check_task
             except asyncio.CancelledError:
                 pass
+        if self._tunnel_watch_task:
+            self._tunnel_watch_task.cancel()
+            try:
+                await self._tunnel_watch_task
+            except asyncio.CancelledError:
+                pass
         if self._session and not self._session.closed and self._active_generations > 0:
             try:
                 await self._interrupt_generation()
@@ -2382,7 +3128,7 @@ class ComfyImageGenMod(loader.Module):
 
     def _default_ai_settings(self):
         return {
-            "provider": "gemini",
+            "provider": "deepseek",
             "gemini": {
                 "model": "gemini-2.5-flash",
             },
@@ -2460,12 +3206,55 @@ class ComfyImageGenMod(loader.Module):
         self.set("ai_provider_settings", settings)
 
     def _get_prompt_provider(self):
-        return self._get_ai_settings().get("provider", "gemini")
+        return self._get_ai_settings().get("provider", "deepseek")
 
     def _get_provider_api_key(self, provider):
         self._ensure_ai_settings()
         config_key = self._provider_config_key(provider)
-        return self.config[config_key] if config_key else ""
+        keys = self._get_provider_api_keys(provider)
+        return keys[0] if keys else ""
+
+    def _get_provider_api_keys(self, provider):
+        self._ensure_ai_settings()
+        config_key = self._provider_config_key(provider)
+        if not config_key:
+            return []
+        raw = str(self.config[config_key] or "")
+        keys = []
+        seen = set()
+        for key in raw.split(","):
+            key = key.strip()
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+        return keys
+
+    @staticmethod
+    def _enhance_error_rotates_key(error):
+        if error in {"expired", "rate_limit", "timeout"}:
+            return True
+        lower = str(error or "").lower()
+        return any(
+            marker in lower
+            for marker in (
+                "401",
+                "403",
+                "429",
+                "invalid api key",
+                "api key not valid",
+                "api_key_invalid",
+                "unauthenticated",
+                "permission denied",
+                "quota",
+                "insufficient_quota",
+                "billing",
+                "balance",
+                "resource_exhausted",
+                "rate limit",
+                "timeout",
+                "timed out",
+            )
+        )
 
     def _get_gemini_model(self):
         return self._get_provider_model("gemini")
@@ -2494,7 +3283,14 @@ class ComfyImageGenMod(loader.Module):
         self._ensure_ai_settings()
         config_key = self._provider_config_key(provider)
         if config_key:
-            self.config[config_key] = api_key.strip()
+            keys = []
+            seen = set()
+            for key in str(api_key or "").split(","):
+                key = key.strip()
+                if key and key not in seen:
+                    seen.add(key)
+                    keys.append(key)
+            self.config[config_key] = ", ".join(keys)
 
     def _set_provider_model(self, provider, model):
         settings = self._get_ai_settings()
@@ -2526,6 +3322,282 @@ class ComfyImageGenMod(loader.Module):
         value = self._get_total_generation_count() + 1
         self.set("total_generation_counter", value)
         return value
+
+    @staticmethod
+    def _builtin_emoji_theme_ids():
+        return {
+            _EMOJI_THEME_DEFAULT,
+            _EMOJI_THEME_COLORED,
+            _EMOJI_THEME_CUTE,
+            _EMOJI_THEME_BLACK,
+            _EMOJI_THEME_TROLLFACE,
+        }
+
+    @staticmethod
+    def _emoji_theme_custom_id(slug):
+        return f"{_EMOJI_THEME_CUSTOM_PREFIX}{slug}"
+
+    @staticmethod
+    def _emoji_theme_custom_slug(theme_id):
+        theme_id = str(theme_id or "").strip().lower()
+        if not theme_id.startswith(_EMOJI_THEME_CUSTOM_PREFIX):
+            return None
+        slug = theme_id[len(_EMOJI_THEME_CUSTOM_PREFIX):].strip()
+        return slug or None
+
+    @staticmethod
+    def _emoji_theme_slug(value):
+        value = str(value or "").strip().lower()
+        value = re.sub(r"[^a-z0-9_-]+", "_", value)
+        value = re.sub(r"_+", "_", value).strip("_-")
+        return value[:32]
+
+    def _emoji_slot_label(self, slot):
+        key = f"emoji_slot_{slot}"
+        try:
+            value = self.strings(key)
+            if value and value != key:
+                return value
+        except Exception:
+            pass
+        return str(slot)
+
+    def _emoji_slot_default(self, slot):
+        sources = _EMOJI_THEME_SLOT_SOURCES.get(slot) or ()
+        if not sources:
+            return ("", "")
+        return sources[0]
+
+    @staticmethod
+    def _inline_premium_emoji(emoji_id, char):
+        emoji_id = str(emoji_id or "").strip()
+        char = utils.escape_html(str(char or "").strip() or "\u2754")
+        if not emoji_id:
+            return char
+        return f'<tg-emoji emoji-id="{emoji_id}">{char}</tg-emoji>'
+
+    def _get_custom_emoji_themes(self):
+        raw = self.get("custom_emoji_themes", {})
+        if not isinstance(raw, dict):
+            raw = {}
+        normalized = {}
+        changed = False
+        for raw_slug, data in raw.items():
+            slug = self._emoji_theme_slug(raw_slug)
+            if not slug or not isinstance(data, dict):
+                changed = True
+                continue
+            title = str(data.get("title") or slug).strip()[:40] or slug
+            base = _EMOJI_THEME_DEFAULT
+            slots = {}
+            raw_slots = data.get("slots")
+            if isinstance(raw_slots, dict):
+                for slot, item in raw_slots.items():
+                    if slot not in _EMOJI_THEME_SLOT_SOURCES or not isinstance(item, dict):
+                        changed = True
+                        continue
+                    emoji_id = str(item.get("id") or "").strip()
+                    if not _EMOJI_THEME_ID_RE.match(emoji_id):
+                        changed = True
+                        continue
+                    default_char = self._emoji_slot_default(slot)[1]
+                    char = str(item.get("char") or default_char or "").strip()[:8] or default_char
+                    slots[slot] = {"id": emoji_id, "char": char}
+            normalized[slug] = {
+                "title": title,
+                "base": base,
+                "slots": slots,
+            }
+            if slug != raw_slug or normalized[slug] != data:
+                changed = True
+        if changed:
+            self.set("custom_emoji_themes", normalized)
+        return normalized
+
+    def _set_custom_emoji_themes(self, themes):
+        self.set("custom_emoji_themes", themes if isinstance(themes, dict) else {})
+
+    def _emoji_theme_exists(self, theme_id):
+        theme_id = str(theme_id or "").strip().lower()
+        if theme_id in self._builtin_emoji_theme_ids():
+            return True
+        slug = self._emoji_theme_custom_slug(theme_id)
+        return bool(slug and slug in self._get_custom_emoji_themes())
+
+    def _emoji_theme_display_name(self, theme_id):
+        theme_id = str(theme_id or _EMOJI_THEME_DEFAULT).strip().lower()
+        labels = {
+            _EMOJI_THEME_DEFAULT: self.strings("ult_btn_theme_default"),
+            _EMOJI_THEME_COLORED: self.strings("ult_btn_theme_colored"),
+            _EMOJI_THEME_CUTE: self.strings("ult_btn_theme_cute"),
+            _EMOJI_THEME_BLACK: self.strings("ult_btn_theme_black"),
+            _EMOJI_THEME_TROLLFACE: self.strings("ult_btn_theme_trollface"),
+        }
+        if theme_id in labels:
+            return labels[theme_id]
+        slug = self._emoji_theme_custom_slug(theme_id)
+        if slug:
+            theme = self._get_custom_emoji_themes().get(slug)
+            if isinstance(theme, dict):
+                return theme.get("title") or slug
+        return theme_id
+
+    def _emoji_theme_maps(self, theme_id):
+        theme_id = str(theme_id or _EMOJI_THEME_DEFAULT).strip().lower()
+        if theme_id in self._builtin_emoji_theme_ids():
+            return (
+                dict(_EMOJI_THEME_REPLACEMENTS.get(theme_id, {})),
+                dict(_EMOJI_THEME_ID_FALLBACKS.get(theme_id, {})),
+                dict(_EMOJI_THEME_ERROR_ID_FALLBACKS.get(theme_id, {})),
+            )
+
+        slug = self._emoji_theme_custom_slug(theme_id)
+        theme = self._get_custom_emoji_themes().get(slug) if slug else None
+        if not isinstance(theme, dict):
+            return ({}, {}, {})
+        base = str(theme.get("base") or _EMOJI_THEME_DEFAULT).strip().lower()
+        replacements, id_fallbacks, error_id_fallbacks = self._emoji_theme_maps(base)
+        slots = theme.get("slots") if isinstance(theme.get("slots"), dict) else {}
+        for slot, item in slots.items():
+            if slot not in _EMOJI_THEME_SLOT_SOURCES or not isinstance(item, dict):
+                continue
+            emoji_id = str(item.get("id") or "").strip()
+            if not _EMOJI_THEME_ID_RE.match(emoji_id):
+                continue
+            default_char = self._emoji_slot_default(slot)[1]
+            char = str(item.get("char") or default_char or "").strip()[:8] or default_char
+            value = (emoji_id, char)
+            for old_id, old_char in _EMOJI_THEME_SLOT_SOURCES[slot]:
+                char_key = self._emoji_theme_char_key(old_char)
+                replacements[(old_id, char_key)] = value
+                id_fallbacks[old_id] = value
+                if old_id == "5121063440311386962":
+                    error_id_fallbacks[char_key] = value
+                    if slot == "error":
+                        error_id_fallbacks["*"] = value
+        return replacements, id_fallbacks, error_id_fallbacks
+
+    def _apply_emoji_theme_id(self, emoji_id, char=None):
+        emoji_id = str(emoji_id or "").strip()
+        if not emoji_id:
+            return emoji_id
+        theme = self._emoji_theme_name()
+        replacements, id_fallbacks, error_id_fallbacks = self._emoji_theme_maps(theme)
+        char_key = self._emoji_theme_char_key(char) if char else None
+        new_emoji = replacements.get((emoji_id, char_key)) if char_key else None
+        if not new_emoji and emoji_id == "5121063440311386962":
+            new_emoji = (error_id_fallbacks.get(char_key) if char_key else None) or error_id_fallbacks.get("*")
+        if not new_emoji:
+            new_emoji = id_fallbacks.get(emoji_id)
+        return str(new_emoji[0]) if new_emoji else emoji_id
+
+    def _apply_emoji_theme_markup(self, markup):
+        if isinstance(markup, list):
+            return [self._apply_emoji_theme_markup(item) for item in markup]
+        if isinstance(markup, tuple):
+            return tuple(self._apply_emoji_theme_markup(item) for item in markup)
+        if isinstance(markup, dict):
+            cloned = dict(markup)
+            if "emoji_id" in cloned:
+                cloned["emoji_id"] = self._apply_emoji_theme_id(cloned.get("emoji_id"))
+            return cloned
+        return markup
+
+    def _extract_custom_emoji_from_text(self, text):
+        text = str(text or "").strip()
+        if not text:
+            return None
+        match = _EMOJI_THEME_INLINE_ID_RE.search(text)
+        if match:
+            return match.group("id"), self._plain_text(text).strip()[:8]
+        token = text.split()[0].strip()
+        if _EMOJI_THEME_ID_RE.match(token):
+            return token, ""
+        return None
+
+    def _extract_custom_emoji_from_message(self, message, slot=None):
+        text = getattr(message, "raw_text", None) or getattr(message, "text", None) or ""
+        entities = list(getattr(message, "entities", None) or [])
+        for entity in entities:
+            emoji_id = getattr(entity, "document_id", None)
+            if emoji_id:
+                char = str(text or "").strip()[:8]
+                return str(emoji_id), char
+        extracted = self._extract_custom_emoji_from_text(text)
+        if extracted:
+            emoji_id, char = extracted
+            if not char and slot:
+                char = self._emoji_slot_default(slot)[1]
+            return emoji_id, char
+        return None
+
+    def _set_custom_theme_slot(self, slug, slot, emoji_id, char=None):
+        slug = self._emoji_theme_slug(slug)
+        if slot not in _EMOJI_THEME_SLOT_SOURCES:
+            return False
+        emoji_id = str(emoji_id or "").strip()
+        if not _EMOJI_THEME_ID_RE.match(emoji_id):
+            return False
+        themes = self._get_custom_emoji_themes()
+        theme = themes.get(slug)
+        if not isinstance(theme, dict):
+            return False
+        slots = theme.get("slots")
+        if not isinstance(slots, dict):
+            slots = {}
+            theme["slots"] = slots
+        default_char = self._emoji_slot_default(slot)[1]
+        char = str(char or default_char or "").strip()[:8] or default_char
+        slots[slot] = {"id": emoji_id, "char": char}
+        self._set_custom_emoji_themes(themes)
+        return True
+
+    def _restore_source_inline_message(self, call, source_inline_message_id=None):
+        if not source_inline_message_id:
+            return
+        unit_id = getattr(call, "unit_id", None)
+        units = getattr(self.inline, "_units", {})
+        if unit_id in units:
+            units[unit_id]["inline_message_id"] = source_inline_message_id
+
+    async def _safe_call_answer(self, call, text="", **kwargs):
+        try:
+            return await call.answer(text, **kwargs)
+        except Exception as e:
+            logger.debug("Inline call answer ignored: %s", e)
+            return None
+
+    def _format_theme_slot_saved_text(self, slot, emoji_id=None, char=None):
+        emoji = ""
+        if emoji_id:
+            emoji = self._inline_premium_emoji(
+                emoji_id,
+                char or self._emoji_slot_default(slot)[1],
+            )
+            emoji = f"{emoji} "
+        return "{}{}".format(
+            emoji,
+            self.strings("ult_theme_slot_saved").format(
+                utils.escape_html(self._emoji_slot_label(slot))
+            ),
+        )
+
+    async def _edit_inline_transfer_message(self, call, text):
+        bot = getattr(self.inline, "bot", None)
+        inline_message_id = getattr(call, "inline_message_id", None)
+        if not bot or not inline_message_id:
+            return False
+        try:
+            await bot.edit_message_text(
+                text=text,
+                inline_message_id=inline_message_id,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return True
+        except Exception as e:
+            logger.debug("Inline transfer message edit ignored: %s", e)
+            return False
 
     @staticmethod
     def _format_comfy_device_name(device):
@@ -2635,17 +3707,48 @@ class ComfyImageGenMod(loader.Module):
         if not isinstance(telegram_censorship, dict):
             telegram_censorship = {}
 
+        tunnel_notify = settings.get("tunnel_notify")
+        if not isinstance(tunnel_notify, dict):
+            tunnel_notify = {}
+
+        tunnel_targets_raw = tunnel_notify.get("targets")
+        if not isinstance(tunnel_targets_raw, list):
+            default_chat_id = getattr(self, "tg_id", None)
+            tunnel_targets_raw = (
+                [{"chat_id": default_chat_id, "topic_id": None, "bot_pm": True}]
+                if default_chat_id
+                else []
+            )
+        tunnel_targets = []
+        seen_tunnel_targets = set()
+        for target in tunnel_targets_raw:
+            if not isinstance(target, dict):
+                continue
+            chat_id = target.get("chat_id")
+            if not chat_id:
+                continue
+            topic_id = target.get("topic_id")
+            bot_pm = bool(target.get("bot_pm", False))
+            key = (
+                str(chat_id),
+                str(topic_id) if topic_id is not None else None,
+            )
+            if key in seen_tunnel_targets:
+                continue
+            seen_tunnel_targets.add(key)
+            tunnel_targets.append(
+                {
+                    "chat_id": chat_id,
+                    "topic_id": topic_id,
+                    "bot_pm": bot_pm,
+                }
+            )
+
         ui = settings.get("ui")
         if not isinstance(ui, dict):
             ui = {}
         theme = str(ui.get("theme") or _EMOJI_THEME_DEFAULT).strip().lower()
-        if theme not in {
-            _EMOJI_THEME_DEFAULT,
-            _EMOJI_THEME_COLORED,
-            _EMOJI_THEME_CUTE,
-            _EMOJI_THEME_BLACK,
-            _EMOJI_THEME_TROLLFACE,
-        }:
+        if not self._emoji_theme_exists(theme):
             theme = _EMOJI_THEME_DEFAULT
 
         ai_enhance = settings.get("ai_enhance")
@@ -2722,6 +3825,10 @@ class ComfyImageGenMod(loader.Module):
             "telegram_censorship": {
                 "enabled": bool(telegram_censorship.get("enabled", False)),
             },
+            "tunnel_notify": {
+                "enabled": bool(tunnel_notify.get("enabled", True)),
+                "targets": tunnel_targets,
+            },
             "ui": {
                 "theme": theme,
             },
@@ -2768,6 +3875,57 @@ class ComfyImageGenMod(loader.Module):
             .get("telegram_censorship", {})
             .get("enabled", False)
         )
+
+    def _tunnel_notify_enabled(self) -> bool:
+        return bool(
+            self._get_ult_settings()
+            .get("tunnel_notify", {})
+            .get("enabled", True)
+        )
+
+    def _get_tunnel_notify_config(self) -> dict:
+        return self._get_ult_settings()["tunnel_notify"]
+
+    def _get_tunnel_notify_targets(self):
+        targets = self._get_tunnel_notify_config().get("targets", [])
+        return [
+            target
+            for target in targets
+            if isinstance(target, dict) and target.get("chat_id")
+        ]
+
+    def _tunnel_bot_pm_target(self):
+        chat_id = getattr(self, "tg_id", None)
+        if not chat_id:
+            return None
+        return {"chat_id": chat_id, "topic_id": None, "bot_pm": True}
+
+    def _add_tunnel_notify_target(self, config, chat_id, topic_id=None, bot_pm=False):
+        targets = config.get("targets")
+        if not isinstance(targets, list):
+            targets = []
+        key = (str(chat_id), str(topic_id) if topic_id is not None else None)
+        for target in targets:
+            if not isinstance(target, dict):
+                continue
+            target_key = (
+                str(target.get("chat_id")),
+                str(target.get("topic_id")) if target.get("topic_id") is not None else None,
+            )
+            if target_key == key:
+                if bot_pm and not target.get("bot_pm"):
+                    target["bot_pm"] = True
+                config["targets"] = targets
+                return False
+        targets.append(
+            {
+                "chat_id": chat_id,
+                "topic_id": topic_id,
+                "bot_pm": bool(bot_pm),
+            }
+        )
+        config["targets"] = targets
+        return True
 
     def _ai_enhance_enabled(self) -> bool:
         return bool(self._get_ult_settings().get("ai_enhance", {}).get("enabled", False))
@@ -2832,22 +3990,64 @@ class ComfyImageGenMod(loader.Module):
         )
 
     def _truncate_inline_text_for_retry(self, text, limit):
-        plain = self._plain_text(str(text or "")).replace("\r", "")
-        plain = re.sub(r"[ \t]+\n", "\n", plain)
-        plain = re.sub(r"\n{3,}", "\n\n", plain).strip()
-        if not plain:
-            plain = self.strings("negative_not_set")
-        suffix = "\n..."
-        budget = max(100, int(limit) - len(suffix))
-        if len(plain) > budget:
-            plain = plain[:budget].rstrip() + suffix
-        return utils.escape_html(plain)
+        return self._truncate_html_text_for_retry(text, limit)
 
     def _inline_text_retry_candidates(self, text):
         seen = {text}
         candidates = []
         for limit in _INLINE_TEXT_RETRY_LIMITS:
             candidate = self._truncate_inline_text_for_retry(text, limit)
+            if candidate not in seen:
+                seen.add(candidate)
+                candidates.append(candidate)
+        return candidates
+
+    def _plain_text_retry_limits(self):
+        return (
+            _PLAIN_TEXT_RETRY_LIMITS_PREMIUM
+            if self._self_has_premium
+            else _PLAIN_TEXT_RETRY_LIMITS_DEFAULT
+        )
+
+    def _message_text_limit(self):
+        return _TG_TEXT_LIMIT_PREMIUM if self._self_has_premium else _TG_TEXT_LIMIT_DEFAULT
+
+    def _parsed_html_text_len(self, text):
+        try:
+            parsed_text, _ = self.client.parse_mode.parse(str(text or ""))
+            return len(parsed_text)
+        except Exception:
+            return len(self._plain_text(str(text or "")))
+
+    def _truncate_html_text_for_retry(self, text, limit):
+        suffix = "\n..."
+        limit = max(100, int(limit or _TG_TEXT_LIMIT_DEFAULT))
+        budget = max(100, limit - len(suffix))
+        try:
+            parsed_text, entities = self.client.parse_mode.parse(str(text or ""))
+            chunks = list(utils.smart_split(parsed_text, entities, budget))
+            if chunks:
+                first = str(chunks[0]).rstrip()
+                if len(chunks) > 1 or len(parsed_text) > budget:
+                    first = f"{first}{suffix}"
+                return first
+        except Exception as e:
+            logger.debug("HTML retry truncation failed: %s", e)
+
+        plain = self._plain_text(str(text or "")).replace("\r", "")
+        plain = re.sub(r"[ \t]+\n", "\n", plain)
+        plain = re.sub(r"\n{3,}", "\n\n", plain).strip()
+        if not plain:
+            plain = self.strings("negative_not_set")
+        if len(plain) > budget:
+            plain = plain[:budget].rstrip() + suffix
+        return utils.escape_html(plain)
+
+    def _text_retry_candidates(self, text, limits=None):
+        seen = {text}
+        candidates = []
+        for limit in (limits or self._plain_text_retry_limits()):
+            candidate = self._truncate_html_text_for_retry(text, limit)
             if candidate not in seen:
                 seen.add(candidate)
                 candidates.append(candidate)
@@ -2882,8 +4082,10 @@ class ComfyImageGenMod(loader.Module):
                 **kwargs,
             )
 
-    async def _render_inline(self, target, text, reply_markup=None, **kwargs):
-        text = self._apply_emoji_theme(text)
+    async def _render_inline(self, target, text, reply_markup=None, apply_theme=True, **kwargs):
+        if apply_theme:
+            text = self._apply_emoji_theme(text)
+            reply_markup = self._apply_emoji_theme_markup(reply_markup)
         candidates = [text]
         retry_candidates = None
         last_error = None
@@ -3003,15 +4205,35 @@ class ComfyImageGenMod(loader.Module):
                 logger.debug("Ignoring unsupported info banner media URL: %s", banner_url)
         return await self._render_inline(target, text, reply_markup, **kwargs)
 
-    async def _edit_inline_status(self, target, text, reply_markup=None):
-        text = self._apply_emoji_theme(text)
+    async def _edit_inline_status(self, target, text, reply_markup=None, apply_theme=True):
+        if apply_theme:
+            text = self._apply_emoji_theme(text)
+            reply_markup = self._apply_emoji_theme_markup(reply_markup)
+        form = getattr(target, "form", {}) or {}
+        if isinstance(target, dict):
+            form = target
+        unit_id = None
+        if isinstance(form, dict):
+            unit_id = form.get("id") or form.get("uid")
+        unit_id = unit_id or getattr(target, "unit_id", None)
+        if unit_id and hasattr(self.inline, "_edit_unit"):
+            try:
+                edited = await self.inline._edit_unit(
+                    text=text,
+                    reply_markup=reply_markup,
+                    unit_id=unit_id,
+                )
+                if edited:
+                    return True
+            except Exception as e:
+                logger.debug("Inline unit status edit failed: %s", e)
+
         bot = getattr(self.inline, "bot", None)
         if bot is not None:
             try:
                 inline_message_id = getattr(target, "inline_message_id", None)
                 chat_id = getattr(target, "chat_id", None)
                 message_id = getattr(target, "message_id", None)
-                form = getattr(target, "form", {}) or {}
                 if not chat_id:
                     chat_id = form.get("chat")
                 if not message_id:
@@ -3190,12 +4412,18 @@ class ComfyImageGenMod(loader.Module):
     async def _ensure_gens_archive_target_for_save(self, gens_chat, target):
         if not target.get("topic_id"):
             return target, False
+        target_key = self._gens_archive_target_key(target)
+        if target_key in self._archive_target_ok:
+            return target, False
         if await self._gens_archive_topic_exists(target):
+            self._archive_target_ok[target_key] = True
             return target, False
         if not target.get("managed"):
             raise RuntimeError("Generation archive topic is unavailable")
         logger.warning("Generation archive topic is missing, recreating")
-        return await self._recreate_managed_gens_archive_target(gens_chat, target), True
+        new_target = await self._recreate_managed_gens_archive_target(gens_chat, target)
+        self._archive_target_ok[self._gens_archive_target_key(new_target)] = True
+        return new_target, True
 
     def _archive_message_matches_target(self, message, target):
         expected_topic_id = target.get("topic_id")
@@ -3299,7 +4527,40 @@ class ComfyImageGenMod(loader.Module):
         topic_id = int(numbers[1]) if len(numbers) > 1 else None
         return chat_id, topic_id
 
-    async def _ult_render_main(self, target):
+    @staticmethod
+    def _bot_api_chat_id(entity, fallback=None):
+        entity_id = getattr(entity, "id", None)
+        if entity_id is None:
+            return fallback
+        entity_id = abs(int(entity_id))
+        entity_type = type(entity).__name__.lower()
+        if "channel" in entity_type:
+            return int(f"-100{entity_id}")
+        if "chat" in entity_type:
+            return -entity_id
+        return entity_id
+
+    async def _resolve_tunnel_notify_target(self, query):
+        chat_id, topic_id = self._parse_archive_target(query)
+        if not chat_id:
+            return None, None
+        entity = await self.client.get_entity(chat_id)
+        bot_chat_id = self._bot_api_chat_id(entity, chat_id)
+        bot = self.inline.bot
+        await bot.get_chat(bot_chat_id)
+        bot_user = await bot.get_me()
+        membership = await bot.get_chat_member(bot_chat_id, bot_user.id)
+        status = getattr(membership, "status", "")
+        status = str(getattr(status, "value", status)).lower()
+        if status in ("left", "kicked", "banned"):
+            raise RuntimeError("bot is not a member of this chat")
+        if getattr(membership, "can_post_messages", True) is False:
+            raise RuntimeError("bot cannot post messages in this channel")
+        if getattr(membership, "can_send_messages", True) is False:
+            raise RuntimeError("bot cannot send messages in this chat")
+        return bot_chat_id, topic_id
+
+    async def _ult_render_main(self, target, notice=None):
         settings = self._get_ult_settings()
         chat_id = self._get_target_chat_id(target)
         trigger_settings = self._get_trigger_settings_for_chat(chat_id) if chat_id is not None else self._default_trigger_settings()
@@ -3324,69 +4585,84 @@ class ComfyImageGenMod(loader.Module):
             if censorship_enabled
             else self.strings("ult_status_off")
         )
+        tunnel_notify_enabled = bool(settings["tunnel_notify"]["enabled"])
+        tunnel_notify_status = (
+            self.strings("ult_status_on")
+            if tunnel_notify_enabled
+            else self.strings("ult_status_off")
+        )
         theme = settings["ui"]["theme"]
 
-        text = "\n".join(
-            [
-                self.strings("ult_title"),
-                "",
-                f"{self.strings('ult_ai_title')}: {ai_status}",
-                f"{self.strings('ult_gens_title')}: {gens_status}",
-                f"{self.strings('ult_trigger_title')}: {trigger_status}",
-                self.strings("ult_theme_status").format(utils.escape_html(theme)),
-                self.strings("ult_censorship_status").format(censorship_status),
-            ]
-        )
+        text_lines = [
+            self.strings("ult_title"),
+            "",
+            f"{self.strings('ult_ai_title')}: {ai_status}",
+            f"{self.strings('ult_gens_title')}: {gens_status}",
+            f"{self.strings('ult_trigger_title')}: {trigger_status}",
+            self.strings("ult_theme_status").format(
+                utils.escape_html(self._emoji_theme_display_name(theme))
+            ),
+            self.strings("tunnel_notify_status").format(tunnel_notify_status),
+            self.strings("ult_censorship_status").format(censorship_status),
+        ]
+        if notice:
+            text_lines.extend(("", notice))
+        text = "\n".join(text_lines)
+
+        ai_button = {
+            "text": self.strings("ult_btn_ai"),
+            "callback": self._ult_open_ai_enhance,
+            "style": "primary",
+        }
+        gens_button = {
+            "text": self.strings("ult_btn_gens"),
+            "callback": self._ult_open_gens_chat,
+            "style": "primary",
+        }
+        trigger_button = {
+            "text": self.strings("ult_btn_trigger"),
+            "callback": self._ult_open_trigger_generation,
+            "args": (chat_id,),
+            "style": "primary",
+        }
+        time_button = {
+            "text": self.strings("ult_btn_time"),
+            "callback": self._ult_open_generation_time,
+            "style": "primary",
+        }
+        theme_button = {
+            "text": self.strings("ult_btn_theme"),
+            "callback": self._ult_open_emoji_theme,
+            "style": "primary",
+        }
+        tunnel_notify_button = {
+            "text": self.strings("ult_btn_tunnel_notify"),
+            "callback": self._ult_open_tunnel_notify,
+            "style": "primary",
+        }
+        censorship_button = {
+            "text": (
+                self.strings("ult_btn_censorship_on")
+                if censorship_enabled
+                else self.strings("ult_btn_censorship_off")
+            ),
+            "callback": self._ult_toggle_telegram_censorship,
+            "style": self._state_toggle_style(censorship_enabled),
+            "emoji_id": self._state_toggle_emoji(censorship_enabled),
+        }
 
         markup = [
-            [
-                {
-                    "text": self.strings("ult_btn_ai"),
-                    "callback": self._ult_open_ai_enhance,
-                    "style": "primary",
-                }
-            ],
-            [
-                {
-                    "text": self.strings("ult_btn_gens"),
-                    "callback": self._ult_open_gens_chat,
-                    "style": "primary",
-                }
-            ],
-            [
-                {
-                    "text": self.strings("ult_btn_trigger"),
-                    "callback": self._ult_open_trigger_generation,
-                    "args": (chat_id,),
-                    "style": "primary",
-                }
-            ],
-            [
-                {
-                    "text": self.strings("ult_btn_time"),
-                    "callback": self._ult_open_generation_time,
-                    "style": "primary",
-                }
-            ],
-            [
-                {
-                    "text": self.strings("ult_btn_theme"),
-                    "callback": self._ult_open_emoji_theme,
-                    "style": "primary",
-                }
-            ],
-            [
-                {
-                    "text": (
-                        self.strings("ult_btn_censorship_on")
-                        if censorship_enabled
-                        else self.strings("ult_btn_censorship_off")
-                    ),
-                    "callback": self._ult_toggle_telegram_censorship,
-                    "style": self._state_toggle_style(censorship_enabled),
-                    "emoji_id": self._state_toggle_emoji(censorship_enabled),
-                }
-            ],
+            [ai_button, gens_button],
+            [trigger_button],
+            [time_button, theme_button],
+            [tunnel_notify_button],
+            [censorship_button],
+            [{
+                "text": self.strings("ult_btn_update_assets"),
+                "callback": self._ult_update_assets,
+                "style": "primary",
+                "emoji_id": "5361979468887893611",
+            }],
             [{
                 "text": self.strings("btn_close"),
                 "callback": self._safe_close_form,
@@ -3396,11 +4672,31 @@ class ComfyImageGenMod(loader.Module):
 
         await self._render_inline(target, text, markup)
 
+    async def _ult_update_assets(self, call: InlineCall):
+        await self._safe_call_answer(call, self.strings("ult_assets_update_started"))
+        await self._edit_inline_status(call, self.strings("ult_assets_updating"), reply_markup=None)
+        try:
+            updated = await self._update_assets(force=True)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.warning("Manual assets update failed: %s", e)
+            updated = False
+        await self._ult_render_main(
+            call,
+            notice=self.strings(
+                "ult_assets_updated" if updated else "ult_assets_update_partial"
+            ),
+        )
+
     async def _ult_open_ai_enhance(self, call: InlineCall):
         await self._ult_render_ai_enhance(call)
 
     async def _ult_open_gens_chat(self, call: InlineCall):
         await self._ult_render_gens_chat(call)
+
+    async def _ult_open_tunnel_notify(self, call: InlineCall):
+        await self._ult_render_tunnel_notify(call)
 
     async def _ult_open_trigger_generation(self, call: InlineCall, chat_id):
         if chat_id is None:
@@ -3413,66 +4709,100 @@ class ComfyImageGenMod(loader.Module):
     async def _ult_open_emoji_theme(self, call: InlineCall):
         await self._ult_render_emoji_theme(call)
 
-    async def _ult_render_emoji_theme(self, target):
+    async def _ult_render_emoji_theme(self, target, force_edit=False):
         settings = self._get_ult_settings()
         current = settings["ui"]["theme"]
+        custom_themes = self._get_custom_emoji_themes()
         text = "\n".join(
             [
                 self.strings("ult_theme_title"),
                 "",
-                self.strings("ult_theme_status").format(utils.escape_html(current)),
+                self.strings("ult_theme_status").format(
+                    utils.escape_html(self._emoji_theme_display_name(current))
+                ),
+                "",
+                f"<b>{self.strings('ult_theme_builtin')}</b>",
             ]
         )
-        markup = [
-            [
-                {
-                    "text": self.strings("ult_btn_theme_default"),
-                    "callback": self._ult_set_emoji_theme,
-                    "args": (_EMOJI_THEME_DEFAULT,),
-                    "style": "success" if current == _EMOJI_THEME_DEFAULT else "primary",
-                },
-                {
-                    "text": self.strings("ult_btn_theme_colored"),
-                    "callback": self._ult_set_emoji_theme,
-                    "args": (_EMOJI_THEME_COLORED,),
-                    "style": "success" if current == _EMOJI_THEME_COLORED else "primary",
-                },
-            ],
-            [
-                {
-                    "text": self.strings("ult_btn_theme_cute"),
-                    "callback": self._ult_set_emoji_theme,
-                    "args": (_EMOJI_THEME_CUTE,),
-                    "style": "success" if current == _EMOJI_THEME_CUTE else "primary",
-                },
-                {
-                    "text": self.strings("ult_btn_theme_black"),
-                    "callback": self._ult_set_emoji_theme,
-                    "args": (_EMOJI_THEME_BLACK,),
-                    "style": "success" if current == _EMOJI_THEME_BLACK else "primary",
-                },
-            ],
-            [
-                {
-                    "text": self.strings("ult_btn_theme_trollface"),
-                    "callback": self._ult_set_emoji_theme,
-                    "args": (_EMOJI_THEME_TROLLFACE,),
-                    "style": "success" if current == _EMOJI_THEME_TROLLFACE else "primary",
-                },
-            ],
-            [{"text": self.strings("btn_back"), "callback": self._ult_back_main, "style": "primary"}],
+        builtin_specs = [
+            (_EMOJI_THEME_DEFAULT, self.strings("ult_btn_theme_default")),
+            (_EMOJI_THEME_COLORED, self.strings("ult_btn_theme_colored")),
+            (_EMOJI_THEME_CUTE, self.strings("ult_btn_theme_cute")),
+            (_EMOJI_THEME_BLACK, self.strings("ult_btn_theme_black")),
+            (_EMOJI_THEME_TROLLFACE, self.strings("ult_btn_theme_trollface")),
         ]
-        await self._render_inline(target, text, markup)
+        builtin_buttons = [
+            {
+                "text": label,
+                "callback": self._ult_set_emoji_theme,
+                "args": (theme_id,),
+                "style": "success" if current == theme_id else "primary",
+            }
+            for theme_id, label in builtin_specs
+        ]
+        markup = self._build_button_rows(builtin_buttons, columns=2)
+
+        custom_buttons = []
+        for slug, theme in custom_themes.items():
+            theme_id = self._emoji_theme_custom_id(slug)
+            custom_buttons.append(
+                {
+                    "text": theme.get("title") or slug,
+                    "callback": self._ult_set_emoji_theme,
+                    "args": (theme_id,),
+                    "style": "success" if current == theme_id else "primary",
+                }
+            )
+        if custom_buttons:
+            text = f"{text}\n\n<b>{self.strings('ult_theme_custom')}</b>"
+            markup.extend(self._build_button_rows(custom_buttons, columns=2))
+        else:
+            text = f"{text}\n\n<b>{self.strings('ult_theme_custom')}</b>\n{self.strings('ult_theme_custom_empty')}"
+
+        current_slug = self._emoji_theme_custom_slug(current)
+        source_inline_message_id = getattr(target, "inline_message_id", None)
+        markup.append(
+            [
+                {
+                    "text": self.strings("ult_theme_create"),
+                    "input": self.strings("ult_theme_create_input"),
+                    "handler": self._ult_custom_theme_create_input,
+                    "args": (source_inline_message_id,),
+                }
+            ]
+        )
+        if current_slug and current_slug in custom_themes:
+            markup.extend(
+                [
+                    [
+                        {
+                            "text": self.strings("ult_theme_edit"),
+                            "callback": self._ult_render_custom_theme_editor,
+                            "args": (current_slug,),
+                            "style": "primary",
+                        }
+                    ],
+                    [
+                        {
+                            "text": self.strings("ult_theme_delete"),
+                            "callback": self._ult_custom_theme_delete,
+                            "args": (current_slug,),
+                            "style": "danger",
+                        },
+                    ],
+                ]
+            )
+        markup.append([{"text": self.strings("btn_back"), "callback": self._ult_back_main, "style": "primary"}])
+        if force_edit:
+            await self._edit_inline_status(target, text, markup)
+            return
+        rendered = await self._render_inline(target, text, markup)
+        if not rendered and isinstance(target, InlineCall):
+            await self._edit_inline_status(target, text, markup)
 
     async def _ult_set_emoji_theme(self, call: InlineCall, theme: str):
         theme = str(theme or _EMOJI_THEME_DEFAULT).strip().lower()
-        if theme not in {
-            _EMOJI_THEME_DEFAULT,
-            _EMOJI_THEME_COLORED,
-            _EMOJI_THEME_CUTE,
-            _EMOJI_THEME_BLACK,
-            _EMOJI_THEME_TROLLFACE,
-        }:
+        if not self._emoji_theme_exists(theme):
             theme = _EMOJI_THEME_DEFAULT
         settings = self._get_ult_settings()
         settings["ui"]["theme"] = theme
@@ -3481,7 +4811,206 @@ class ComfyImageGenMod(loader.Module):
             await call.answer(self.strings("ult_toggle_saved"))
         except Exception:
             pass
+        await self._ult_render_emoji_theme(call, force_edit=True)
+
+    async def _ult_custom_theme_create_input(self, call: InlineCall, query: str, source_inline_message_id=None):
+        themes = self._get_custom_emoji_themes()
+        if len(themes) >= _EMOJI_THEME_MAX_CUSTOM:
+            return await self._safe_call_answer(call, self.strings("ult_theme_limit"), show_alert=True)
+        title = str(query or "").strip()[:40]
+        slug = self._emoji_theme_slug(title)
+        if not title:
+            return await self._safe_call_answer(call, self.strings("ult_theme_bad_name"), show_alert=True)
+        if not slug:
+            slug = f"theme_{uuid.uuid4().hex[:8]}"
+        base_slug = slug
+        suffix = 2
+        while slug in themes:
+            slug = f"{base_slug}_{suffix}"[:32]
+            suffix += 1
+        themes[slug] = {"title": title, "base": _EMOJI_THEME_DEFAULT, "slots": {}}
+        self._set_custom_emoji_themes(themes)
+        settings = self._get_ult_settings()
+        settings["ui"]["theme"] = self._emoji_theme_custom_id(slug)
+        self._set_ult_settings(settings)
+        self._restore_source_inline_message(call, source_inline_message_id)
+        await self._safe_call_answer(call, self.strings("ult_theme_created").format(title))
+        await self._ult_render_emoji_theme(call, force_edit=True)
+
+    async def _ult_custom_theme_delete(self, call: InlineCall, slug: str):
+        themes = self._get_custom_emoji_themes()
+        if slug in themes:
+            themes.pop(slug, None)
+            self._set_custom_emoji_themes(themes)
+        settings = self._get_ult_settings()
+        if settings["ui"]["theme"] == self._emoji_theme_custom_id(slug):
+            settings["ui"]["theme"] = _EMOJI_THEME_DEFAULT
+            self._set_ult_settings(settings)
+        await call.answer(self.strings("ult_theme_deleted"))
         await self._ult_render_emoji_theme(call)
+
+    async def _ult_render_custom_theme_editor(self, target, slug: str, force_edit=False):
+        themes = self._get_custom_emoji_themes()
+        theme = themes.get(slug)
+        if not isinstance(theme, dict):
+            if isinstance(target, InlineCall):
+                await target.answer(self.strings("ult_theme_not_custom"), show_alert=True)
+            return await self._ult_render_emoji_theme(target)
+        title = theme.get("title") or slug
+        slots = theme.get("slots") if isinstance(theme.get("slots"), dict) else {}
+        lines = [
+            self.strings("ult_theme_editor_title").format(utils.escape_html(title)),
+            "",
+            self.strings("ult_theme_editor_hint"),
+            "",
+        ]
+        for slot in _EMOJI_THEME_SLOT_ORDER:
+            old_id, old_char = self._emoji_slot_default(slot)
+            default_html = f'{self._inline_premium_emoji(old_id, old_char)} <code>{old_id}</code>'
+            line = f"{utils.escape_html(self._emoji_slot_label(slot))}: {default_html}"
+            item = slots.get(slot) if isinstance(slots.get(slot), dict) else None
+            if item:
+                custom_char = item.get("char") or old_char
+                line = (
+                    f"{line} -> "
+                    f'{self._inline_premium_emoji(item["id"], custom_char)} <code>{item["id"]}</code>'
+                )
+            lines.append(line)
+        text = "\n".join(lines)
+        source_inline_message_id = getattr(target, "inline_message_id", None)
+        buttons = []
+        for slot in _EMOJI_THEME_SLOT_ORDER:
+            buttons.append(
+                {
+                    "text": ("✅ " if slot in slots else "") + self._emoji_slot_label(slot),
+                    "callback": self._ult_custom_theme_slot_menu,
+                    "args": (slug, slot),
+                    "style": "success" if slot in slots else "primary",
+                }
+            )
+        markup = self._build_button_rows(buttons, columns=2)
+        markup.append(
+            [
+                {
+                    "text": self.strings("ult_theme_rename"),
+                    "input": self.strings("ult_theme_rename_input"),
+                    "handler": self._ult_custom_theme_rename_input,
+                    "args": (slug, source_inline_message_id),
+                }
+            ]
+        )
+        markup.append([{"text": self.strings("btn_back"), "callback": self._ult_open_emoji_theme, "style": "primary"}])
+        if force_edit:
+            await self._edit_inline_status(target, text, markup, apply_theme=False)
+            return
+        await self._render_inline(target, text, markup, apply_theme=False)
+
+    async def _ult_custom_theme_rename_input(self, call: InlineCall, query: str, slug: str, source_inline_message_id=None):
+        title = str(query or "").strip()[:40]
+        if not title:
+            return await self._safe_call_answer(call, self.strings("ult_theme_bad_name"), show_alert=True)
+        themes = self._get_custom_emoji_themes()
+        theme = themes.get(slug)
+        if not isinstance(theme, dict):
+            return await self._safe_call_answer(call, self.strings("ult_theme_not_custom"), show_alert=True)
+        theme["title"] = title
+        self._set_custom_emoji_themes(themes)
+        self._restore_source_inline_message(call, source_inline_message_id)
+        await self._safe_call_answer(call, self.strings("ult_theme_renamed"))
+        await self._ult_render_custom_theme_editor(call, slug, force_edit=True)
+
+    async def _ult_custom_theme_slot_menu(self, target, slug: str, slot: str, force_edit=False):
+        themes = self._get_custom_emoji_themes()
+        theme = themes.get(slug)
+        if not isinstance(theme, dict) or slot not in _EMOJI_THEME_SLOT_SOURCES:
+            if isinstance(target, InlineCall):
+                await target.answer(self.strings("ult_theme_not_custom"), show_alert=True)
+            return await self._ult_render_emoji_theme(target)
+        slots = theme.get("slots") if isinstance(theme.get("slots"), dict) else {}
+        item = slots.get(slot) if isinstance(slots.get(slot), dict) else None
+        old_id, old_char = self._emoji_slot_default(slot)
+        default_line = f'{self._inline_premium_emoji(old_id, old_char)} <code>{old_id}</code>'
+        if item:
+            custom_line = f'{self._inline_premium_emoji(item["id"], item.get("char") or old_char)} <code>{item["id"]}</code>'
+        else:
+            custom_line = self.strings("ult_theme_slot_custom_empty")
+        source_inline_message_id = getattr(target, "inline_message_id", None)
+        text = "\n".join(
+            [
+                self.strings("ult_theme_slot_title").format(utils.escape_html(self._emoji_slot_label(slot))),
+                "",
+                self.strings("ult_theme_slot_default").format(default_line),
+                self.strings("ult_theme_slot_custom").format(custom_line) if item else custom_line,
+            ]
+        )
+        markup = [
+            [
+                {
+                    "text": self.strings("ult_theme_slot_wait"),
+                    "callback": self._ult_custom_theme_wait_slot,
+                    "args": (slug, slot),
+                    "style": "primary",
+                }
+            ],
+            [
+                {
+                    "text": self.strings("ult_theme_slot_input"),
+                    "input": self.strings("ult_theme_slot_input"),
+                    "handler": self._ult_custom_theme_slot_id_input,
+                    "args": (slug, slot, source_inline_message_id),
+                }
+            ],
+            [
+                {
+                    "text": self.strings("ult_theme_slot_reset"),
+                    "callback": self._ult_custom_theme_reset_slot,
+                    "args": (slug, slot),
+                    "style": "danger",
+                }
+            ],
+            [{"text": self.strings("btn_back"), "callback": self._ult_render_custom_theme_editor, "args": (slug,), "style": "primary"}],
+        ]
+        if force_edit:
+            await self._edit_inline_status(target, text, markup, apply_theme=False)
+            return
+        await self._render_inline(target, text, markup, apply_theme=False)
+
+    async def _ult_custom_theme_wait_slot(self, call: InlineCall, slug: str, slot: str):
+        chat_id = self._get_target_chat_id(call)
+        key = f"{chat_id}:{self.tg_id or 0}"
+        self._emoji_theme_pending[key] = {
+            "slug": slug,
+            "slot": slot,
+            "unit_id": getattr(call, "unit_id", None),
+            "inline_message_id": getattr(call, "inline_message_id", None),
+        }
+        await call.answer(self.strings("ult_theme_slot_waiting"), show_alert=True)
+
+    async def _ult_custom_theme_slot_id_input(self, call: InlineCall, query: str, slug: str, slot: str, source_inline_message_id=None):
+        extracted = self._extract_custom_emoji_from_text(query)
+        if not extracted:
+            return await self._safe_call_answer(call, self.strings("ult_theme_no_emoji"), show_alert=True)
+        emoji_id, char = extracted
+        if not char:
+            char = self._emoji_slot_default(slot)[1]
+        if not self._set_custom_theme_slot(slug, slot, emoji_id, char):
+            return await self._safe_call_answer(call, self.strings("ult_theme_not_custom"), show_alert=True)
+        saved_text = self._format_theme_slot_saved_text(slot, emoji_id, char)
+        await self._edit_inline_transfer_message(call, saved_text)
+        self._restore_source_inline_message(call, source_inline_message_id)
+        await self._ult_custom_theme_slot_menu(call, slug, slot, force_edit=True)
+
+    async def _ult_custom_theme_reset_slot(self, call: InlineCall, slug: str, slot: str):
+        themes = self._get_custom_emoji_themes()
+        theme = themes.get(slug)
+        if not isinstance(theme, dict):
+            return await call.answer(self.strings("ult_theme_not_custom"), show_alert=True)
+        slots = theme.get("slots")
+        if isinstance(slots, dict):
+            slots.pop(slot, None)
+        self._set_custom_emoji_themes(themes)
+        await call.answer(self.strings("ult_theme_slot_reset_done"))
+        await self._ult_custom_theme_slot_menu(call, slug, slot)
 
     async def _ult_toggle_telegram_censorship(self, call: InlineCall):
         settings = self._get_ult_settings()
@@ -3492,6 +5021,210 @@ class ComfyImageGenMod(loader.Module):
         except Exception:
             pass
         await self._ult_render_main(call)
+
+    def _format_tunnel_target(self, target):
+        if target.get("bot_pm"):
+            return self.strings("tunnel_target_bot_pm")
+        if target.get("topic_id") is not None:
+            return self.strings("ult_chat_target_topic").format(
+                utils.escape_html(str(target.get("chat_id"))),
+                utils.escape_html(str(target.get("topic_id"))),
+            )
+        return self.strings("ult_chat_target_chat").format(
+            utils.escape_html(str(target.get("chat_id")))
+        )
+
+    async def _ult_render_tunnel_notify(self, target):
+        config = self._get_tunnel_notify_config()
+        enabled = bool(config.get("enabled", True))
+        status = self.strings("ult_status_on") if enabled else self.strings("ult_status_off")
+        targets = self._get_tunnel_notify_targets()
+        lines = [
+            self.strings("tunnel_menu_title"),
+            self.strings("tunnel_notify_status").format(status),
+            "",
+            self.strings("tunnel_menu_desc"),
+            "",
+        ]
+        if targets:
+            lines.append(
+                self.strings("tunnel_targets").format(
+                    "\n".join(self._format_tunnel_target(item) for item in targets)
+                )
+            )
+        else:
+            lines.append(self.strings("tunnel_targets_empty"))
+
+        markup = [
+            [{
+                "text": self._state_toggle_text(enabled),
+                "callback": self._ult_toggle_tunnel_notify,
+                "style": self._state_toggle_style(enabled),
+                "emoji_id": self._state_toggle_emoji(enabled),
+            }],
+            [{
+                "text": self.strings("tunnel_btn_add_chat"),
+                "input": self.strings("tunnel_target_input"),
+                "handler": self._ult_bind_tunnel_target,
+            }],
+        ]
+        if not any(item.get("bot_pm") for item in targets):
+            markup.append([{
+                "text": self.strings("tunnel_btn_add_bot_pm"),
+                "callback": self._ult_add_tunnel_bot_pm,
+                "style": "primary",
+            }])
+        if targets:
+            markup.append(
+                [
+                    {
+                        "text": self.strings("tunnel_btn_remove_target"),
+                        "callback": self._ult_render_tunnel_targets,
+                        "style": "danger",
+                    },
+                    {
+                        "text": self.strings("tunnel_btn_clear_targets"),
+                        "callback": self._ult_clear_tunnel_targets,
+                        "style": "danger",
+                    },
+                ]
+            )
+        markup.append([{
+            "text": self.strings("btn_back"),
+            "callback": self._ult_back_main,
+            "style": "primary",
+        }])
+        await self._render_inline(target, "\n".join(lines), markup)
+
+    async def _ult_render_tunnel_targets(self, target):
+        targets = self._get_tunnel_notify_targets()
+        if not targets:
+            return await self._ult_render_tunnel_notify(target)
+        lines = [self.strings("tunnel_targets").format("")]
+        markup = []
+        for index, notify_target in enumerate(targets):
+            label = self._format_tunnel_target(notify_target)
+            lines.append(f"{index + 1}. {label}")
+            button_label = (
+                self.strings("tunnel_target_bot_pm")
+                if notify_target.get("bot_pm")
+                else str(notify_target.get("chat_id"))
+            )
+            markup.append([{
+                "text": f"{index + 1}. {button_label}",
+                "callback": self._ult_remove_tunnel_target,
+                "args": (index,),
+                "style": "danger",
+            }])
+        markup.append([{
+            "text": self.strings("btn_back"),
+            "callback": self._ult_open_tunnel_notify,
+            "style": "primary",
+        }])
+        await self._render_inline(target, "\n".join(lines), markup)
+
+    async def _ult_toggle_tunnel_notify(self, call: InlineCall):
+        settings = self._get_ult_settings()
+        config = settings["tunnel_notify"]
+        enabling = not bool(config.get("enabled", True))
+        if enabling and not self._get_tunnel_notify_targets():
+            default_target = self._tunnel_bot_pm_target()
+            if default_target:
+                self._add_tunnel_notify_target(config, **default_target)
+        config["enabled"] = enabling
+        self._set_ult_settings(settings)
+        self._restore_tunnel_watch_state()
+        if enabling:
+            self._start_tunnel_watch_task()
+        await self._safe_call_answer(call, self.strings("ult_toggle_saved"))
+        await self._ult_render_tunnel_notify(call)
+
+    async def _ult_add_tunnel_bot_pm(self, call: InlineCall):
+        default_target = self._tunnel_bot_pm_target()
+        if not default_target:
+            return await self._safe_call_answer(
+                call,
+                self._plain_text(self.strings("tunnel_target_bind_failed")).format("user id unavailable"),
+                show_alert=True,
+            )
+        settings = self._get_ult_settings()
+        config = settings["tunnel_notify"]
+        added = self._add_tunnel_notify_target(config, **default_target)
+        config["enabled"] = True
+        self._set_ult_settings(settings)
+        self._start_tunnel_watch_task()
+        await self._safe_call_answer(
+            call,
+            self._plain_text(
+                self.strings("tunnel_target_bound" if added else "tunnel_target_already_bound")
+            ),
+            show_alert=True,
+        )
+        await self._ult_render_tunnel_notify(call)
+
+    async def _ult_bind_tunnel_target(self, call: InlineCall, query: str):
+        try:
+            chat_id, topic_id = await self._resolve_tunnel_notify_target(query)
+        except Exception as e:
+            logger.debug("Tunnel notification target validation failed: %s", e)
+            await self._safe_call_answer(
+                call,
+                self._plain_text(self.strings("tunnel_target_bind_failed")).format(str(e)[:160]),
+                show_alert=True,
+            )
+            return await self._ult_render_tunnel_notify(call)
+        if not chat_id:
+            await self._safe_call_answer(
+                call,
+                self._plain_text(self.strings("tunnel_target_bad")),
+                show_alert=True,
+            )
+            return await self._ult_render_tunnel_notify(call)
+
+        settings = self._get_ult_settings()
+        config = settings["tunnel_notify"]
+        added = self._add_tunnel_notify_target(config, chat_id, topic_id)
+        config["enabled"] = True
+        self._set_ult_settings(settings)
+        self._start_tunnel_watch_task()
+        await self._safe_call_answer(
+            call,
+            self._plain_text(
+                self.strings("tunnel_target_bound" if added else "tunnel_target_already_bound")
+            ),
+            show_alert=True,
+        )
+        await self._ult_render_tunnel_notify(call)
+
+    async def _ult_remove_tunnel_target(self, call: InlineCall, index: int):
+        settings = self._get_ult_settings()
+        config = settings["tunnel_notify"]
+        targets = self._get_tunnel_notify_targets()
+        if 0 <= index < len(targets):
+            targets.pop(index)
+            config["targets"] = targets
+            if not targets:
+                config["enabled"] = False
+            self._set_ult_settings(settings)
+            await self._safe_call_answer(
+                call,
+                self._plain_text(self.strings("tunnel_target_removed")),
+                show_alert=True,
+            )
+        await self._ult_render_tunnel_targets(call)
+
+    async def _ult_clear_tunnel_targets(self, call: InlineCall):
+        settings = self._get_ult_settings()
+        config = settings["tunnel_notify"]
+        config["targets"] = []
+        config["enabled"] = False
+        self._set_ult_settings(settings)
+        await self._safe_call_answer(
+            call,
+            self._plain_text(self.strings("tunnel_targets_cleared")),
+            show_alert=True,
+        )
+        await self._ult_render_tunnel_notify(call)
 
     async def _ult_render_generation_time(self, target):
         time_settings = self._get_generation_time_config()
@@ -4230,6 +5963,8 @@ class ComfyImageGenMod(loader.Module):
             await self._ult_render_gens_chat(call)
 
     def _base_url(self):
+        if self._is_comfy_cloud():
+            return f"{_COMFY_CLOUD_BASE_URL}/api"
         url = str(self.config["comfyui_url"] or "").strip().rstrip("/")
         if not url:
             return None
@@ -4245,6 +5980,528 @@ class ComfyImageGenMod(loader.Module):
         logger.debug("ComfyUI URL format invalid: %s", url)
         return None
 
+    def _local_base_url(self):
+        url = str(self.config["comfyui_url"] or "").strip().rstrip("/")
+        if not url:
+            return None
+        try:
+            parsed = urlparse(url)
+            hostname = parsed.hostname
+            _ = parsed.port
+        except ValueError:
+            return None
+        if parsed.scheme in ("http", "https") and hostname:
+            return url
+        return None
+
+    def _comfy_backend(self):
+        backend = str(self.config["comfyui_backend"] or _COMFY_BACKEND_LOCAL).strip().lower()
+        if backend not in (_COMFY_BACKEND_LOCAL, _COMFY_BACKEND_CLOUD):
+            backend = _COMFY_BACKEND_LOCAL
+        return backend
+
+    def _is_comfy_cloud(self):
+        return self._comfy_backend() == _COMFY_BACKEND_CLOUD
+
+    def _comfy_root_url(self):
+        if self._is_comfy_cloud():
+            return _COMFY_CLOUD_BASE_URL
+        return self._local_base_url()
+
+    def _get_cloud_api_keys(self):
+        raw = str(self.config["comfyui_cloud_api_key"] or "")
+        keys = []
+        seen = set()
+        for key in raw.split(","):
+            key = key.strip()
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+        return keys
+
+    def _set_cloud_api_keys(self, value):
+        keys = []
+        seen = set()
+        for key in str(value or "").split(","):
+            key = key.strip()
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+        self.config["comfyui_cloud_api_key"] = ", ".join(keys)
+        self._cloud_balance_cache.clear()
+
+    def _cloud_headers(self, api_key=None):
+        key = api_key or self._cloud_api_key_or_raise()
+        return {"X-API-Key": key}
+
+    def _cloud_api_key_or_raise(self):
+        keys = self._get_cloud_api_keys()
+        if not keys:
+            raise UserFacingError("cloud_no_key", self._plain_text(self.strings("cloud_no_key")))
+        active_key = self._active_cloud_api_key.get()
+        if active_key:
+            return active_key
+        return keys[0]
+
+    async def _select_cloud_api_key(self, set_active=True):
+        keys = self._get_cloud_api_keys()
+        if not keys:
+            raise UserFacingError("cloud_no_key", self._plain_text(self.strings("cloud_no_key")))
+        last_error = None
+        for api_key in keys:
+            try:
+                async with self._session_get(
+                    f"{_COMFY_CLOUD_BASE_URL}/api/object_info",
+                    headers={"X-API-Key": api_key},
+                    timeout=aiohttp.ClientTimeout(total=20),
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status == 200:
+                        if set_active:
+                            self._active_cloud_api_key.set(api_key)
+                        return api_key
+                    last_error = (resp.status, text)
+                    if self._cloud_http_error_key(resp.status, text):
+                        continue
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+                last_error = e
+                continue
+        if isinstance(last_error, tuple):
+            self._raise_cloud_http_error(last_error[0], last_error[1])
+        raise UserFacingError("cloud_unavailable", self._plain_text(self.strings("cloud_unavailable")))
+
+    def _comfy_headers(self, api_key=None):
+        if not self._is_comfy_cloud():
+            return {}
+        return self._cloud_headers(api_key)
+
+    def _comfy_ws_url(self, client_id, api_key=None):
+        root = self._comfy_root_url()
+        if not root:
+            return None
+        ws_url = root.replace("http://", "ws://", 1).replace("https://", "wss://", 1)
+        if self._is_comfy_cloud():
+            key = api_key or self._cloud_api_key_or_raise()
+            return f"{ws_url}/ws?clientId={client_id}&token={quote(key, safe='')}"
+        return f"{ws_url}/ws?clientId={client_id}"
+
+    @staticmethod
+    def _cloud_http_error_key(status, body=""):
+        body_l = str(body or "").lower()
+        if status in (401, 403) or any(marker in body_l for marker in ("invalid api key", "unauthorized", "forbidden")):
+            return "cloud_bad_key"
+        if status == 402 or any(marker in body_l for marker in ("insufficient credits", "insufficient funds", "balance", "credits")):
+            return "cloud_no_balance"
+        if status == 429 or any(marker in body_l for marker in ("rate limit", "subscription inactive", "quota")):
+            return "cloud_rate_limit"
+        if status in (408, 425, 500, 502, 503, 504):
+            return "cloud_unavailable"
+        return None
+
+    def _raise_cloud_http_error(self, status, body=""):
+        key = self._cloud_http_error_key(status, body)
+        if key:
+            raise UserFacingError(key, self._plain_text(self.strings(key)))
+        raise ComfyUIHTTPError(status, str(body or ""))
+
+    def _format_cloud_missing_nodes(self, missing_nodes):
+        items = sorted(str(node) for node in (missing_nodes or []) if node)
+        detail = "\n".join(f"- <code>{utils.escape_html(node)}</code>" for node in items[:80])
+        if len(items) > 80:
+            detail += f"\n... +{len(items) - 80}"
+        return detail or "-"
+
+    def _format_comfy_backend_name(self, backend=None):
+        backend = backend or self._comfy_backend()
+        if backend == _COMFY_BACKEND_CLOUD:
+            return self.strings("mode_cloud")
+        return self.strings("mode_local")
+
+    @staticmethod
+    def _find_balance_value(data):
+        if not isinstance(data, dict):
+            return None
+        for key in ("balance", "credits", "credit", "available_credits", "remaining_credits"):
+            value = data.get(key)
+            if value is not None:
+                return value
+        for value in data.values():
+            if isinstance(value, dict):
+                found = ComfyImageGenMod._find_balance_value(value)
+                if found is not None:
+                    return found
+        return None
+
+    def _format_balance_value(self, value):
+        if value is None:
+            return self.strings("mode_balance_unavailable")
+        if isinstance(value, (int, float)):
+            return f"{value:g}"
+        return str(value)
+
+    async def _get_cloud_balance(self, force=False):
+        keys = self._get_cloud_api_keys()
+        if not keys:
+            return None, "no_key"
+        cache_key = keys[0]
+        if not force and cache_key in self._cloud_balance_cache:
+            return self._cloud_balance_cache[cache_key], None
+        last_error = None
+        for api_key in keys:
+            try:
+                async with self._session_get(
+                    f"{_COMFY_CLOUD_BASE_URL}/api/user",
+                    headers={"X-API-Key": api_key},
+                    timeout=aiohttp.ClientTimeout(total=15),
+                ) as resp:
+                    text = await resp.text()
+                    if resp.status != 200:
+                        last_error = (resp.status, text)
+                        if self._cloud_http_error_key(resp.status, text):
+                            continue
+                        continue
+                    try:
+                        data = json.loads(text)
+                    except json.JSONDecodeError:
+                        return None, "unavailable"
+                    balance = self._find_balance_value(data)
+                    if balance is None:
+                        return None, "unavailable"
+                    formatted = self._format_balance_value(balance)
+                    self._cloud_balance_cache[api_key] = formatted
+                    return formatted, None
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+                last_error = e
+                continue
+        if isinstance(last_error, tuple):
+            key = self._cloud_http_error_key(last_error[0], last_error[1])
+            if key == "cloud_bad_key":
+                return None, "bad_key"
+            if key == "cloud_no_balance":
+                return None, "no_balance"
+        return None, "unavailable"
+
+    async def _format_cloud_balance_for_ui(self, force=False):
+        if not self._get_cloud_api_keys():
+            return self.strings("mode_balance_no_key")
+        balance, error = await self._get_cloud_balance(force=force)
+        if balance is not None:
+            return str(balance)
+        if error == "no_key":
+            return self.strings("mode_balance_no_key")
+        return self.strings("mode_balance_unavailable")
+
+    @staticmethod
+    def _cdown_type_info(type_id):
+        return _CDOWN_TYPES.get(type_id) or _CDOWN_TYPES[_CDOWN_TYPE_CHECKPOINT]
+
+    def _cdown_type_label(self, type_id):
+        return self.strings(self._cdown_type_info(type_id)["label_key"])
+
+    @staticmethod
+    def _cdown_url_allowed(url):
+        try:
+            parsed = urlparse(str(url or "").strip())
+        except Exception:
+            return False
+        host = (parsed.hostname or "").lower()
+        return parsed.scheme in ("http", "https") and (
+            host == "huggingface.co"
+            or host.endswith(".huggingface.co")
+            or host == "civitai.com"
+            or host.endswith(".civitai.com")
+            or host == "civitai.red"
+            or host.endswith(".civitai.red")
+        )
+
+    @staticmethod
+    def _cdown_civitai_com_url(url):
+        try:
+            parsed = urlparse(str(url or "").strip())
+        except Exception:
+            return None
+        host = (parsed.hostname or "").lower()
+        if not (host == "civitai.red" or host.endswith(".civitai.red")):
+            return None
+        replacement_host = host[: -len("civitai.red")] + "civitai.com"
+        netloc = replacement_host
+        if parsed.port:
+            netloc = f"{netloc}:{parsed.port}"
+        return parsed._replace(netloc=netloc).geturl()
+
+    def _cdown_url_candidates(self, url):
+        primary = str(url or "").strip()
+        candidates = [primary] if primary else []
+        fallback = self._cdown_civitai_com_url(primary)
+        if fallback and fallback not in candidates:
+            candidates.append(fallback)
+        return candidates
+
+    @staticmethod
+    def _cdown_preview_url(url, limit=90):
+        url = " ".join(str(url or "").strip().split())
+        return url[: limit - 3] + "..." if len(url) > limit else url
+
+    @staticmethod
+    def _cdown_format_size(value):
+        try:
+            size = int(value)
+        except (TypeError, ValueError):
+            return "-"
+        if size < 0:
+            return "-"
+        units = ("B", "KB", "MB", "GB", "TB")
+        current = float(size)
+        unit = units[0]
+        for unit in units:
+            if current < 1024 or unit == units[-1]:
+                break
+            current /= 1024
+        if unit == "B":
+            return f"{int(current)} {unit}"
+        return f"{current:.2f}".rstrip("0").rstrip(".") + f" {unit}"
+
+    def _cdown_validation_error(self, metadata):
+        validation = metadata.get("validation") if isinstance(metadata, dict) else None
+        if not isinstance(validation, dict):
+            return None
+        if validation.get("is_valid", True):
+            return None
+        messages = []
+        for item in validation.get("errors") or []:
+            if isinstance(item, dict):
+                message = item.get("message") or item.get("code")
+            else:
+                message = str(item)
+            if message:
+                messages.append(str(message))
+        return "; ".join(messages[:3]) or "invalid"
+
+    async def _cdown_remote_metadata(self, url, api_key=None):
+        async with self._session_get(
+            f"{_COMFY_CLOUD_BASE_URL}/api/assets/remote-metadata",
+            params={"url": url},
+            headers=self._cloud_headers(api_key),
+            timeout=aiohttp.ClientTimeout(total=30),
+        ) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                raise ComfyUIHTTPError(resp.status, text)
+            try:
+                return json.loads(text)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"non-JSON response: {text[:300]}") from e
+
+    async def _cdown_model_folders(self, api_key=None):
+        async with self._session_get(
+            f"{_COMFY_CLOUD_BASE_URL}/api/experiment/models",
+            headers=self._cloud_headers(api_key),
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                raise ComfyUIHTTPError(resp.status, text)
+            try:
+                data = json.loads(text)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"non-JSON response: {text[:300]}") from e
+        return data if isinstance(data, list) else []
+
+    async def _cdown_resolve_folder(self, type_id, api_key=None):
+        aliases = {
+            alias.lower()
+            for alias in self._cdown_type_info(type_id)["folder_aliases"]
+        }
+        try:
+            folders = await self._cdown_model_folders(api_key)
+        except Exception as e:
+            logger.debug("Cloud model folders lookup failed: %s", e)
+            return None
+        candidates = []
+        for item in folders:
+            if not isinstance(item, dict):
+                continue
+            name = str(item.get("name") or "").lower()
+            paths = [str(path).lower() for path in item.get("folders") or []]
+            candidates.append((item, name, paths))
+            if name in aliases:
+                return item.get("name")
+            for path in paths:
+                if path in aliases:
+                    return path
+        for item, name, paths in candidates:
+            if any(name.startswith(f"{alias}/") for alias in aliases):
+                return item.get("name")
+            for path in paths:
+                if any(path.startswith(f"{alias}/") for alias in aliases):
+                    return path
+        return None
+
+    async def _cdown_download_asset(self, state, api_key=None):
+        type_id = state.get("type") or _CDOWN_TYPE_CHECKPOINT
+        info = self._cdown_type_info(type_id)
+        metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+        last_error = None
+        for source_url in self._cdown_url_candidates(state.get("url")):
+            payload = {
+                "source_url": source_url,
+                "tags": list(info["tags"]),
+                "user_metadata": {
+                    "source": "ComfyImageGen",
+                    "type": type_id,
+                    "folder": state.get("folder") or "",
+                    "filename": metadata.get("filename") or "",
+                },
+            }
+            try:
+                async with self._session_post(
+                    f"{_COMFY_CLOUD_BASE_URL}/api/assets/download",
+                    json=payload,
+                    headers=self._cloud_headers(api_key),
+                    timeout=aiohttp.ClientTimeout(total=30),
+                ) as resp:
+                    text = await resp.text()
+                    try:
+                        data = json.loads(text) if text else {}
+                    except json.JSONDecodeError:
+                        data = {"raw": text}
+                    if resp.status in (200, 202):
+                        state["url"] = source_url
+                        return resp.status, data
+                    last_error = ComfyUIHTTPError(resp.status, text)
+            except (aiohttp.ClientError, asyncio.TimeoutError, OSError, ComfyUIHTTPError) as e:
+                last_error = e
+        if last_error:
+            raise last_error
+        raise ValueError("No download URL")
+
+    @staticmethod
+    def _cdown_expected_asset_names(state):
+        metadata = state.get("metadata") if isinstance(state.get("metadata"), dict) else {}
+        names = []
+        for value in (
+            metadata.get("filename"),
+            metadata.get("name"),
+            os.path.basename(urlparse(str(state.get("url") or "")).path),
+        ):
+            value = str(value or "").strip()
+            if value and value not in names:
+                names.append(value)
+        return names
+
+    def _cdown_asset_matches(self, asset, expected_names):
+        if not isinstance(asset, dict):
+            return False
+        names = {name.lower() for name in expected_names if name}
+        metadata = asset.get("user_metadata") if isinstance(asset.get("user_metadata"), dict) else {}
+        candidates = [
+            asset.get("name"),
+            metadata.get("filename"),
+        ]
+        for candidate in candidates:
+            candidate = str(candidate or "").strip().lower()
+            if candidate and candidate in names:
+                return True
+        return False
+
+    async def _cdown_find_downloaded_asset(self, state, api_key=None):
+        expected_names = self._cdown_expected_asset_names(state)
+        if not expected_names:
+            return None
+        params = [
+            ("include_tags", "models"),
+            ("include_public", "false"),
+            ("name_contains", expected_names[0]),
+            ("limit", "50"),
+            ("offset", "0"),
+            ("sort", "updated_at"),
+            ("order", "desc"),
+        ]
+        async with self._session_get(
+            f"{_COMFY_CLOUD_BASE_URL}/api/assets",
+            params=params,
+            headers=self._cloud_headers(api_key),
+            timeout=aiohttp.ClientTimeout(total=20),
+        ) as resp:
+            text = await resp.text()
+            if resp.status != 200:
+                logger.debug("Cloud asset readiness check failed (HTTP %s): %s", resp.status, text[:300])
+                return None
+            try:
+                data = json.loads(text) if text else {}
+            except json.JSONDecodeError:
+                logger.debug("Cloud asset readiness check returned non-JSON: %s", text[:300])
+                return None
+        assets = data.get("assets") if isinstance(data, dict) else []
+        if not isinstance(assets, list):
+            return None
+        for asset in assets:
+            if self._cdown_asset_matches(asset, expected_names):
+                return asset
+        return None
+
+    def _cdown_cancel_watch(self, state_id):
+        task = self._cdown_watch_tasks.pop(state_id, None)
+        if task and not task.done():
+            task.cancel()
+
+    def _cdown_start_watch(self, target, state_id, api_key=None):
+        self._cdown_cancel_watch(state_id)
+        self._cdown_watch_tasks[state_id] = asyncio.create_task(
+            self._cdown_watch_download(target, state_id, api_key)
+        )
+
+    async def _cdown_watch_download(self, target, state_id, api_key=None):
+        try:
+            for attempt in range(90):
+                await asyncio.sleep(5 if attempt == 0 else 10)
+                if self._unloading:
+                    return
+                state = self._cdown_states.get(state_id)
+                if not isinstance(state, dict):
+                    return
+                result = state.get("result") if isinstance(state.get("result"), dict) else {}
+                if result.get("status") == 200:
+                    return
+                asset = await self._cdown_find_downloaded_asset(state, api_key)
+                if not asset:
+                    continue
+                state["result"] = {"status": 200, "data": asset}
+                self._comfy_cache.clear()
+                await self._cdown_render(target, state_id)
+                return
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            logger.debug("Cloud download watch failed: %s", e)
+        finally:
+            current = self._cdown_watch_tasks.get(state_id)
+            if current is asyncio.current_task():
+                self._cdown_watch_tasks.pop(state_id, None)
+
+    async def _raise_if_cloud_workflow_unsupported(self, workflow):
+        if not self._is_comfy_cloud():
+            return
+        object_info = await self._get_all_object_info()
+        if not isinstance(object_info, dict):
+            return
+        available = set(object_info.keys())
+        missing = []
+        for node in (workflow or {}).values():
+            if not isinstance(node, dict):
+                continue
+            class_type = node.get("class_type")
+            if class_type and class_type not in available:
+                missing.append(class_type)
+        missing = list(dict.fromkeys(missing))
+        if missing:
+            detail = self._format_cloud_missing_nodes(missing)
+            raise UserFacingError(
+                "cloud_workflow_unsupported",
+                self._plain_text(self.strings("cloud_workflow_unsupported")).format(detail),
+                detail=detail,
+            )
+
     @staticmethod
     def _normalize_probe_url(url):
         url = str(url or "").strip().rstrip("/")
@@ -4255,11 +6512,26 @@ class ComfyImageGenMod(loader.Module):
         except ValueError as e:
             raise ValueError(url) from e
         if parsed.scheme in ("http", "https") and hostname:
+            if parsed.netloc == urlparse(_COMFY_CLOUD_BASE_URL).netloc:
+                return f"{_COMFY_CLOUD_BASE_URL}/api"
             return url
         raise ValueError(url)
 
     @staticmethod
-    def _ct_ws_url(base_url, client_id):
+    def _ct_is_cloud_base(base_url):
+        parsed = urlparse(str(base_url or ""))
+        return parsed.netloc == urlparse(_COMFY_CLOUD_BASE_URL).netloc
+
+    def _ct_headers(self, base_url, api_key=None):
+        if self._ct_is_cloud_base(base_url):
+            return {"X-API-Key": api_key or self._cloud_api_key_or_raise()}
+        return None
+
+    def _ct_ws_url(self, base_url, client_id, api_key=None):
+        if self._ct_is_cloud_base(base_url):
+            ws_root = _COMFY_CLOUD_BASE_URL.replace("https://", "wss://", 1).replace("http://", "ws://", 1)
+            key = api_key or self._cloud_api_key_or_raise()
+            return f"{ws_root}/ws?clientId={client_id}&token={quote(key, safe='')}"
         return (
             base_url.replace("http://", "ws://", 1)
             .replace("https://", "wss://", 1)
@@ -4360,6 +6632,7 @@ class ComfyImageGenMod(loader.Module):
     async def _ct_get_text(self, url, timeout=15):
         async with self._session_get(
             url,
+            headers=self._ct_headers(url),
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             text = await resp.text()
@@ -4368,6 +6641,7 @@ class ComfyImageGenMod(loader.Module):
     async def _ct_get_json(self, url, timeout=15):
         async with self._session_get(
             url,
+            headers=self._ct_headers(url),
             timeout=aiohttp.ClientTimeout(total=timeout),
         ) as resp:
             text = await resp.text()
@@ -4384,13 +6658,22 @@ class ComfyImageGenMod(loader.Module):
         object_info = None
         ok_all = True
 
-        for path, label in (
+        checks = [
             ("/system_stats", "system_stats"),
             ("/features", "features"),
-            ("/object_info/EmptyImage", "object_info EmptyImage"),
-            ("/object_info/SaveImage", "object_info SaveImage"),
-            ("/queue", "queue"),
-        ):
+        ]
+        if self._ct_is_cloud_base(base_url):
+            checks.append(("/object_info", "object_info"))
+        else:
+            checks.extend(
+                [
+                    ("/object_info/EmptyImage", "object_info EmptyImage"),
+                    ("/object_info/SaveImage", "object_info SaveImage"),
+                ]
+            )
+        checks.append(("/queue", "queue"))
+
+        for path, label in checks:
             try:
                 status, content_type, text = await self._ct_get_text(base_url + path)
                 ok = status == 200
@@ -4402,11 +6685,24 @@ class ComfyImageGenMod(loader.Module):
                         utils.escape_html(content_type.split(";")[0] or "-"),
                     )
                 lines.append(self._ct_line(ok, label, detail))
-                if path.startswith("/object_info/") and status == 200:
+                if path.startswith("/object_info") and status == 200:
                     try:
                         data = json.loads(text)
-                        object_info = object_info or {}
-                        object_info.update(data)
+                        if path == "/object_info":
+                            object_info = data if isinstance(data, dict) else {}
+                            for class_type in ("EmptyImage", "SaveImage"):
+                                has_class = class_type in object_info
+                                ok_all = ok_all and has_class
+                                lines.append(
+                                    self._ct_line(
+                                        has_class,
+                                        f"object_info {class_type}",
+                                        None if has_class else self._ct_error_detail("missing"),
+                                    )
+                                )
+                        else:
+                            object_info = object_info or {}
+                            object_info.update(data)
                     except json.JSONDecodeError:
                         ok_all = False
                         lines.append(
@@ -4440,9 +6736,14 @@ class ComfyImageGenMod(loader.Module):
             return False, str(e)
 
     async def _ct_queue_prompt(self, base_url, workflow, client_id):
+        api_key = self._cloud_api_key_or_raise() if self._ct_is_cloud_base(base_url) else None
+        payload = {"prompt": workflow, "client_id": client_id}
+        if api_key:
+            payload["extra_data"] = {"api_key_comfy_org": api_key}
         async with self._session_post(
             f"{base_url}/prompt",
-            json={"prompt": workflow, "client_id": client_id},
+            json=payload,
+            headers=self._ct_headers(base_url, api_key),
             timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["queue_prompt"]),
         ) as resp:
             text = await resp.text()
@@ -4455,6 +6756,9 @@ class ComfyImageGenMod(loader.Module):
             return str(prompt_id)
 
     async def _ct_history_once(self, base_url, prompt_id):
+        if self._ct_is_cloud_base(base_url):
+            data = await self._ct_get_json(f"{base_url}/jobs/{prompt_id}")
+            return self._cloud_job_to_history(prompt_id, data)
         data = await self._ct_get_json(f"{base_url}/history/{prompt_id}")
         return data.get(prompt_id) if isinstance(data, dict) else None
 
@@ -4523,8 +6827,19 @@ class ComfyImageGenMod(loader.Module):
         async with self._session_get(
             f"{base_url}/view",
             params=params,
+            headers=self._ct_headers(base_url),
+            allow_redirects=not self._ct_is_cloud_base(base_url),
             timeout=self._retrieve_media_timeout(),
         ) as resp:
+            if self._ct_is_cloud_base(base_url) and resp.status in (301, 302, 303, 307, 308):
+                signed_url = resp.headers.get("Location")
+                if not signed_url:
+                    raise ComfyUIHTTPError(resp.status, "Cloud view redirect has no Location")
+                async with self._session_get(signed_url, timeout=self._retrieve_media_timeout()) as signed_resp:
+                    data = await signed_resp.read()
+                    if signed_resp.status != 200:
+                        raise ComfyUIHTTPError(signed_resp.status, repr(data[:500]))
+                    return data
             data = await resp.read()
             if resp.status != 200:
                 raise ComfyUIHTTPError(resp.status, repr(data[:500]))
@@ -4702,15 +7017,13 @@ class ComfyImageGenMod(loader.Module):
     def _emoji_theme_name(self) -> str:
         settings = self._get_ult_settings()
         theme = str(settings.get("ui", {}).get("theme") or _EMOJI_THEME_DEFAULT).strip().lower()
-        if theme not in _EMOJI_THEME_REPLACEMENTS:
+        if not self._emoji_theme_exists(theme):
             return _EMOJI_THEME_DEFAULT
         return theme
 
     def _apply_emoji_theme(self, text: str) -> str:
         theme = self._emoji_theme_name()
-        replacements = _EMOJI_THEME_REPLACEMENTS.get(theme)
-        id_fallbacks = _EMOJI_THEME_ID_FALLBACKS.get(theme, {})
-        error_id_fallbacks = _EMOJI_THEME_ERROR_ID_FALLBACKS.get(theme, {})
+        replacements, id_fallbacks, error_id_fallbacks = self._emoji_theme_maps(theme)
         if not replacements and not id_fallbacks and not error_id_fallbacks:
             return text
 
@@ -4895,14 +7208,32 @@ class ComfyImageGenMod(loader.Module):
         if error_type == "missing_node_type":
             node_title = extra_info.get("node_title", "")
             node_type = extra_info.get("node_type", node_title)
+            if self._is_comfy_cloud():
+                detail = self._format_cloud_missing_nodes([node_title or node_type or "Unknown"])
+                return "cloud_workflow_unsupported", {"detail": detail}
             return "node_missing", {"node": node_title or node_type or "Unknown"}
 
         error_msg_lower = error_message.lower()
+        if self._is_comfy_cloud() and any(
+            marker in error_msg_lower
+            for marker in (
+                "missing node",
+                "node does not exist",
+                "unknown node",
+                "not installed",
+                "node type",
+            )
+        ):
+            node = extra_info.get("node_title") or extra_info.get("node_type") or extra_info.get("node_id") or error_message
+            detail = self._format_cloud_missing_nodes([node])
+            return "cloud_workflow_unsupported", {"detail": detail}
 
         if "out of memory" in error_msg_lower or "cuda" in error_msg_lower or "vram" in error_msg_lower:
             return "vram", {}
 
         if ("checkpoint" in error_msg_lower or "model" in error_msg_lower) and "not found" in error_msg_lower:
+            if self._is_comfy_cloud():
+                return "cloud_model_not_found", {}
             model_name = extra_info.get("model_name", "")
             return "model_not_found", {"model": model_name}
 
@@ -4927,8 +7258,7 @@ class ComfyImageGenMod(loader.Module):
             return [str(item) for item in input_config[0] if item is not None]
         return []
 
-    @classmethod
-    def _classify_comfyui_validation_error(cls, error_json):
+    def _classify_comfyui_validation_error(self, error_json):
         node_errors = error_json.get("node_errors", {})
         if not isinstance(node_errors, dict):
             return None
@@ -4967,7 +7297,9 @@ class ComfyImageGenMod(loader.Module):
                     details = str(item.get("details") or "")
                     match = re.search(r":\s*'([^']+)'", details)
                     received = match.group(1) if match else "unknown"
-                available = cls._extract_comfyui_allowed_values(extra.get("input_config"))
+                if self._is_comfy_cloud():
+                    return "cloud_model_not_found", {}
+                available = self._extract_comfyui_allowed_values(extra.get("input_config"))
                 return (
                     "model_value_not_in_list",
                     {
@@ -5031,6 +7363,7 @@ class ComfyImageGenMod(loader.Module):
             "node_missing": "err_node_missing",
             "model_not_found": "err_model_not_found",
             "model_value_not_in_list": "err_model_value_not_in_list",
+            "cloud_model_not_found": "cloud_model_not_found",
             "vram": "err_vram",
             "image_invalid": "err_image_invalid",
             "img2img_unsupported": "err_img2img_unsupported",
@@ -5051,6 +7384,13 @@ class ComfyImageGenMod(loader.Module):
             "civitai_error": "civitai_error",
             "civitai_no_prompt": "civitai_no_prompt",
             "archive_access_lost": "ult_chat_access_lost",
+            "cloud_no_key": "cloud_no_key",
+            "cloud_bad_key": "cloud_bad_key",
+            "cloud_no_balance": "cloud_no_balance",
+            "cloud_rate_limit": "cloud_rate_limit",
+            "cloud_unavailable": "cloud_unavailable",
+            "cloud_workflow_unsupported": "cloud_workflow_unsupported",
+            "cloud_media_unsupported": "cloud_media_unsupported",
             "generic": "err_generic",
         }
 
@@ -5077,6 +7417,8 @@ class ComfyImageGenMod(loader.Module):
             text = text.format("unknown")
         elif error_type == "workflow_invalid_details":
             text = text.format(details.get("details") or self.strings("err_workflow_invalid"))
+        elif error_type == "cloud_workflow_unsupported":
+            text = text.format(details.get("detail") or "-")
         elif error_type == "node_missing":
             text = text.format("Unknown")
         elif error_type == "execution" and details.get("message"):
@@ -5105,32 +7447,182 @@ class ComfyImageGenMod(loader.Module):
 
     async def _safe_answer(self, message, text):
         text = self._apply_emoji_theme(text)
-        try:
-            return await utils.answer(message, text)
-        except Exception as e:
-            if "MessageIdInvalid" in type(e).__name__ or "MessageNotModified" in type(e).__name__:
-                try:
-                    return await self.client.send_message(
-                        message.chat_id, text, reply_to=message.id
-                    )
-                except Exception:
-                    pass
-            else:
-                logger.debug("Failed to answer message: %s", e)
+        candidates = [text]
+        candidates.extend(self._text_retry_candidates(text))
+        last_error = None
+        for candidate in candidates:
+            try:
+                return await self._answer_text_once(message, candidate)
+            except Exception as e:
+                last_error = e
+                if "MessageIdInvalid" in type(e).__name__ or "MessageNotModified" in type(e).__name__:
+                    try:
+                        return await self.client.send_message(
+                            message.chat_id, candidate, reply_to=message.id
+                        )
+                    except Exception as send_error:
+                        last_error = send_error
+                        if not self._is_inline_too_long_error(send_error):
+                            break
+                elif self._is_inline_too_long_error(e):
+                    logger.debug("Answer text is too long, retrying with shorter text: %s", e)
+                    continue
+                else:
+                    logger.debug("Failed to answer message: %s", e)
+                    break
+        if last_error:
+            logger.debug("Failed to answer message after shortening: %s", last_error)
 
-    @staticmethod
-    def _message_sent_as_channel(message):
+    async def _answer_text_once(self, message, text):
+        if (
+            self._self_has_premium
+            and _TG_TEXT_LIMIT_DEFAULT <= self._parsed_html_text_len(text) <= _TG_TEXT_LIMIT_PREMIUM
+        ):
+            try:
+                parsed_text, entities = self.client.parse_mode.parse(text)
+                edit = getattr(message, "out", False) and not getattr(message, "via_bot_id", None) and not getattr(message, "fwd_from", None)
+                if edit:
+                    return await message.edit(
+                        parsed_text,
+                        parse_mode=lambda t: (t, entities),
+                    )
+                return await message.respond(
+                    parsed_text,
+                    parse_mode=lambda t: (t, entities),
+                    reply_to=getattr(message, "reply_to_msg_id", None),
+                )
+            except Exception as e:
+                if self._is_inline_too_long_error(e):
+                    raise
+                logger.debug("Direct premium answer failed, falling back to utils.answer: %s", e)
+        return await utils.answer(message, text)
+
+    async def _send_plain_reply_to_command(self, message, text):
+        text = self._apply_emoji_theme(text)
+        candidates = [text]
+        candidates.extend(self._text_retry_candidates(text))
+        last_error = None
+        for candidate in candidates:
+            try:
+                return await self.client.send_message(
+                    utils.get_chat_id(message),
+                    candidate,
+                    reply_to=getattr(message, "id", None),
+                )
+            except Exception as e:
+                last_error = e
+                if self._is_inline_too_long_error(e):
+                    logger.debug("Plain command reply is too long, retrying with shorter text: %s", e)
+                    continue
+                logger.debug("Failed to send plain command reply: %s", e)
+                break
+        if last_error:
+            logger.debug("Failed to send plain command reply after shortening: %s", last_error)
+        return await self._safe_answer(message, text)
+
+    async def _message_sent_as_channel(self, message):
         from_id = getattr(message, "from_id", None)
         if isinstance(from_id, PeerChannel) or type(from_id).__name__ == "PeerChannel":
+            peer_id = getattr(message, "peer_id", None)
+            if (
+                self._peer_is_channel_like(peer_id)
+                and self._peer_id_value(from_id) == self._peer_id_value(peer_id)
+            ):
+                return False
             return True
-        sender = getattr(message, "sender", None)
+        try:
+            sender = await message.get_sender()
+        except Exception:
+            sender = getattr(message, "sender", None)
+        if not getattr(sender, "broadcast", False):
+            return False
+        peer_id = getattr(message, "peer_id", None)
+        sender_id = getattr(sender, "id", None)
+        if self._peer_is_channel_like(peer_id) and sender_id == self._peer_id_value(peer_id):
+            return False
+        return True
+
+    async def _chat_is_linked_discussion(self, message):
+        try:
+            chat = await message.get_chat()
+        except Exception:
+            try:
+                chat = await self.client.get_entity(utils.get_chat_id(message))
+            except Exception:
+                chat = None
+        if not chat or getattr(chat, "broadcast", False):
+            return False
+        if not getattr(chat, "megagroup", False):
+            return False
+        if getattr(chat, "linked_chat_id", None) or getattr(chat, "linked_monoforum_id", None):
+            return True
+        try:
+            full = await self.client(GetFullChannelRequest(chat))
+            full_chat = getattr(full, "full_chat", None)
+            return bool(
+                getattr(full_chat, "linked_chat_id", None)
+                or getattr(full_chat, "linked_monoforum_id", None)
+            )
+        except Exception as e:
+            logger.debug("Failed to detect linked discussion chat: %s", e)
+            return False
+
+    async def _message_looks_like_channel_post(self, message):
+        if not message:
+            return False
+        if getattr(message, "post", False):
+            return True
+        fwd_from = getattr(message, "fwd_from", None)
+        if fwd_from and self._peer_is_channel_like(getattr(fwd_from, "from_id", None)):
+            return True
+        from_id = getattr(message, "from_id", None)
+        peer_id = getattr(message, "peer_id", None)
+        if self._peer_is_channel_like(from_id) and (
+            not peer_id or self._peer_id_value(from_id) != self._peer_id_value(peer_id)
+        ):
+            return True
+        try:
+            sender = await message.get_sender()
+        except Exception:
+            sender = getattr(message, "sender", None)
         return bool(getattr(sender, "broadcast", False))
+
+    async def _is_channel_discussion_comment(self, message):
+        reply_to = getattr(message, "reply_to", None)
+        reply_to_peer = getattr(reply_to, "reply_to_peer_id", None)
+        if reply_to_peer:
+            message_peer = getattr(message, "peer_id", None)
+            reply_peer_id = self._peer_id_value(reply_to_peer)
+            message_peer_id = self._peer_id_value(message_peer)
+            if reply_peer_id is not None and (
+                message_peer_id is None or reply_peer_id != message_peer_id
+            ):
+                return True
+
+        thread_id = (
+            getattr(reply_to, "reply_to_top_id", None)
+            or getattr(reply_to, "reply_to_msg_id", None)
+            or getattr(message, "reply_to_msg_id", None)
+        )
+        if not thread_id:
+            return False
+        if not await self._chat_is_linked_discussion(message):
+            return False
+        try:
+            thread_message = await self.client.get_messages(
+                utils.get_chat_id(message),
+                ids=thread_id,
+            )
+        except Exception as e:
+            logger.debug("Failed to fetch discussion thread root: %s", e)
+            return False
+        return await self._message_looks_like_channel_post(thread_message)
 
     async def _create_generation_preflight(self, message, string_key="preflight_preparing"):
         text = self.strings(string_key)
         inline_text = self._format_generation_preflight_inline(text)
-        if self._message_sent_as_channel(message):
-            return await self._safe_answer(message, text)
+        if await self._message_sent_as_channel(message):
+            return await self._send_plain_reply_to_command(message, text)
         try:
             if not self._self_has_premium:
                 form = await self.inline.form(message=message, text=inline_text)
@@ -5160,7 +7652,8 @@ class ComfyImageGenMod(loader.Module):
             logger.debug("Failed to update generation preflight: %s", e)
             return target
 
-    def _split_html_text(self, text, limit=3900):
+    def _split_html_text(self, text, limit=None):
+        limit = int(limit or self._message_text_limit())
         try:
             parsed_text, entities = self.client.parse_mode.parse(text)
             return list(utils.smart_split(parsed_text, entities, limit))
@@ -5177,16 +7670,30 @@ class ComfyImageGenMod(loader.Module):
 
     async def _smart_answer(self, message, text):
         text = self._apply_emoji_theme(text)
-        if len(text) < 3900:
-            return await utils.answer(message, text)
+        limit = self._message_text_limit()
+        if self._parsed_html_text_len(text) < limit:
+            return await self._safe_answer(message, text)
         chunks = self._split_html_text(text)
         if not chunks:
-            return await utils.answer(message, text)
-        first = await utils.answer(message, chunks[0])
+            return await self._safe_answer(message, text)
+        first = await self._safe_answer(message, chunks[0])
+        if not first:
+            return None
         chat_id = utils.get_chat_id(first if isinstance(first, Message) else message)
         reply_to = self._safe_topic(message) or getattr(message, "reply_to_msg_id", None)
         for chunk in chunks[1:]:
-            await self.client.send_message(chat_id, chunk, reply_to=reply_to)
+            try:
+                await self.client.send_message(chat_id, chunk, reply_to=reply_to)
+            except Exception as e:
+                if not self._is_inline_too_long_error(e):
+                    raise
+                for candidate in self._text_retry_candidates(chunk):
+                    try:
+                        await self.client.send_message(chat_id, candidate, reply_to=reply_to)
+                        break
+                    except Exception as retry_error:
+                        if not self._is_inline_too_long_error(retry_error):
+                            raise
         return first
 
     async def _handle_gen_error(self, target, error):
@@ -7269,7 +9776,17 @@ class ComfyImageGenMod(loader.Module):
             return _ERNIE_WORKFLOW_NAME
         if lowered in ("fluxedit", "flux_edit", "flux-edit", "flux edit", "fluxi2i", "flux_i2i", "flux-i2i"):
             return _FLUX_EDIT_WORKFLOW_NAME
-        for workflow_name in self._BUILTIN_WORKFLOWS:
+        if lowered in ("qwenedit", "qwen_edit", "qwen-edit", "qwen edit", "cqwenedit", "c_qwenedit"):
+            return _CLOUD_QWEN_EDIT_WORKFLOW_NAME
+        if lowered in ("cill", "cloudill", "cloud_ill", "cloud-ill", "illcloud", "ill_cloud"):
+            return _CLOUD_ILL_WORKFLOW_NAME
+        if lowered in ("czit", "cloudzit", "cloud_zit", "cloud-zit", "zitcloud", "zit_cloud"):
+            return _CLOUD_ZIT_WORKFLOW_NAME
+        if lowered in ("canima2", "cloudanima2", "cloud_anima2", "cloud-anima2", "anima2cloud", "anima2_cloud"):
+            return _CLOUD_ANIMA2_WORKFLOW_NAME
+        if lowered in ("canima", "cloudanima", "cloud_anima", "cloud-anima", "animacloud", "anima_cloud"):
+            return _CLOUD_ANIMA_WORKFLOW_NAME
+        for workflow_name in self._all_builtin_workflows():
             if workflow_name.lower() == lowered:
                 return workflow_name
         custom = self.get("workflows", {})
@@ -7295,6 +9812,16 @@ class ComfyImageGenMod(loader.Module):
             return self.strings("wf_desc_ernie")
         if canonical_name == _FLUX_EDIT_WORKFLOW_NAME:
             return self.strings("wf_desc_fluxedit")
+        if canonical_name == _CLOUD_QWEN_EDIT_WORKFLOW_NAME:
+            return self.strings("wf_desc_cloud_qwenedit")
+        if canonical_name == _CLOUD_ILL_WORKFLOW_NAME:
+            return self.strings("wf_desc_cloud_ill")
+        if canonical_name == _CLOUD_ZIT_WORKFLOW_NAME:
+            return self.strings("wf_desc_cloud_zit")
+        if canonical_name == _CLOUD_ANIMA_WORKFLOW_NAME:
+            return self.strings("wf_desc_cloud_anima")
+        if canonical_name == _CLOUD_ANIMA2_WORKFLOW_NAME:
+            return self.strings("wf_desc_cloud_anima2")
         return ""
 
     def _custom_workflow_entry(self, name):
@@ -7307,7 +9834,7 @@ class ComfyImageGenMod(loader.Module):
 
     def _workflow_description(self, name):
         canonical_name = self._canonical_workflow_name(name)
-        if canonical_name in self._BUILTIN_WORKFLOWS:
+        if self._is_builtin_workflow(canonical_name):
             return self._builtin_workflow_description(canonical_name)
         return str(self._custom_workflow_entry(canonical_name).get("description") or "").strip()
 
@@ -7480,14 +10007,14 @@ class ComfyImageGenMod(loader.Module):
             value = self._clean_negative_value(workflow_negatives.get(wf_name))
             if value:
                 return value, "custom"
-        global_value = self._clean_negative_value(global_negative)
-        if global_value:
-            return global_value, "global"
         workflow_value = self._clean_negative_value(
             self._workflow_json_negative_prompt(wf_data)
         )
         if workflow_value:
             return workflow_value, "workflow"
+        global_value = self._clean_negative_value(global_negative)
+        if global_value:
+            return global_value, "global"
         return "", "empty"
 
     def _negative_source_label(self, source):
@@ -7523,7 +10050,7 @@ class ComfyImageGenMod(loader.Module):
 
     def _get_workflow_data(self, name):
         name = self._canonical_workflow_name(name)
-        if name in self._BUILTIN_WORKFLOWS:
+        if self._is_builtin_workflow(name):
             cached_wf = self.get(self._builtin_workflow_cache_key(name))
             if not cached_wf:
                 return None
@@ -7625,13 +10152,13 @@ class ComfyImageGenMod(loader.Module):
 
     async def _ensure_workflow_data(self, name):
         name = self._canonical_workflow_name(name)
-        if name in self._BUILTIN_WORKFLOWS and not self.get(self._builtin_workflow_cache_key(name)):
+        if self._is_builtin_workflow(name) and not self.get(self._builtin_workflow_cache_key(name)):
             await self._ensure_builtin_workflow(name)
         return self._get_workflow_data(name)
 
     def _get_all_workflow_names(self):
         custom = self.get("workflows", {})
-        return list(self._BUILTIN_WORKFLOWS) + list(custom.keys())
+        return list(self._all_builtin_workflows()) + list(custom.keys())
 
     async def _health_check(self, attempts=4, on_retry=None):
         base = self._base_url()
@@ -7644,6 +10171,7 @@ class ComfyImageGenMod(loader.Module):
             try:
                 async with self._session_get(
                     f"{base}/system_stats",
+                    headers=self._comfy_headers() if self._is_comfy_cloud() else None,
                     timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["queue_status"]),
                 ) as resp:
                     if resp.status == 200:
@@ -7669,12 +10197,20 @@ class ComfyImageGenMod(loader.Module):
         cache_key = f"object_info:{base}:{class_type}"
         if cache_key in self._comfy_cache:
             return self._comfy_cache[cache_key]
+        if self._is_comfy_cloud():
+            data = await self._get_all_object_info(attempts=attempts)
+            if isinstance(data, dict) and class_type in data:
+                result = {class_type: data[class_type]}
+                self._comfy_cache[cache_key] = result
+                return result
+            return None
         retry_statuses = {408, 425, 429, 500, 502, 503, 504}
         attempts = max(1, int(attempts or 1))
         for attempt in range(attempts):
             try:
                 async with self._session_get(
                     f"{base}/object_info/{class_type}",
+                    headers=self._comfy_headers() if self._is_comfy_cloud() else None,
                     timeout=aiohttp.ClientTimeout(total=timeout),
                 ) as resp:
                     if resp.status == 200:
@@ -7703,6 +10239,7 @@ class ComfyImageGenMod(loader.Module):
             try:
                 async with self._session_get(
                     f"{base}/object_info",
+                    headers=self._comfy_headers() if self._is_comfy_cloud() else None,
                     timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["object_info_all"]),
                 ) as resp:
                     if resp.status == 200:
@@ -7725,6 +10262,7 @@ class ComfyImageGenMod(loader.Module):
         async with self._session_post(
             f"{base}/free",
             json={"unload_models": True, "free_memory": True},
+            headers=self._comfy_headers() if self._is_comfy_cloud() else None,
             timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             if resp.status == 200:
@@ -7742,6 +10280,7 @@ class ComfyImageGenMod(loader.Module):
             async with self._session_post(
                 f"{base}/queue",
                 json={"clear": True},
+                headers=self._comfy_headers() if self._is_comfy_cloud() else None,
                 timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["queue_status"]),
             ) as resp:
                 return resp.status == 200
@@ -7760,6 +10299,51 @@ class ComfyImageGenMod(loader.Module):
     async def _queue_prompt(self, workflow_json, client_id):
         base = self._base_url()
         payload = {"prompt": workflow_json, "client_id": client_id}
+        if self._is_comfy_cloud():
+            payload["extra_data"] = {"api_key_comfy_org": None}
+            active_key = self._active_cloud_api_key.get()
+            configured_keys = self._get_cloud_api_keys()
+            keys = ([active_key] if active_key else []) + [
+                key for key in configured_keys if key and key != active_key
+            ]
+            if not keys:
+                raise UserFacingError("cloud_no_key", self._plain_text(self.strings("cloud_no_key")))
+            last_error = None
+            for api_key in keys:
+                payload["extra_data"]["api_key_comfy_org"] = api_key
+                try:
+                    async with self._session_post(
+                        f"{base}/prompt",
+                        json=payload,
+                        headers=self._comfy_headers(api_key),
+                        timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["queue_prompt"]),
+                    ) as resp:
+                        if resp.status == 200:
+                            data = await resp.json(content_type=None)
+                            self._active_cloud_api_key.set(api_key)
+                            if isinstance(data, dict):
+                                data["cloud_api_key"] = api_key
+                                prompt_id = data.get("prompt_id")
+                                if prompt_id:
+                                    self._cloud_prompt_keys[str(prompt_id)] = api_key
+                            runtime = self._generation_runtime.get(client_id)
+                            if runtime is not None:
+                                runtime["cloud_api_key"] = api_key
+                                runtime["backend"] = _COMFY_BACKEND_CLOUD
+                            return data
+                        text = await resp.text()
+                        last_error = (resp.status, text)
+                        if self._cloud_http_error_key(resp.status, text):
+                            continue
+                        raise ComfyUIHTTPError(resp.status, text)
+                except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
+                    last_error = e
+                    continue
+            if isinstance(last_error, tuple):
+                self._raise_cloud_http_error(last_error[0], last_error[1])
+            if last_error:
+                raise UserFacingError("cloud_unavailable", self._plain_text(self.strings("cloud_unavailable")))
+            raise UserFacingError("cloud_no_key", self._plain_text(self.strings("cloud_no_key")))
         async with self._session_post(
             f"{base}/prompt",
             json=payload,
@@ -7821,7 +10405,18 @@ class ComfyImageGenMod(loader.Module):
             return str(item)
         return None
 
-    async def _get_queue_snapshot(self, timeout=None):
+    def _cloud_api_key_for_prompt(self, prompt_id=None):
+        if not prompt_id:
+            return None
+        prompt_id = str(prompt_id)
+        if prompt_id in self._cloud_prompt_keys:
+            return self._cloud_prompt_keys[prompt_id]
+        for runtime in self._generation_runtime.values():
+            if isinstance(runtime, dict) and str(runtime.get("prompt_id") or "") == prompt_id:
+                return runtime.get("cloud_api_key")
+        return None
+
+    async def _get_queue_snapshot(self, timeout=None, api_key=None):
         base = self._base_url()
         if not base:
             return {"ok": False, "queue_running": [], "queue_pending": []}
@@ -7829,6 +10424,7 @@ class ComfyImageGenMod(loader.Module):
         try:
             async with self._session_get(
                 f"{base}/queue",
+                headers=self._comfy_headers(api_key) if self._is_comfy_cloud() else None,
                 timeout=aiohttp.ClientTimeout(total=timeout),
             ) as resp:
                 if resp.status != 200:
@@ -7856,10 +10452,13 @@ class ComfyImageGenMod(loader.Module):
             "active": bool(running or pending),
         }
 
-    async def _get_prompt_queue_info(self, prompt_id, timeout=None):
+    async def _get_prompt_queue_info(self, prompt_id, timeout=None, api_key=None):
         if not prompt_id:
             return {"state": None, "position": None}
-        snapshot = await self._get_queue_snapshot(timeout=timeout)
+        snapshot = await self._get_queue_snapshot(
+            timeout=timeout,
+            api_key=api_key or self._cloud_api_key_for_prompt(prompt_id),
+        )
         if not snapshot.get("ok"):
             return {"state": None, "position": None}
         running = snapshot.get("queue_running") or []
@@ -7904,12 +10503,56 @@ class ComfyImageGenMod(loader.Module):
             async with self._session_post(
                 f"{base}/queue",
                 json={"delete": [prompt_id]},
+                headers=self._comfy_headers(self._cloud_api_key_for_prompt(prompt_id)) if self._is_comfy_cloud() else None,
                 timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["queue_delete"]),
             ) as resp:
                 return resp.status == 200
         except Exception as e:
             logger.debug("ComfyUI queue delete failed: %s", e)
             return False
+
+    def _job_cancel_url(self, prompt_id):
+        base = self._base_url()
+        if not base or not prompt_id:
+            return None
+        encoded_id = quote(str(prompt_id), safe="")
+        if self._is_comfy_cloud():
+            return f"{base}/jobs/{encoded_id}/cancel"
+        return f"{base}/api/jobs/{encoded_id}/cancel"
+
+    async def _cancel_job_by_id(self, prompt_id, api_key=None):
+        url = self._job_cancel_url(prompt_id)
+        if not url:
+            return None
+        kwargs = {"timeout": aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["interrupt"])}
+        if self._is_comfy_cloud():
+            try:
+                kwargs["headers"] = self._comfy_headers(
+                    api_key or self._cloud_api_key_for_prompt(prompt_id)
+                )
+            except Exception as e:
+                logger.debug("ComfyUI job cancel endpoint has no cloud key: %s", e)
+                return None
+        try:
+            async with self._session_post(url, **kwargs) as resp:
+                text = await resp.text()
+                if resp.status == 200:
+                    try:
+                        data = json.loads(text) if text else {}
+                    except json.JSONDecodeError:
+                        data = {}
+                    if isinstance(data, dict):
+                        return bool(data.get("cancelled", True))
+                    return True
+                logger.debug(
+                    "ComfyUI job cancel endpoint failed (HTTP %s): %s",
+                    resp.status,
+                    text[:500],
+                )
+                return None
+        except Exception as e:
+            logger.debug("ComfyUI job cancel endpoint failed: %s", e)
+            return None
 
     async def _cancel_runtime_generation(self, client_id: str):
         runtime = self._generation_runtime.get(client_id)
@@ -7920,6 +10563,12 @@ class ComfyImageGenMod(loader.Module):
         prompt_id = runtime.get("prompt_id")
         if not prompt_id:
             return False
+        job_cancelled = await self._cancel_job_by_id(
+            prompt_id,
+            runtime.get("cloud_api_key"),
+        )
+        if job_cancelled is not None:
+            return job_cancelled
         queue_state = await self._get_prompt_queue_state(prompt_id)
         if queue_state == "running":
             await self._interrupt_generation(prompt_id)
@@ -8336,9 +10985,7 @@ class ComfyImageGenMod(loader.Module):
         return ComfyUIExecutionError(json.dumps(error_json, ensure_ascii=False))
 
     async def _wait_ws(self, client_id, queue_func, status_form=None, cancel_markup=None, display_positive="", display_model="", display_wf="", expected_output_node=None, timeout=_GENERATION_TIMEOUT, easter_egg=None, workflow=None, status_is_inline=True, generation_state=None):
-        base = self._base_url()
-        ws_url = base.replace("http://", "ws://").replace("https://", "wss://")
-        ws_url = f"{ws_url}/ws?clientId={client_id}"
+        ws_url = self._comfy_ws_url(client_id)
         prompt_id = None
         ready_history = None
         last_edit = 0
@@ -8487,6 +11134,10 @@ class ComfyImageGenMod(loader.Module):
             return ready_history
 
         try:
+            if self._is_comfy_cloud():
+                await _queue_once()
+                runtime = self._generation_runtime.get(client_id) or {}
+                ws_url = self._comfy_ws_url(client_id, runtime.get("cloud_api_key"))
             async with self._session_ws_connect(ws_url, timeout=_COMFY_TIMEOUTS["ws_connect"]) as ws:
                 await _queue_once()
                 start = time.time()
@@ -8656,6 +11307,8 @@ class ComfyImageGenMod(loader.Module):
             return
         try:
             kwargs = {"timeout": aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["interrupt"])}
+            if self._is_comfy_cloud():
+                kwargs["headers"] = self._comfy_headers(self._cloud_api_key_for_prompt(prompt_id))
             if prompt_id:
                 kwargs["json"] = {"prompt_id": prompt_id}
             async with self._session_post(
@@ -8737,11 +11390,59 @@ class ComfyImageGenMod(loader.Module):
             error_payload = {"message": status_text or "Execution error in ComfyUI"}
         return self._comfy_execution_error_payload(error_payload, status)
 
+    def _cloud_job_to_history(self, prompt_id, data):
+        if not isinstance(data, dict):
+            return None
+        status_text = str(
+            data.get("status")
+            or (data.get("execution_status") or {}).get("status")
+            or ""
+        ).lower()
+        outputs = data.get("outputs") or {}
+        if not isinstance(outputs, dict):
+            outputs = {}
+        status = {
+            "completed": status_text in ("completed", "success", "succeeded"),
+            "status_str": status_text,
+            "messages": [],
+        }
+        error_payload = data.get("execution_error")
+        if isinstance(error_payload, dict) and (status_text in ("failed", "error") or error_payload):
+            status["messages"].append(["execution_error", error_payload])
+        elif status_text in ("failed", "error", "cancelled"):
+            status["messages"].append(["execution_error", {"message": status_text or "Cloud job failed"}])
+        return {
+            "prompt": [None, prompt_id],
+            "outputs": outputs,
+            "status": status,
+            "cloud_job": data,
+        }
+
     async def _fetch_history_once(self, prompt_id, expected_output_node=None, timeout=None, allow_finished=False):
         base = self._base_url()
         if not base or not prompt_id:
             return None
         timeout = _COMFY_TIMEOUTS["history_request"] if timeout is None else timeout
+        if self._is_comfy_cloud():
+            async with self._session_get(
+                f"{base}/jobs/{prompt_id}",
+                headers=self._comfy_headers(self._cloud_api_key_for_prompt(prompt_id)),
+                timeout=aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                if resp.status != 200:
+                    return None
+                data = await resp.json(content_type=None)
+            history = self._cloud_job_to_history(prompt_id, data)
+            if not history:
+                return None
+            history_error = self._history_execution_error(history)
+            if history_error:
+                raise history_error
+            if self._history_has_expected_output(history, expected_output_node):
+                return history
+            if allow_finished and self._history_is_finished(history):
+                return history
+            return None
         async with self._session_get(
             f"{base}/history/{prompt_id}",
             timeout=aiohttp.ClientTimeout(total=timeout),
@@ -8763,7 +11464,7 @@ class ComfyImageGenMod(loader.Module):
 
     async def _fetch_history(self, prompt_id, expected_output_node=None, timeout=180, allow_finished=False, client_id=None):
         base = self._base_url()
-        url = f"{base}/history/{prompt_id}"
+        url = f"{base}/jobs/{prompt_id}" if self._is_comfy_cloud() else f"{base}/history/{prompt_id}"
         delay = 2
         start = time.time()
         last_error = None
@@ -8788,6 +11489,7 @@ class ComfyImageGenMod(loader.Module):
             try:
                 async with self._session_get(
                     url,
+                    headers=self._comfy_headers(self._cloud_api_key_for_prompt(prompt_id)) if self._is_comfy_cloud() else None,
                     timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["history_request"]),
                 ) as resp:
                     raw_text = await resp.text()
@@ -8806,7 +11508,19 @@ class ComfyImageGenMod(loader.Module):
                             last_error_at = last_error_at or time.time()
                             await asyncio.sleep(delay)
                             continue
-                        if prompt_id in data:
+                        if self._is_comfy_cloud():
+                            history = self._cloud_job_to_history(prompt_id, data)
+                            if not history:
+                                await asyncio.sleep(delay)
+                                continue
+                            history_error = self._history_execution_error(history)
+                            if history_error:
+                                raise history_error
+                            if self._history_has_expected_output(history, expected_output_node):
+                                return history
+                            if allow_finished and self._history_is_finished(history):
+                                return history
+                        elif prompt_id in data:
                             history = data[prompt_id]
                             history_error = self._history_execution_error(history)
                             if history_error:
@@ -8847,9 +11561,13 @@ class ComfyImageGenMod(loader.Module):
             filename=filename,
             content_type=content_type,
         )
+        if self._is_comfy_cloud():
+            data.add_field("type", "input")
+            data.add_field("overwrite", "true")
         async with self._session_post(
             f"{base}/upload/image",
             data=data,
+            headers=self._comfy_headers() if self._is_comfy_cloud() else None,
             timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["upload_image"]),
         ) as resp:
             if resp.status != 200:
@@ -8861,6 +11579,35 @@ class ComfyImageGenMod(loader.Module):
                 raise ComfyUIHTTPError(resp.status, text)
             result = await resp.json()
             return result.get("name", filename)
+
+    async def _read_comfy_media_response(self, resp, media_info, media_label, max_mb, max_bytes):
+        content_length = resp.headers.get("Content-Length")
+        if content_length:
+            try:
+                declared_size = int(content_length)
+            except ValueError:
+                declared_size = None
+            if declared_size and declared_size > max_bytes:
+                raise UserFacingError("output_too_large", max_mb=max_mb)
+
+        suffix = "." + self._media_extension(media_info, media_label).lstrip(".")
+        out = tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix="comfyimagegen_",
+            suffix=suffix,
+        )
+        total = 0
+        try:
+            async for chunk in resp.content.iter_chunked(1024 * 1024):
+                total += len(chunk)
+                if total > max_bytes:
+                    raise UserFacingError("output_too_large", max_mb=max_mb)
+                out.write(chunk)
+            out.seek(0)
+            return out
+        except Exception:
+            out.close()
+            raise
 
     def _max_output_bytes(self):
         max_mb = self._coerce_int(self.config["max_output_mb"], 300, 1, 2000)
@@ -8888,6 +11635,32 @@ class ComfyImageGenMod(loader.Module):
         file_obj.seek(0)
         return data
 
+    @staticmethod
+    def _clone_media_payloads(file_objs):
+        payloads = []
+        for index, file_obj in enumerate(file_objs or [], start=1):
+            if hasattr(file_obj, "seek"):
+                file_obj.seek(0)
+            data = file_obj.read()
+            if hasattr(file_obj, "seek"):
+                file_obj.seek(0)
+            name = getattr(file_obj, "name", None) or f"comfyui_batch_{index}.png"
+            payloads.append((data, name))
+        return payloads
+
+    @staticmethod
+    def _payloads_to_files(payloads):
+        files = []
+        for index, item in enumerate(payloads or [], start=1):
+            if isinstance(item, tuple) and len(item) >= 2:
+                data, name = item[0], item[1]
+            else:
+                data, name = item, f"comfyui_batch_{index}.png"
+            file_obj = io.BytesIO(data)
+            file_obj.name = name or f"comfyui_batch_{index}.png"
+            files.append(file_obj)
+        return files
+
     async def _retrieve_image(self, image_info):
         return await self._retrieve_comfy_media(image_info, "image")
 
@@ -8905,8 +11678,28 @@ class ComfyImageGenMod(loader.Module):
         async with self._session_get(
             f"{base}/view",
             params=params,
+            headers=self._comfy_headers(self._cloud_api_key_for_prompt(media_info.get("prompt_id"))) if self._is_comfy_cloud() else None,
+            allow_redirects=not self._is_comfy_cloud(),
             timeout=self._retrieve_media_timeout(),
         ) as resp:
+            if self._is_comfy_cloud() and resp.status in (301, 302, 303, 307, 308):
+                signed_url = resp.headers.get("Location")
+                if not signed_url:
+                    raise ComfyUIHTTPError(resp.status, "Cloud view redirect has no Location")
+                async with self._session_get(
+                    signed_url,
+                    timeout=self._retrieve_media_timeout(),
+                ) as signed_resp:
+                    if signed_resp.status != 200:
+                        text = await signed_resp.text()
+                        raise ComfyUIHTTPError(signed_resp.status, text or f"Failed to retrieve {media_label}")
+                    return await self._read_comfy_media_response(
+                        signed_resp,
+                        media_info,
+                        media_label,
+                        max_mb,
+                        max_bytes,
+                    )
             if resp.status != 200:
                 text = await resp.text()
                 if resp.status in (502, 503, 504):
@@ -8914,33 +11707,13 @@ class ComfyImageGenMod(loader.Module):
                 else:
                     logger.error("ComfyUI %s retrieve failed (HTTP %s), filename=%s: %s", media_label, resp.status, filename, text[:500])
                 raise ComfyUIHTTPError(resp.status, text or f"Failed to retrieve {media_label}")
-            content_length = resp.headers.get("Content-Length")
-            if content_length:
-                try:
-                    declared_size = int(content_length)
-                except ValueError:
-                    declared_size = None
-                if declared_size and declared_size > max_bytes:
-                    raise UserFacingError("output_too_large", max_mb=max_mb)
-
-            suffix = "." + self._media_extension(media_info, media_label).lstrip(".")
-            out = tempfile.NamedTemporaryFile(
-                mode="w+b",
-                prefix="comfyimagegen_",
-                suffix=suffix,
+            return await self._read_comfy_media_response(
+                resp,
+                media_info,
+                media_label,
+                max_mb,
+                max_bytes,
             )
-            total = 0
-            try:
-                async for chunk in resp.content.iter_chunked(1024 * 1024):
-                    total += len(chunk)
-                    if total > max_bytes:
-                        raise UserFacingError("output_too_large", max_mb=max_mb)
-                    out.write(chunk)
-                out.seek(0)
-                return out
-            except Exception:
-                out.close()
-                raise
 
     def _extract_image_info(self, history, expected_output_node_id=None):
         return self._extract_media_info(history, expected_output_node_id, ("images",))
@@ -8977,26 +11750,48 @@ class ComfyImageGenMod(loader.Module):
         return []
 
     def _extract_media_info(self, history, expected_output_node_id=None, output_keys=None):
+        infos = self._extract_media_infos(history, expected_output_node_id, output_keys, first_only=True)
+        return infos[0] if infos else None
+
+    def _extract_media_infos(self, history, expected_output_node_id=None, output_keys=None, first_only=False):
         output_keys = output_keys or ("videos", "video", "animated", "animations", "gifs", "images", "audio")
         outputs = history.get("outputs", {})
+        prompt_id = None
+        prompt_data = history.get("prompt")
+        if isinstance(prompt_data, (list, tuple)) and len(prompt_data) > 1:
+            prompt_id = prompt_data[1]
+        if not prompt_id and isinstance(history.get("cloud_job"), dict):
+            prompt_id = history["cloud_job"].get("id")
+        found = []
+
+        def _append_items(node_output, output_key):
+            for actual_key in self._output_key_aliases(output_key):
+                items = self._history_media_items(node_output, actual_key)
+                if items:
+                    for item in items:
+                        info = dict(item)
+                        info.setdefault("output_key", actual_key)
+                        if prompt_id:
+                            info.setdefault("prompt_id", str(prompt_id))
+                        found.append(info)
+                    return True
+            return False
+
         if expected_output_node_id and expected_output_node_id in outputs:
             for output_key in output_keys:
-                for actual_key in self._output_key_aliases(output_key):
-                    items = self._history_media_items(outputs[expected_output_node_id], actual_key)
-                    if items:
-                        info = dict(items[0])
-                        info.setdefault("output_key", actual_key)
-                        return info
+                if _append_items(outputs[expected_output_node_id], output_key) and first_only:
+                    return found[:1]
+            if found:
+                return found
 
         for node_id, node_output in outputs.items():
             for output_key in output_keys:
-                for actual_key in self._output_key_aliases(output_key):
-                    items = self._history_media_items(node_output, actual_key)
-                    if items:
-                        info = dict(items[0])
-                        info.setdefault("output_key", actual_key)
-                        return info
-        return None
+                if _append_items(node_output, output_key) and first_only:
+                    return found[:1]
+        return found
+
+    def _extract_image_infos(self, history, expected_output_node_id=None):
+        return self._extract_media_infos(history, expected_output_node_id, ("images",))
 
     @staticmethod
     def _history_output_summary(history):
@@ -9071,6 +11866,11 @@ class ComfyImageGenMod(loader.Module):
         return str(max_id + 1)
 
     async def _get_models_for_workflow_field(self, field):
+        if self._is_comfy_cloud():
+            cloud_fields = await self._get_cloud_available_models_by_field()
+            if field in ("diffusion_model", "diffusion_model_name"):
+                return cloud_fields.get("unet_name", [])
+            return cloud_fields.get(field, [])
         if field == "ckpt_name":
             return self._parse_object_info_list(
                 await self._get_object_info("CheckpointLoaderSimple"),
@@ -9087,6 +11887,235 @@ class ComfyImageGenMod(loader.Module):
             return (await self._get_available_models_by_field()).get(field, [])
         return []
 
+    def _cloud_model_field_from_folder(self, folder):
+        folder_l = str(folder or "").lower()
+        parts = [part for part in folder_l.split("/") if part]
+        root = parts[0] if parts else folder_l
+        if root in ("checkpoints", "checkpoint", "ckpt", "ckpts"):
+            return "ckpt_name"
+        if root in ("unet", "unets", "diffusion_models", "diffusion_model") or "unet" in parts:
+            return "unet_name"
+        if root in ("vae", "vaes") or "vae" in parts:
+            return "vae_name"
+        if (
+            root in ("clip", "clips", "text_encoders", "text_encoder")
+            or "text_encoder" in parts
+            or "text_encoders" in parts
+            or ("clip" in folder_l and "vision" not in folder_l)
+        ):
+            return "clip_name"
+        if "lora" in folder_l:
+            return "lora_name"
+        if (
+            "upscale" in folder_l
+            or root in ("bbox", "sam", "sams", "sam2", "sam3", "ultralytics", "rembg", "clip_vision", "ipadapter", "style_models", "llm")
+            or "yolo" in folder_l
+            or "sam" in folder_l
+        ):
+            return "model_name"
+        if "patch" in folder_l:
+            return "patch_name"
+        return None
+
+    async def _get_cloud_models_folder(self, folder):
+        return await self._get_cloud_models_folder_for_scope(folder, authenticated=True)
+
+    async def _get_cloud_model_folders(self, authenticated=True):
+        scope = "auth" if authenticated else "public"
+        cache_key = f"cloud_model_folders:{scope}"
+        if cache_key in self._comfy_cache:
+            return self._comfy_cache[cache_key]
+        kwargs = {"timeout": aiohttp.ClientTimeout(total=20)}
+        if authenticated:
+            kwargs["headers"] = self._comfy_headers()
+        try:
+            async with self._session_get(
+                f"{_COMFY_CLOUD_BASE_URL}/api/experiment/models",
+                **kwargs,
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.debug("Cloud model folders failed (HTTP %s): %s", resp.status, text[:300])
+                    return []
+                data = await resp.json(content_type=None)
+        except Exception as e:
+            logger.debug("Cloud model folders failed: %s", e)
+            return []
+
+        folders = []
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    name = item.get("name")
+                    paths = item.get("folders") if isinstance(item.get("folders"), list) else []
+                else:
+                    name = item
+                    paths = []
+                name = str(name or "").strip()
+                if not name:
+                    continue
+                folders.append({"name": name, "folders": [str(path) for path in paths if path]})
+        folders = sorted(folders, key=lambda item: item["name"].lower())
+        self._comfy_cache[cache_key] = folders
+        return folders
+
+    async def _get_cloud_models_folder_for_scope(self, folder, authenticated=True):
+        scope = "auth" if authenticated else "public"
+        cache_key = f"cloud_models:{scope}:{folder}"
+        if cache_key in self._comfy_cache:
+            return self._comfy_cache[cache_key]
+        folder_path = quote(str(folder or "").strip(), safe="/")
+        if not folder_path:
+            return []
+        kwargs = {"timeout": aiohttp.ClientTimeout(total=20)}
+        if authenticated:
+            kwargs["headers"] = self._comfy_headers()
+        try:
+            async with self._session_get(
+                f"{_COMFY_CLOUD_BASE_URL}/api/experiment/models/{folder_path}",
+                **kwargs,
+            ) as resp:
+                if resp.status != 200:
+                    text = await resp.text()
+                    logger.debug("Cloud models folder %s failed (HTTP %s): %s", folder, resp.status, text[:300])
+                    return []
+                data = await resp.json(content_type=None)
+        except Exception as e:
+            logger.debug("Cloud models folder %s failed: %s", folder, e)
+            return []
+        models = []
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    name = item.get("name")
+                else:
+                    name = item
+                if name:
+                    models.append(str(name))
+        models = sorted(dict.fromkeys(models))
+        self._comfy_cache[cache_key] = models
+        return models
+
+    @staticmethod
+    def _cloud_asset_model_name(asset):
+        if not isinstance(asset, dict):
+            return None
+        metadata = asset.get("user_metadata") if isinstance(asset.get("user_metadata"), dict) else {}
+        name = metadata.get("filename") or asset.get("name")
+        name = str(name or "").strip()
+        return name or None
+
+    def _cloud_asset_model_folder(self, asset):
+        metadata = asset.get("user_metadata") if isinstance(asset.get("user_metadata"), dict) else {}
+        folder = str(metadata.get("folder") or "").strip()
+        if folder:
+            return folder
+        type_id = str(metadata.get("type") or "").strip()
+        if type_id in _CDOWN_TYPES:
+            aliases = self._cdown_type_info(type_id).get("folder_aliases") or ()
+            if aliases:
+                return str(aliases[0])
+        tags = {str(tag).lower() for tag in (asset.get("tags") or [])}
+        tag_folders = (
+            ("checkpoint", "checkpoints"),
+            ("lora", "loras"),
+            ("vae", "vae"),
+            ("controlnet", "controlnet"),
+            ("upscale_model", "upscale_models"),
+            ("embedding", "embeddings"),
+            ("text_encoder", "text_encoders"),
+            ("unet", "diffusion_models"),
+            ("clip_vision", "clip_vision"),
+            ("ipadapter", "ipadapter"),
+            ("style_model", "style_models"),
+            ("model_patch", "model_patches"),
+            ("sam", "sams"),
+            ("llm", "LLM"),
+        )
+        for tag, candidate in tag_folders:
+            if tag in tags:
+                return candidate
+        return "models"
+
+    async def _get_cloud_user_model_asset_groups(self):
+        cache_key = "cloud_user_model_assets:groups"
+        if cache_key in self._comfy_cache:
+            return self._comfy_cache[cache_key]
+
+        assets = []
+        offset = 0
+        limit = 500
+        while True:
+            params = [
+                ("include_tags", "models"),
+                ("include_public", "false"),
+                ("limit", str(limit)),
+                ("offset", str(offset)),
+                ("sort", "updated_at"),
+                ("order", "desc"),
+            ]
+            async with self._session_get(
+                f"{_COMFY_CLOUD_BASE_URL}/api/assets",
+                params=params,
+                headers=self._comfy_headers(),
+                timeout=aiohttp.ClientTimeout(total=25),
+            ) as resp:
+                text = await resp.text()
+                if resp.status != 200:
+                    raise ComfyUIHTTPError(resp.status, text)
+                try:
+                    data = json.loads(text) if text else {}
+                except json.JSONDecodeError as e:
+                    raise ValueError(f"non-JSON response: {text[:300]}") from e
+            page_assets = data.get("assets") if isinstance(data, dict) else []
+            if isinstance(page_assets, list):
+                assets.extend(item for item in page_assets if isinstance(item, dict))
+            if not isinstance(data, dict) or not data.get("has_more") or not page_assets:
+                break
+            offset += len(page_assets)
+            if offset >= 5000:
+                break
+
+        groups = {}
+        for asset in assets:
+            name = self._cloud_asset_model_name(asset)
+            if not name:
+                continue
+            folder = self._cloud_asset_model_folder(asset)
+            groups.setdefault(folder, set()).add(name)
+        result = {
+            folder: sorted(models)
+            for folder, models in sorted(groups.items(), key=lambda item: item[0].lower())
+            if models
+        }
+        self._comfy_cache[cache_key] = result
+        return result
+
+    async def _get_cloud_available_models_by_field(self):
+        cache_key = "cloud_models:fields"
+        if cache_key in self._comfy_cache:
+            return self._comfy_cache[cache_key]
+        folders_data = await self._get_cloud_model_folders(authenticated=True)
+
+        fields = {}
+        if isinstance(folders_data, list):
+            for entry in folders_data:
+                if not isinstance(entry, dict):
+                    continue
+                folder_name = str(entry.get("name") or "").strip()
+                field = self._cloud_model_field_from_folder(folder_name)
+                if not field:
+                    continue
+                models = await self._get_cloud_models_folder(folder_name)
+                if models:
+                    fields.setdefault(field, set()).update(models)
+        if "unet_name" in fields:
+            fields["diffusion_model"] = set(fields["unet_name"])
+            fields["diffusion_model_name"] = set(fields["unet_name"])
+        result = {field: sorted(values) for field, values in fields.items() if values}
+        self._comfy_cache[cache_key] = result
+        return result
+
     @staticmethod
     def _is_model_filename(value):
         value = str(value or "").strip()
@@ -9100,6 +12129,8 @@ class ComfyImageGenMod(loader.Module):
         )
 
     async def _get_available_models_by_field(self):
+        if self._is_comfy_cloud():
+            return await self._get_cloud_available_models_by_field()
         fields = {
             "ckpt_name": set(await self._get_models_for_workflow_field("ckpt_name")),
             "unet_name": set(await self._get_models_for_workflow_field("unet_name")),
@@ -9151,6 +12182,8 @@ class ComfyImageGenMod(loader.Module):
             return "checkpoint"
         if field in ("unet_name", "diffusion_model", "diffusion_model_name"):
             return "unet"
+        if field == "vae_name":
+            return "vae"
         if field in ("patch_name", "model_patch", "model_patch_name") or "patch" in str(field).lower():
             return "patch"
         return field
@@ -9160,14 +12193,60 @@ class ComfyImageGenMod(loader.Module):
         target_group = cls._model_field_group(target_field)
         return any(cls._model_field_group(field) == target_group for field in selected_fields)
 
+    @staticmethod
+    def _model_match_key(model):
+        model = str(model or "").strip()
+        if not model:
+            return ""
+        model = model.rsplit("/", 1)[-1].rsplit("\\", 1)[-1]
+        if "." in model:
+            model = model.rsplit(".", 1)[0]
+        return model.lower()
+
+    @classmethod
+    def _resolve_model_name_from_fields(cls, model, field_models, target_field=None):
+        model = str(model or "").strip()
+        if not model or not isinstance(field_models, dict):
+            return None
+        target_group = cls._model_field_group(target_field) if target_field else None
+        stem = cls._model_match_key(model)
+        stem_matches = []
+
+        for field, models in field_models.items():
+            if target_group and cls._model_field_group(field) != target_group:
+                continue
+            if not isinstance(models, (list, tuple, set)):
+                continue
+            for candidate in models:
+                candidate = str(candidate or "").strip()
+                if not candidate:
+                    continue
+                if candidate == model:
+                    return candidate
+                if stem and cls._model_match_key(candidate) == stem:
+                    stem_matches.append(candidate)
+
+        stem_matches = sorted(dict.fromkeys(stem_matches))
+        return stem_matches[0] if len(stem_matches) == 1 else None
+
+    async def _resolve_available_model_name(self, model, target_field=None):
+        field_models = await self._get_available_models_by_field()
+        if not field_models:
+            return None
+        return self._resolve_model_name_from_fields(model, field_models, target_field)
+
     async def _get_selected_model_fields(self, model):
         field_models = await self._get_available_models_by_field()
         if not field_models:
             return None
+        resolved_model = self._resolve_model_name_from_fields(model, field_models)
+        candidates = {str(model or "").strip()}
+        if resolved_model:
+            candidates.add(resolved_model)
         return {
             field
             for field, models in field_models.items()
-            if model in models
+            if any(candidate in models for candidate in candidates if candidate)
         }
 
     def _get_workflow_primary_model(self, wf_data):
@@ -9183,6 +12262,30 @@ class ComfyImageGenMod(loader.Module):
             .get(model_map.get("field"))
         )
 
+    def _resolve_generation_model(self, wf_data):
+        if self._is_comfy_cloud():
+            if self._cloud_model_as_workflow():
+                return self._get_workflow_primary_model(wf_data)
+            configured_model = str(self.config["model_name"] or "").strip()
+            return configured_model or self._get_workflow_primary_model(wf_data)
+        configured_model = str(self.config["model_name"] or "").strip()
+        if configured_model:
+            return configured_model
+        return None
+
+    def _cloud_model_as_workflow(self):
+        return bool(self.get("cloud_model_as_workflow", True))
+
+    def _set_cloud_model_as_workflow(self, enabled):
+        self.set("cloud_model_as_workflow", bool(enabled))
+
+    def _current_workflow_model(self):
+        wf_name = self._canonical_workflow_name(self.get("default_workflow", _DEFAULT_WORKFLOW_NAME))
+        wf_data = self._get_workflow_data(wf_name)
+        if not wf_data:
+            return None
+        return self._get_workflow_primary_model(wf_data)
+
     async def _resolve_workflow_model_for_node(self, workflow, item, model, selected_fields, force_selected_model=False):
         nid = item.get("node_id")
         field = item.get("field")
@@ -9196,6 +12299,12 @@ class ComfyImageGenMod(loader.Module):
         if not model:
             return original_model
 
+        resolved_available_model = await self._resolve_available_model_name(model, field)
+        if resolved_available_model:
+            model = resolved_available_model
+            if selected_fields is not None and not selected_fields:
+                selected_fields = await self._get_selected_model_fields(model)
+
         if selected_fields is None:
             return model
 
@@ -9208,7 +12317,7 @@ class ComfyImageGenMod(loader.Module):
             and (
                 self._model_field_group(field) == "patch"
                 or (
-                    self._model_field_group(field) not in ("checkpoint", "unet")
+                    self._model_field_group(field) not in ("checkpoint", "unet", "vae")
                     and self._is_model_filename(original_model)
                 )
             )
@@ -9216,7 +12325,11 @@ class ComfyImageGenMod(loader.Module):
             return model
 
         if force_selected_model:
-            return model
+            if selected_fields and self._model_field_is_compatible(selected_fields, field):
+                return model
+            if not selected_fields and self._is_model_filename(model):
+                return model
+            return original_model or None
 
         return original_model or None
 
@@ -9270,7 +12383,11 @@ class ComfyImageGenMod(loader.Module):
             for item in model_nodes:
                 nid = item.get("node_id")
                 field = item.get("field")
-                if nid in workflow and field in workflow[nid].get("inputs", {}):
+                node = workflow.get(nid, {})
+                class_type = str(node.get("class_type", ""))
+                if any(token in class_type.lower() for token in ("vae", "clip", "sam", "upscale", "lora")):
+                    continue
+                if nid in workflow and field in node.get("inputs", {}):
                     force_selected_model = (
                         item.get("node_id") == model_map.get("node_id")
                         and item.get("field") == model_map.get("field")
@@ -9479,6 +12596,18 @@ class ComfyImageGenMod(loader.Module):
 
         return workflow, final_output_node_for_extraction
 
+    def _apply_cloud_batch_size(self, workflow, batch_size):
+        if not self._is_comfy_cloud():
+            return workflow
+        batch_size = self._coerce_int(batch_size, 1, 1, 8)
+        for node in (workflow or {}).values():
+            if not isinstance(node, dict):
+                continue
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict) and "batch_size" in inputs:
+                inputs["batch_size"] = batch_size
+        return workflow
+
     _REFUSAL_PHRASES = (
         "i cannot", "i can't", "i'm sorry", "i apologize", "i'm unable",
         "i am unable", "i am not able", "against my", "not appropriate",
@@ -9575,11 +12704,19 @@ class ComfyImageGenMod(loader.Module):
     async def _call_gemini_enhance(self, cleaned_prompt: str, model_name: str):
         if not GENAI_AVAILABLE:
             return None, "dependency_missing"
-
-        api_key = self._get_provider_api_key("gemini")
-        if not api_key:
+        api_keys = self._get_provider_api_keys("gemini")
+        if not api_keys:
             return None, "no_key"
+        last_error = None
+        for api_key in api_keys:
+            result, error = await self._call_gemini_enhance_with_key(cleaned_prompt, model_name, api_key)
+            if result or not self._enhance_error_rotates_key(error):
+                return result, error
+            last_error = error
+            logger.debug("Gemini API key failed with %s, trying next key", error)
+        return None, last_error or "error"
 
+    async def _call_gemini_enhance_with_key(self, cleaned_prompt: str, model_name: str, api_key: str):
         try:
             if not self._genai_client or self._genai_api_key != api_key:
                 self._genai_client = genai.Client(api_key=api_key)
@@ -9602,19 +12739,6 @@ class ComfyImageGenMod(loader.Module):
                 model=self._get_gemini_model(),
                 config=config,
             )
-            nonce = uuid.uuid4().hex[:12]
-            ready_response = await asyncio.wait_for(
-                chat.send_message(
-                    "Confirm that you understand the image prompt enhancement task and the required output format. "
-                    f"Reply exactly with READY:{nonce}"
-                ),
-                timeout=30,
-            )
-            ready_text = (ready_response.text or "").strip()
-            if ready_text != f"READY:{nonce}":
-                if self._is_refusal_response(ready_text):
-                    return None, "censored"
-                return None, "error"
             response = await asyncio.wait_for(
                 chat.send_message(
                     f"user_prompt: {cleaned_prompt}\ntarget_model: {model_name}"
@@ -9695,17 +12819,44 @@ class ComfyImageGenMod(loader.Module):
                 ) as resp:
                     if resp.status in (401, 403):
                         return None, "expired"
-                    if resp.status == 429:
+                    if resp.status in (402, 429):
                         last_error = "rate_limit"
                         continue
                     if resp.status != 200:
                         resp_text = await resp.text()
                         logger.debug("%s API error (model=%s, status=%s): %s", provider_name, model, resp.status, resp_text[:500])
+                        resp_lower = resp_text.lower()
+                        if any(marker in resp_lower for marker in ("invalid api key", "api key not valid", "api_key_invalid", "unauthenticated", "permission denied")):
+                            return None, "expired"
+                        if any(marker in resp_lower for marker in ("quota", "insufficient_quota", "billing", "balance", "resource_exhausted", "rate limit")):
+                            return None, "rate_limit"
                         try:
                             err_data = json.loads(resp_text)
-                            err_msg = err_data.get("error", {}).get("message", resp_text[:200])
                         except json.JSONDecodeError:
                             err_msg = resp_text[:200]
+                        else:
+                            err_msg = resp_text[:200]
+                            if isinstance(err_data, dict):
+                                err_obj = err_data.get("error")
+                                if isinstance(err_obj, dict):
+                                    err_msg = (
+                                        err_obj.get("message")
+                                        or err_obj.get("code")
+                                        or err_obj.get("type")
+                                        or err_msg
+                                    )
+                                elif isinstance(err_obj, str):
+                                    err_msg = err_obj
+                                else:
+                                    err_msg = (
+                                        err_data.get("message")
+                                        or err_data.get("detail")
+                                        or err_data.get("error_description")
+                                        or err_msg
+                                    )
+                            elif isinstance(err_data, str):
+                                err_msg = err_data
+                            err_msg = str(err_msg)[:500]
                         if "not found" in resp_text.lower() or "decommissioned" in resp_text.lower() or "not available" in resp_text.lower():
                             last_error = f"model {model} unavailable"
                             continue
@@ -9730,11 +12881,44 @@ class ComfyImageGenMod(loader.Module):
                 continue
             except Exception as e:
                 logger.exception(e)
-                last_error = str(e)
+                err_str = str(e)
+                if self._enhance_error_rotates_key(err_str):
+                    return None, err_str
+                last_error = err_str
                 continue
 
         if last_error == "rate_limit":
             return None, "rate_limit"
+        return None, last_error or "error"
+
+    async def _call_openai_compatible_enhance_with_keys(
+        self,
+        provider: str,
+        cleaned_prompt: str,
+        model_name: str,
+        base_url: str,
+        models_list: list,
+        provider_name: str,
+        image_path=None,
+    ):
+        api_keys = self._get_provider_api_keys(provider)
+        if not api_keys:
+            return None, "no_key"
+        last_error = None
+        for api_key in api_keys:
+            result, error = await self._call_openai_compatible_enhance(
+                cleaned_prompt,
+                model_name,
+                api_key,
+                base_url,
+                models_list,
+                provider_name,
+                image_path=image_path,
+            )
+            if result or not self._enhance_error_rotates_key(error):
+                return result, error
+            last_error = error
+            logger.debug("%s API key failed with %s, trying next key", provider_name, error)
         return None, last_error or "error"
 
     def _build_openai_compatible_user_content(self, cleaned_prompt, model_name, image_path=None):
@@ -9757,49 +12941,37 @@ class ComfyImageGenMod(loader.Module):
         ]
 
     async def _call_groq_enhance(self, cleaned_prompt: str, model_name: str):
-        api_key = self._get_provider_api_key("groq")
-        if not api_key:
-            return None, "no_key"
-        return await self._call_openai_compatible_enhance(
-            cleaned_prompt, model_name, api_key,
+        return await self._call_openai_compatible_enhance_with_keys(
+            "groq", cleaned_prompt, model_name,
             "https://api.groq.com/openai/v1",
             ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "gemma2-9b-it"],
             "Groq",
         )
 
     async def _call_openrouter_enhance(self, cleaned_prompt: str, model_name: str):
-        api_key = self._get_provider_api_key("openrouter")
-        if not api_key:
-            return None, "no_key"
-        return await self._call_openai_compatible_enhance(
-            cleaned_prompt, model_name, api_key,
+        return await self._call_openai_compatible_enhance_with_keys(
+            "openrouter", cleaned_prompt, model_name,
             "https://openrouter.ai/api/v1",
             self._get_provider_model_chain("openrouter"),
             "OpenRouter",
         )
 
     async def _call_grok_enhance(self, cleaned_prompt: str, model_name: str):
-        api_key = self._get_provider_api_key("grok")
-        if not api_key:
-            return None, "no_key"
-        return await self._call_openai_compatible_enhance(
-            cleaned_prompt, model_name, api_key,
+        return await self._call_openai_compatible_enhance_with_keys(
+            "grok", cleaned_prompt, model_name,
             "https://api.x.ai/v1",
             self._get_provider_model_chain("grok"),
             "Grok",
         )
 
     async def _call_deepseek_enhance(self, cleaned_prompt: str, model_name: str, image_path=None):
-        api_key = self._get_provider_api_key("deepseek")
-        if not api_key:
-            return None, "no_key"
         if image_path:
             return None, "vision_unsupported"
         models = self._get_provider_model_chain("deepseek")
         if not models:
             return None, "model is not set"
-        return await self._call_openai_compatible_enhance(
-            cleaned_prompt, model_name, api_key,
+        return await self._call_openai_compatible_enhance_with_keys(
+            "deepseek", cleaned_prompt, model_name,
             "https://api.deepseek.com",
             models,
             "DeepSeek",
@@ -10380,6 +13552,7 @@ class ComfyImageGenMod(loader.Module):
             "plain_status": plain_status,
             "reuse_status_message": bool(reuse_status_message),
             "limited_mode": bool(limited_mode),
+            "backend": self._comfy_backend(),
         }
 
     def _build_display_bundle(self, state: dict, hidden_prompt: bool = False):
@@ -10510,6 +13683,7 @@ class ComfyImageGenMod(loader.Module):
             else None
         )
         fields = [
+            ("Backend", state.get("backend") or self._comfy_backend()),
             ("Negative", negative),
             ("Model", self._format_model_name(state.get("model") or "default", max_length=None)),
             ("Workflow", str(state.get("wf_name") or "default")),
@@ -11263,7 +14437,7 @@ class ComfyImageGenMod(loader.Module):
         if raw_workflow:
             try:
                 canonical_workflow = self._canonical_workflow_name(raw_workflow)
-                if canonical_workflow in self._BUILTIN_WORKFLOWS:
+                if self._is_builtin_workflow(canonical_workflow):
                     workflow_name = canonical_workflow
                     workflow_display = self._format_builtin_workflow_link_html(workflow_name)
                     workflow_plain_display = workflow_name
@@ -11525,13 +14699,26 @@ class ComfyImageGenMod(loader.Module):
                     if generation_number is not None
                     else caption
                 )
-                if media_kind == "image" and isinstance(media_source, (bytes, bytearray)):
+                if isinstance(media_source, (list, tuple)):
+                    for file_obj in media_source:
+                        if hasattr(file_obj, "seek"):
+                            file_obj.seek(0)
+                    sent_message = await self._send_file_group_result(
+                        target["chat_id"],
+                        list(media_source),
+                        archive_caption,
+                        reply_to=target.get("topic_id"),
+                        force_document=True,
+                        log_errors=False,
+                    )
+                elif media_kind == "image" and isinstance(media_source, (bytes, bytearray)):
                     sent_message = await self._send_result(
                         target["chat_id"],
                         media_source,
                         archive_caption,
                         reply_to=target.get("topic_id"),
                         force_document=True,
+                        log_errors=False,
                     )
                 else:
                     source_to_send = media_source
@@ -11549,6 +14736,7 @@ class ComfyImageGenMod(loader.Module):
                             archive_caption,
                             reply_to=target.get("topic_id"),
                             force_document=True,
+                            log_errors=False,
                         )
                     finally:
                         if close_after:
@@ -11566,16 +14754,19 @@ class ComfyImageGenMod(loader.Module):
                     )
                 sent_any = True
             except (ChannelPrivateError, ChatAdminRequiredError, UserNotParticipantError):
+                self._archive_target_ok.pop(self._gens_archive_target_key(target), None)
                 failed_access += 1
                 logger.warning(self._plain_text(self.strings("ult_chat_access_lost")))
             except Exception as e:
-                err_text = f"{type(e).__name__}: {e}".lower()
+                err_text = self._exception_chain_text(e).lower()
                 if any(
                     marker in err_text
                     for marker in (
                         "channelprivate",
                         "chatadminrequired",
                         "usernotparticipant",
+                        "could not find the input entity",
+                        "input entity for peeruser",
                         "peeridinvalid",
                         "channelinvalid",
                         "chatwriteforbidden",
@@ -11586,6 +14777,7 @@ class ComfyImageGenMod(loader.Module):
                         "topic mismatch",
                     )
                 ):
+                    self._archive_target_ok.pop(self._gens_archive_target_key(target), None)
                     failed_access += 1
                     logger.warning(self._plain_text(self.strings("ult_chat_access_lost")))
                     continue
@@ -11596,6 +14788,51 @@ class ComfyImageGenMod(loader.Module):
                 "archive_access_lost",
                 self._plain_text(self.strings("ult_chat_access_lost")),
             )
+
+    def _generation_archive_enabled(self):
+        settings = self._get_ult_settings()
+        gens_chat = settings.get("gens_chat", {})
+        if not gens_chat.get("enabled"):
+            return False
+        targets = gens_chat.get("targets")
+        if isinstance(targets, list) and any(isinstance(target, dict) and target.get("chat_id") for target in targets):
+            return True
+        return bool(gens_chat.get("chat_id"))
+
+    async def _send_generation_duplicate_background(self, media_source, caption, state=None, media_filename=None, media_kind="image"):
+        start = time.monotonic()
+        async with self._archive_semaphore:
+            try:
+                await self._send_generation_duplicate(
+                    media_source,
+                    caption,
+                    state=state,
+                    media_filename=media_filename,
+                    media_kind=media_kind,
+                )
+                logger.debug("Generation archive save finished in %.2fs", time.monotonic() - start)
+            except asyncio.CancelledError:
+                raise
+            except UserFacingError as e:
+                logger.warning("Generation archive save failed: %s", e)
+            except Exception as e:
+                logger.exception("Generation archive save failed: %s", e)
+
+    def _schedule_generation_duplicate(self, media_source, caption, state=None, media_filename=None, media_kind="image"):
+        if self._unloading or media_source is None:
+            return None
+        task = asyncio.create_task(
+            self._send_generation_duplicate_background(
+                media_source,
+                caption,
+                state=dict(state or {}) if state is not None else None,
+                media_filename=media_filename,
+                media_kind=media_kind,
+            )
+        )
+        self._archive_tasks.add(task)
+        task.add_done_callback(self._archive_tasks.discard)
+        return task
 
     def _get_enhance_error_text(self, error):
         provider = self._get_prompt_provider()
@@ -11772,12 +15009,25 @@ class ComfyImageGenMod(loader.Module):
                     else:
                         await utils.answer(status_form, self._apply_emoji_theme(retry_text))
 
+                if self._is_comfy_cloud():
+                    api_key = await self._select_cloud_api_key()
+                    runtime = self._generation_runtime.get(client_id)
+                    if runtime is not None:
+                        runtime["cloud_api_key"] = api_key
+                        runtime["backend"] = _COMFY_BACKEND_CLOUD
+
                 if not state.get("health_checked"):
-                    health = await self._health_check(on_retry=_update_connection_retry)
+                    health = True if self._is_comfy_cloud() else await self._health_check(on_retry=_update_connection_retry)
                     if not health:
                         raise UserFacingError("unavailable", self._plain_text(self.strings("unavailable")))
 
                 await self._raise_if_generation_cancelled(client_id)
+                if self._is_comfy_cloud():
+                    api_key = self._active_cloud_api_key.get() or await self._select_cloud_api_key()
+                    runtime = self._generation_runtime.get(client_id)
+                    if runtime is not None:
+                        runtime["cloud_api_key"] = api_key
+                        runtime["backend"] = _COMFY_BACKEND_CLOUD
                 wf_data = await self._ensure_workflow_data(state["wf_name"])
                 if not wf_data:
                     available = ", ".join(self._get_all_workflow_names())
@@ -11819,6 +15069,11 @@ class ComfyImageGenMod(loader.Module):
                         selected_loras,
                     )
 
+                prepared_workflow = self._apply_cloud_batch_size(
+                    prepared_workflow,
+                    state.get("cloud_batch", 1),
+                )
+                await self._raise_if_cloud_workflow_unsupported(prepared_workflow)
                 self._sync_generation_state_from_workflow(state, wf_data, prepared_workflow)
                 runtime = self._generation_runtime.get(client_id)
                 if runtime is not None:
@@ -11855,11 +15110,16 @@ class ComfyImageGenMod(loader.Module):
 
                 output_kind = (wf_data.get("mapping") or {}).get("output_kind") or "image"
                 media_kind = "video" if output_kind in ("video", "mixed") else "image"
+                media_infos = []
                 media_info = (
                     self._extract_media_info(history, final_output_node, ("videos", "video", "animated", "animations", "gifs", "audio", "images"))
                     if media_kind == "video"
                     else self._extract_image_info(history, final_output_node)
                 )
+                if media_kind == "image":
+                    media_infos = self._extract_image_infos(history, final_output_node)
+                    if media_infos:
+                        media_info = media_infos[0]
                 if not media_info:
                     logger.warning(
                         "No media found in ComfyUI history for node %s; output_kind=%s; outputs=%s",
@@ -11870,9 +15130,22 @@ class ComfyImageGenMod(loader.Module):
                     raise UserFacingError("no_images", self._plain_text(self.strings("no_images")))
                 media_kind = self._media_kind_from_info(media_info, media_kind)
 
-                media_bio = await self._retry(self._retrieve_comfy_media, media_info, media_kind)
+                media_bio = None
+                source_media_bios = []
+                source_media_payloads = []
                 media_bytes = None
+                archive_media_source = None
+                archive_media_filename = None
                 try:
+                    retrieve_started = time.monotonic()
+                    if media_kind == "image" and len(media_infos) > 1:
+                        for item in media_infos:
+                            source_media_bios.append(await self._retry(self._retrieve_comfy_media, item, "image"))
+                        media_bio = source_media_bios[0]
+                        source_media_payloads = await utils.run_sync(self._clone_media_payloads, source_media_bios)
+                    else:
+                        media_bio = await self._retry(self._retrieve_comfy_media, media_info, media_kind)
+                    logger.debug("Generation media retrieve finished in %.2fs", time.monotonic() - retrieve_started)
                     media_size = self._file_size(media_bio) or 0
                     send_as_file = (
                         media_kind != "image"
@@ -11912,6 +15185,7 @@ class ComfyImageGenMod(loader.Module):
                         generation_time=generation_time,
                     )
                     auto_delete_delay = state.get("auto_delete_result_delay")
+                    send_result_as_self = bool(state.get("trigger_origin"))
                     if auto_delete_delay:
                         result_caption = "\n".join(
                             [
@@ -11922,14 +15196,25 @@ class ComfyImageGenMod(loader.Module):
                             ]
                         )
 
+                    send_started = time.monotonic()
                     if media_kind == "image":
-                        if send_as_file:
+                        if len(source_media_payloads) > 1:
+                            sent_message = await self._send_file_group_result(
+                                state["chat_id"],
+                                source_media_payloads,
+                                result_caption,
+                                reply_to=state["reply_to"],
+                                force_document=True,
+                                send_as_self=send_result_as_self,
+                            )
+                        elif send_as_file:
                             sent_message = await self._send_file_result(
                                 state["chat_id"],
                                 media_bio,
                                 result_caption,
                                 reply_to=state["reply_to"],
                                 force_document=True,
+                                send_as_self=send_result_as_self,
                             )
                         else:
                             sent_message = await self._send_result(
@@ -11938,6 +15223,7 @@ class ComfyImageGenMod(loader.Module):
                                 result_caption,
                                 reply_to=state["reply_to"],
                                 spoiler=generation_caption_hidden,
+                                send_as_self=send_result_as_self,
                             )
                     else:
                         sent_message = await self._send_file_result(
@@ -11946,20 +15232,37 @@ class ComfyImageGenMod(loader.Module):
                             result_caption,
                             reply_to=state["reply_to"],
                             force_document=True,
+                            send_as_self=send_result_as_self,
                         )
+                    logger.debug("Generation Telegram send finished in %.2fs", time.monotonic() - send_started)
                     self._increment_total_generation_count()
                     if auto_delete_delay and sent_message:
                         self._track_auto_delete(sent_message, auto_delete_delay)
                     self._record_generation_duration_stat(state)
-                    await self._send_generation_duplicate(
-                        media_bytes if media_bytes is not None else media_bio,
-                        caption,
-                        state,
-                        media_filename=getattr(media_bio, "name", None),
-                        media_kind=media_kind,
-                    )
+                    if self._generation_archive_enabled():
+                        if len(source_media_payloads) > 1:
+                            archive_media_source = list(source_media_payloads)
+                        elif media_bytes is not None:
+                            archive_media_source = media_bytes
+                        else:
+                            archive_payloads = await utils.run_sync(self._clone_media_payloads, [media_bio])
+                            if archive_payloads:
+                                archive_media_source, archive_media_filename = archive_payloads[0]
+                        self._schedule_generation_duplicate(
+                            archive_media_source,
+                            caption,
+                            state,
+                            media_filename=archive_media_filename or getattr(media_bio, "name", None),
+                            media_kind=media_kind,
+                        )
                 finally:
-                    media_bio.close()
+                    if media_bio and media_bio not in source_media_bios:
+                        media_bio.close()
+                    for source_bio in source_media_bios:
+                        try:
+                            source_bio.close()
+                        except Exception:
+                            pass
                     del media_bytes
 
                 self._store_last_generation(state)
@@ -11984,6 +15287,8 @@ class ComfyImageGenMod(loader.Module):
                 if not await self._handle_trigger_generation_error(state, e, status_form):
                     await self._handle_gen_error(status_form, e)
             finally:
+                if self._is_comfy_cloud():
+                    self._active_cloud_api_key.set(None)
                 self._active_generations = max(0, self._active_generations - 1)
                 self._cleanup_input_file(state)
 
@@ -12049,10 +15354,18 @@ class ComfyImageGenMod(loader.Module):
 
         edit_count = min(len(state.get("edits") or []), 100)
         title = f"{_PREFLIGHT_EYES_INLINE} {self.strings('enhance_chat_title').format(edit_count)}"
-        text = "\n\n".join([
-            title,
+        prompt_parts = []
+        original_prompt = str(state.get("original_prompt") or "").strip()
+        if original_prompt:
+            prompt_parts.extend([
+                self.strings("enhance_cmd_original"),
+                self._format_prompt_for_display(original_prompt, truncate=False),
+            ])
+        prompt_parts.extend([
+            self.strings("enhance_cmd_result"),
             self._format_prompt_for_display(state.get("prompt"), truncate=False),
         ])
+        text = f"{title}\n\n" + "\n".join(prompt_parts)
         markup = [
             [{
                 "text": self.strings("enhance_chat_edit_btn"),
@@ -12142,7 +15455,7 @@ class ComfyImageGenMod(loader.Module):
         generation_state["positive"] = state.get("prompt") or generation_state.get("positive")
         generation_state["enhanced"] = generation_state["positive"] != generation_state.get("original_positive")
         generation_state["enhance_prompt"] = True
-        await self._launch_generation_flow(call, generation_state)
+        await self._maybe_render_cloud_confirm(call, generation_state)
 
     async def _enhance_chat_cancel(self, call: InlineCall, state_id: str):
         state = self._enhance_chat_states.pop(state_id, None)
@@ -12153,6 +15466,221 @@ class ComfyImageGenMod(loader.Module):
             await call.delete()
         except Exception:
             pass
+
+    @staticmethod
+    def _format_credit_value(value):
+        try:
+            return f"{float(value):g}"
+        except (TypeError, ValueError):
+            return str(value)
+
+    def _parse_cloud_cost_range(self, description):
+        text = str(description or "")
+        credit_word = "\u043a\u0440\u0435\u0434"
+        range_match = re.search(
+            rf"(\d+(?:[.,]\d+)?)\s*(?:-|\u2013|\u2014)\s*(\d+(?:[.,]\d+)?)\s*{credit_word}",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if range_match:
+            return (
+                float(range_match.group(1).replace(",", ".")),
+                float(range_match.group(2).replace(",", ".")),
+            )
+        single_match = re.search(rf"(\d+(?:[.,]\d+)?)\s*{credit_word}", text, flags=re.IGNORECASE)
+        if single_match:
+            value = float(single_match.group(1).replace(",", "."))
+            return value, value
+        return None
+
+    async def _estimate_cloud_cost(self, state):
+        wf_name = state.get("wf_name") or self.get("default_workflow", _DEFAULT_CLOUD_WORKFLOW_NAME)
+        cost_range = self._parse_cloud_cost_range(self._workflow_description(wf_name))
+        if not cost_range:
+            return None
+        batch = self._coerce_int(state.get("cloud_batch"), 1, 1, 8)
+        low, high = cost_range
+        credit_word = "\u043a\u0440\u0435\u0434"
+        base_text = (
+            f"{self._format_credit_value(low)} {credit_word}"
+            if low == high
+            else f"{self._format_credit_value(low)}-{self._format_credit_value(high)} {credit_word}"
+        )
+        if batch <= 1:
+            return base_text
+        total_low = low * batch
+        total_high = high * batch
+        total_text = (
+            f"{self._format_credit_value(total_low)} {credit_word}"
+            if total_low == total_high
+            else f"{self._format_credit_value(total_low)}-{self._format_credit_value(total_high)} {credit_word}"
+        )
+        return f"{base_text} x {batch} = {total_text}"
+
+    async def _validate_manual_cloud_model_or_raise(self, state):
+        if not self._is_comfy_cloud() or self._cloud_model_as_workflow():
+            return
+        model = str((state or {}).get("model") or self.config["model_name"] or "").strip()
+        if not model:
+            return
+        field_models = await self._get_cloud_available_models_by_field()
+        if not field_models:
+            return
+        if self._resolve_model_name_from_fields(model, field_models):
+            return
+        try:
+            user_groups = await self._get_cloud_user_model_asset_groups()
+            user_models = [
+                item
+                for models in user_groups.values()
+                for item in models
+            ]
+            if model in user_models:
+                return
+            model_key = self._model_match_key(model)
+            if model_key and any(self._model_match_key(item) == model_key for item in user_models):
+                return
+        except Exception as e:
+            logger.debug("Cloud user asset model validation failed: %s", e)
+        raise UserFacingError("cloud_model_not_found", self._plain_text(self.strings("cloud_model_not_found")))
+
+    def _cloud_confirm_prompt_text(self, prompt):
+        return self._format_prompt_for_display(prompt, truncate=True)
+
+    async def _render_cloud_confirm(self, target, state_id: str):
+        state = self._cloud_confirm_states.get(state_id)
+        if not state:
+            if isinstance(target, InlineCall):
+                return await target.edit(text=self._to_inline_emoji(self.strings("ult_state_expired")))
+            return await self._safe_answer(target, self.strings("ult_state_expired"))
+
+        balance = await self._format_cloud_balance_for_ui()
+        cost = await self._estimate_cloud_cost(state)
+        cost_text = str(cost) if cost is not None else self.strings("cloud_confirm_cost_unavailable")
+        batch = self._coerce_int(state.get("cloud_batch"), 1, 1, 8)
+        state["cloud_batch"] = batch
+
+        lines = [
+            self.strings("cloud_confirm_title"),
+            self.strings("cloud_confirm_balance").format(utils.escape_html(balance)),
+            self.strings("cloud_confirm_cost").format(utils.escape_html(cost_text)),
+            self.strings("cloud_confirm_batch").format(batch),
+            self.strings("cloud_confirm_workflow").format(utils.escape_html(str(state.get("wf_name") or "default"))),
+            self.strings("cloud_confirm_model").format(
+                utils.escape_html(self._format_model_name(state.get("model") or self.strings("not_set"), max_length=None))
+            ),
+            "",
+            self.strings("cloud_confirm_prompt"),
+            self._cloud_confirm_prompt_text(state.get("positive")),
+        ]
+        text = "\n".join(lines)
+
+        markup = [
+            [
+                {
+                    "text": self.strings("cloud_confirm_btn_generate"),
+                    "callback": self._cloud_confirm_generate,
+                    "args": (state_id,),
+                    "style": "success",
+                    "emoji_id": "5206607081334906820",
+                },
+                {
+                    "text": self.strings("cloud_confirm_btn_batch").format(batch),
+                    "input": self.strings("cloud_confirm_input_batch"),
+                    "handler": self._cloud_confirm_batch_input,
+                    "args": (state_id,),
+                },
+            ],
+        ]
+        if state.get("enhance_prompt") or state.get("enhanced"):
+            markup.append([{
+                "text": self.strings("cloud_confirm_btn_edit"),
+                "callback": self._cloud_confirm_edit_prompt,
+                "args": (state_id,),
+                "style": "primary",
+            }])
+        markup.append([{
+            "text": self.strings("ult_btn_cancel"),
+            "callback": self._cloud_confirm_cancel,
+            "args": (state_id,),
+            "style": "danger",
+            "emoji_id": "5121063440311386962",
+        }])
+        await self._render_inline(target, self._to_inline_emoji(text), markup)
+
+    async def _maybe_render_cloud_confirm(self, target, generation_state, skip_confirm=False):
+        if not self._is_comfy_cloud() or generation_state.get("cloud_confirmed"):
+            return await self._launch_generation_flow(target, generation_state)
+        if not self._get_cloud_api_keys():
+            return await self._handle_gen_error(target, UserFacingError("cloud_no_key", self._plain_text(self.strings("cloud_no_key"))))
+        generation_state["cloud_batch"] = self._coerce_int(generation_state.get("cloud_batch"), 1, 1, 8)
+        if skip_confirm:
+            try:
+                await self._validate_manual_cloud_model_or_raise(generation_state)
+            except Exception as e:
+                return await self._handle_gen_error(target, e)
+            generation_state["cloud_confirmed"] = True
+            return await self._launch_generation_flow(target, generation_state)
+        state_id = str(uuid.uuid4())
+        self._cloud_confirm_states[state_id] = generation_state
+        await self._render_cloud_confirm(target, state_id)
+
+    async def _cloud_confirm_generate(self, call: InlineCall, state_id: str):
+        state = self._cloud_confirm_states.pop(state_id, None)
+        if not state:
+            return await call.edit(text=self._to_inline_emoji(self.strings("ult_state_expired")))
+        try:
+            await self._validate_manual_cloud_model_or_raise(state)
+        except Exception as e:
+            self._cloud_confirm_states[state_id] = state
+            return await self._handle_gen_error(call, e)
+        state["cloud_confirmed"] = True
+        await self._launch_generation_flow(call, state)
+
+    async def _cloud_confirm_cancel(self, call: InlineCall, state_id: str):
+        state = self._cloud_confirm_states.pop(state_id, None)
+        if isinstance(state, dict):
+            self._cleanup_input_file(state)
+        try:
+            await call.delete()
+        except Exception:
+            pass
+
+    async def _cloud_confirm_batch_input(self, call: InlineCall, query: str, state_id: str):
+        state = self._cloud_confirm_states.get(state_id)
+        if not state:
+            return await call.edit(text=self._to_inline_emoji(self.strings("ult_state_expired")))
+        try:
+            batch = int(str(query or "").strip())
+        except ValueError:
+            batch = 0
+        if batch < 1 or batch > 8:
+            try:
+                await call.answer(self.strings("cloud_confirm_batch_bad"), show_alert=True)
+            except Exception:
+                pass
+            return await self._render_cloud_confirm(call, state_id)
+        state["cloud_batch"] = batch
+        self._cloud_confirm_states[state_id] = state
+        try:
+            await call.answer(self.strings("cloud_confirm_batch_saved").format(batch))
+        except Exception:
+            pass
+        await self._render_cloud_confirm(call, state_id)
+
+    async def _cloud_confirm_edit_prompt(self, call: InlineCall, state_id: str):
+        state = self._cloud_confirm_states.pop(state_id, None)
+        if not state:
+            return await call.edit(text=self._to_inline_emoji(self.strings("ult_state_expired")))
+        await self._start_enhance_chat(
+            call,
+            mode="generate",
+            prompt=state.get("positive"),
+            original_prompt=state.get("original_positive") or state.get("positive"),
+            generation_state=state,
+            model=state.get("model") or "unknown",
+            image_path=state.get("input_image_path"),
+        )
 
     async def _render_enhance_confirm(self, target, state_id: str):
         state = self._enhance_confirm_states.get(state_id)
@@ -12316,7 +15844,7 @@ class ComfyImageGenMod(loader.Module):
             scheduler=state.get("scheduler"),
             limited_mode=state.get("limited_mode", False),
         )
-        await self._launch_generation_flow(call, generation_state)
+        await self._maybe_render_cloud_confirm(call, generation_state)
 
     async def _enhance_confirm_cancel(self, call: InlineCall, state_id: str):
         state = self._enhance_confirm_states.pop(state_id, None)
@@ -12354,7 +15882,7 @@ class ComfyImageGenMod(loader.Module):
                 img.close()
             img_buf.close()
 
-    async def _send_spoiler_photo_result(self, chat_id, image_bytes, caption, reply_to=None):
+    async def _send_spoiler_photo_result(self, chat_id, image_bytes, caption, reply_to=None, send_as_self=False):
         if not InputMediaUploadedPhoto:
             raise RuntimeError("InputMediaUploadedPhoto is unavailable")
         caption = self._apply_emoji_theme(caption)
@@ -12380,14 +15908,21 @@ class ComfyImageGenMod(loader.Module):
                 and isinstance(reply_to, int)
             ):
                 request_reply_to = InputReplyToMessage(reply_to_msg_id=reply_to)
-            request = SendMediaRequest(
-                peer=await self.client.get_input_entity(chat_id),
-                media=InputMediaUploadedPhoto(file=uploaded, spoiler=True),
-                message=text,
-                random_id=random.getrandbits(63),
-                reply_to=request_reply_to,
-                entities=entities or [],
-            )
+            request_kwargs = {
+                "peer": await self.client.get_input_entity(chat_id),
+                "media": InputMediaUploadedPhoto(file=uploaded, spoiler=True),
+                "message": text,
+                "random_id": random.getrandbits(63),
+                "reply_to": request_reply_to,
+                "entities": entities or [],
+            }
+            if send_as_self and InputPeerSelf:
+                request_kwargs["send_as"] = InputPeerSelf()
+            try:
+                request = SendMediaRequest(**request_kwargs)
+            except TypeError:
+                request_kwargs.pop("send_as", None)
+                request = SendMediaRequest(**request_kwargs)
             result = await self.client(request)
             try:
                 return self.client._get_response_message(
@@ -12405,13 +15940,30 @@ class ComfyImageGenMod(loader.Module):
             out.close()
             del out
 
-    async def _send_result(self, chat_id, image_bytes, caption, reply_to=None, force_document=False, spoiler=False):
+    @staticmethod
+    def _exception_chain_text(exc):
+        parts = []
+        seen = set()
+        current = exc
+        while current is not None and id(current) not in seen:
+            seen.add(id(current))
+            parts.append(f"{type(current).__name__}: {current}")
+            current = getattr(current, "__cause__", None) or getattr(current, "__context__", None)
+        return " | ".join(parts) if parts else str(exc)
+
+    def _send_peer_candidate(self, chat_id):
+        if isinstance(chat_id, (int, str)):
+            return chat_id
+        peer_id = self._peer_id_value(chat_id)
+        return peer_id if peer_id is not None else chat_id
+
+    async def _send_result(self, chat_id, image_bytes, caption, reply_to=None, force_document=False, spoiler=False, log_errors=True, send_as_self=False):
         caption = self._apply_emoji_theme(caption)
         output_format = self.config["output_format"]
         as_document = force_document or output_format == "document_png"
 
         if spoiler and not as_document:
-            return await self._send_spoiler_photo_result(chat_id, image_bytes, caption, reply_to=reply_to)
+            return await self._send_spoiler_photo_result(chat_id, image_bytes, caption, reply_to=reply_to, send_as_self=send_as_self)
 
         try:
             out = await utils.run_sync(self._prepare_output_image, image_bytes, as_document)
@@ -12426,17 +15978,21 @@ class ComfyImageGenMod(loader.Module):
                 "reply_to": reply_to,
                 "force_document": as_document,
             }
-            sent_message = await self.client.send_file(chat_id, out, **send_kwargs)
+            if send_as_self:
+                sent_message = await self._send_file_as_self_if_possible(chat_id, out, **send_kwargs)
+            else:
+                sent_message = await self.client.send_file(self._send_peer_candidate(chat_id), out, **send_kwargs)
         except Exception as e:
-            logger.error("Failed to send image: %s: %s", type(e).__name__, e)
-            logger.exception(e)
-            raise ValueError("Telegram send failed") from e
+            if log_errors:
+                logger.error("Failed to send image: %s: %s", type(e).__name__, e)
+                logger.exception(e)
+            raise ValueError(f"Telegram send failed: {self._exception_chain_text(e)}") from e
         finally:
             out.close()
             del out
         return sent_message
 
-    async def _send_file_result(self, chat_id, file_obj, caption, reply_to=None, force_document=True):
+    async def _send_file_result(self, chat_id, file_obj, caption, reply_to=None, force_document=True, log_errors=True, send_as_self=False):
         caption = self._apply_emoji_theme(caption)
         try:
             if hasattr(file_obj, "seek"):
@@ -12446,11 +16002,58 @@ class ComfyImageGenMod(loader.Module):
                 "reply_to": reply_to,
                 "force_document": force_document,
             }
-            return await self.client.send_file(chat_id, file_obj, **send_kwargs)
+            if send_as_self:
+                return await self._send_file_as_self_if_possible(chat_id, file_obj, **send_kwargs)
+            return await self.client.send_file(self._send_peer_candidate(chat_id), file_obj, **send_kwargs)
         except Exception as e:
-            logger.error("Failed to send media: %s: %s", type(e).__name__, e)
-            logger.exception(e)
-            raise ValueError("Telegram send failed") from e
+            if log_errors:
+                logger.error("Failed to send media: %s: %s", type(e).__name__, e)
+                logger.exception(e)
+            raise ValueError(f"Telegram send failed: {self._exception_chain_text(e)}") from e
+
+    async def _send_file_group_result(self, chat_id, file_objs, caption, reply_to=None, force_document=True, log_errors=True, send_as_self=False):
+        caption = self._apply_emoji_theme(caption)
+        if file_objs and all(isinstance(item, tuple) for item in file_objs):
+            files = self._payloads_to_files(file_objs)
+        else:
+            files = [
+                file_obj
+                for file_obj in (file_objs or [])
+                if file_obj
+            ]
+            files = self._payloads_to_files(self._clone_media_payloads(files))
+        if not files:
+            raise ValueError("No media files to send")
+        try:
+            for file_obj in files:
+                file_obj.seek(0)
+            send_kwargs = {
+                "caption": caption,
+                "reply_to": reply_to,
+                "force_document": force_document,
+            }
+            if send_as_self:
+                sent = await self._send_file_as_self_if_possible(chat_id, files, **send_kwargs)
+            else:
+                sent = await self.client.send_file(
+                    self._send_peer_candidate(chat_id),
+                    files,
+                    **send_kwargs,
+                )
+            if isinstance(sent, list):
+                return sent[0] if sent else None
+            return sent
+        except Exception as e:
+            if log_errors:
+                logger.error("Failed to send media group: %s: %s", type(e).__name__, e)
+                logger.exception(e)
+            raise ValueError(f"Telegram send failed: {self._exception_chain_text(e)}") from e
+        finally:
+            for file_obj in files:
+                try:
+                    file_obj.close()
+                except Exception:
+                    pass
 
     async def _schedule_delete_message(self, message_to_delete: Message, delay: int):
         try:
@@ -14393,9 +17996,93 @@ class ComfyImageGenMod(loader.Module):
     def _trigger_cooldown_key(self, chat_id, sender_id):
         return f"{chat_id}:{sender_id or 0}"
 
+    def _trigger_sender_identity(self, message):
+        sender_id = getattr(message, "sender_id", None)
+        if sender_id is not None:
+            return sender_id
+
+        from_id = getattr(message, "from_id", None)
+        from_value = self._peer_id_value(from_id)
+        if from_value is not None:
+            return f"{type(from_id).__name__}:{from_value}"
+
+        post_author = getattr(message, "post_author", None)
+        if post_author:
+            return f"post_author:{post_author}"
+
+        message_id = getattr(message, "id", None)
+        return f"message:{message_id or 0}"
+
+    def _trigger_sender_numeric_id(self, message):
+        sender_id = getattr(message, "sender_id", None)
+        try:
+            return int(sender_id) if sender_id is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _send_as_fallback_allowed(error):
+        if isinstance(error, TypeError):
+            return True
+        error_text = f"{type(error).__name__}: {error}".lower()
+        return any(
+            marker in error_text
+            for marker in (
+                "unexpected keyword argument 'send_as'",
+                'unexpected keyword argument "send_as"',
+                "sendaspeerinvalid",
+                "send_as_peer_invalid",
+                "send as peer invalid",
+                "chat_send_as_forbidden",
+                "send_as forbidden",
+            )
+        )
+
+    async def _send_message_as_self_if_possible(self, chat_id, text, **kwargs):
+        if InputPeerSelf:
+            try:
+                return await self.client.send_message(
+                    chat_id,
+                    text,
+                    send_as=InputPeerSelf(),
+                    **kwargs,
+                )
+            except Exception as e:
+                if not self._send_as_fallback_allowed(e):
+                    raise
+                logger.debug("send_as self is unavailable, retrying message normally: %s", e)
+        return await self.client.send_message(chat_id, text, **kwargs)
+
+    @staticmethod
+    def _rewind_send_file_obj(file_obj):
+        items = file_obj if isinstance(file_obj, (list, tuple)) else [file_obj]
+        for item in items:
+            if hasattr(item, "seek"):
+                try:
+                    item.seek(0)
+                except Exception:
+                    pass
+
+    async def _send_file_as_self_if_possible(self, chat_id, file_obj, **kwargs):
+        if InputPeerSelf:
+            try:
+                return await self.client.send_file(
+                    self._send_peer_candidate(chat_id),
+                    file_obj,
+                    send_as=InputPeerSelf(),
+                    **kwargs,
+                )
+            except Exception as e:
+                if not self._send_as_fallback_allowed(e):
+                    raise
+                logger.debug("send_as self is unavailable, retrying file normally: %s", e)
+                self._rewind_send_file_obj(file_obj)
+        self._rewind_send_file_obj(file_obj)
+        return await self.client.send_file(self._send_peer_candidate(chat_id), file_obj, **kwargs)
+
     async def _send_trigger_reply(self, message, text):
         try:
-            return await self.client.send_message(
+            return await self._send_message_as_self_if_possible(
                 utils.get_chat_id(message),
                 text,
                 reply_to=message.id,
@@ -14405,7 +18092,7 @@ class ComfyImageGenMod(loader.Module):
 
     async def _notify_trigger_queue_full(self, message):
         chat_id = utils.get_chat_id(message)
-        cooldown_key = self._trigger_cooldown_key(chat_id, getattr(message, "sender_id", None))
+        cooldown_key = self._trigger_cooldown_key(chat_id, self._trigger_sender_identity(message))
         if cooldown_key in self._trigger_queue_cooldowns:
             return
         self._trigger_queue_cooldowns[cooldown_key] = True
@@ -14413,7 +18100,7 @@ class ComfyImageGenMod(loader.Module):
 
     async def _notify_trigger_too_often(self, message):
         chat_id = utils.get_chat_id(message)
-        cooldown_key = self._trigger_cooldown_key(chat_id, getattr(message, "sender_id", None))
+        cooldown_key = self._trigger_cooldown_key(chat_id, self._trigger_sender_identity(message))
         if cooldown_key in self._trigger_rate_limit_cooldowns:
             return
         self._trigger_rate_limit_cooldowns[cooldown_key] = True
@@ -14423,7 +18110,7 @@ class ComfyImageGenMod(loader.Module):
         chat_id = utils.get_chat_id(message)
         await self._notify_trigger_unavailable_by_origin(
             chat_id,
-            getattr(message, "sender_id", None),
+            self._trigger_sender_identity(message),
             message.id,
             text,
         )
@@ -14436,46 +18123,105 @@ class ComfyImageGenMod(loader.Module):
             return
         self._trigger_unavailable_cooldowns[cooldown_key] = True
         try:
-            await self.client.send_message(chat_id, text, reply_to=reply_to)
+            await self._send_message_as_self_if_possible(chat_id, text, reply_to=reply_to)
         except Exception as e:
             logger.debug("Failed to send trigger unavailable reply: %s", e)
 
-    def _reply_media_is_source_post(self, message, reply):
-        if not reply:
+    @staticmethod
+    def _peer_id_value(peer):
+        if peer is None:
+            return None
+        for attr in ("channel_id", "chat_id", "user_id", "id"):
+            value = getattr(peer, attr, None)
+            if value is not None:
+                try:
+                    return int(value)
+                except (TypeError, ValueError):
+                    return str(value)
+        return None
+
+    @staticmethod
+    def _peer_is_channel_like(peer):
+        if peer is None:
             return False
-        if getattr(reply, "post", False):
-            return True
+        peer_type = type(peer).__name__.lower()
+        return "channel" in peer_type or bool(getattr(peer, "broadcast", False))
+
+    async def _reply_media_is_source_post(self, message, reply):
+        if not reply or not getattr(reply, "media", None):
+            return False
+
         reply_id = getattr(reply, "id", None)
         reply_to = getattr(message, "reply_to", None)
-        reply_to_top_id = getattr(reply_to, "reply_to_top_id", None)
-        if (
-            reply_id is not None
-            and reply_to_top_id is not None
-            and str(reply_id) == str(reply_to_top_id)
-            and getattr(reply, "media", None)
-        ):
-            return True
+        reply_to_peer = getattr(reply_to, "reply_to_peer_id", None)
         reply_to_msg_id = (
             getattr(reply_to, "reply_to_msg_id", None)
             or getattr(message, "reply_to_msg_id", None)
         )
-        fwd_from = getattr(reply, "fwd_from", None)
-        from_id = getattr(reply, "from_id", None)
-        sender = getattr(reply, "sender", None)
-        looks_like_channel_post = bool(
-            fwd_from
-            or isinstance(from_id, PeerChannel)
-            or type(from_id).__name__ == "PeerChannel"
-            or getattr(sender, "broadcast", False)
+        reply_to_top_id = getattr(reply_to, "reply_to_top_id", None)
+
+        message_peer = getattr(message, "peer_id", None)
+        reply_peer = getattr(reply, "peer_id", None)
+        reply_from = getattr(reply, "from_id", None)
+
+        reply_to_peer_id = self._peer_id_value(reply_to_peer)
+        message_peer_id = self._peer_id_value(message_peer)
+        reply_peer_id = self._peer_id_value(reply_peer)
+        reply_from_id = self._peer_id_value(reply_from)
+
+        header_points_outside_chat = bool(
+            reply_to_peer
+            and reply_to_peer_id is not None
+            and (message_peer_id is None or reply_to_peer_id != message_peer_id)
         )
+        header_matches_reply = bool(
+            reply_to_peer_id is not None
+            and reply_to_peer_id in {reply_peer_id, reply_from_id}
+        )
+        channel_like = bool(
+            self._peer_is_channel_like(reply_to_peer)
+            or self._peer_is_channel_like(reply_peer)
+            or self._peer_is_channel_like(reply_from)
+        )
+        if not channel_like:
+            try:
+                sender = await reply.get_sender()
+            except Exception:
+                sender = getattr(reply, "sender", None)
+            channel_like = bool(getattr(sender, "broadcast", False))
+
+        if (
+            header_points_outside_chat
+            and (
+                header_matches_reply
+                or channel_like
+                or (
+                    reply_id is not None
+                    and reply_to_msg_id is not None
+                    and str(reply_id) == str(reply_to_msg_id)
+                )
+            )
+        ):
+            return True
+
+        if (
+            reply_id is not None
+            and reply_to_top_id is not None
+            and str(reply_id) == str(reply_to_top_id)
+            and channel_like
+            and getattr(reply, "media", None)
+        ):
+            return True
+
         if (
             reply_id is not None
             and reply_to_msg_id is not None
             and str(reply_id) == str(reply_to_msg_id)
-            and looks_like_channel_post
-            and getattr(reply, "media", None)
+            and reply_to_top_id is not None
+            and channel_like
         ):
             return True
+
         try:
             message_chat_id = utils.get_chat_id(message)
             reply_chat_id = utils.get_chat_id(reply)
@@ -14488,8 +18234,8 @@ class ComfyImageGenMod(loader.Module):
             and getattr(reply, "media", None)
         )
 
-    def _reply_media_kind_for_message(self, message, reply, context="generation"):
-        if self._reply_media_is_source_post(message, reply):
+    async def _reply_media_kind_for_message(self, message, reply, context="generation"):
+        if await self._reply_media_is_source_post(message, reply):
             logger.debug(
                 "Ignoring %s reply media from source post: message_id=%s reply_id=%s",
                 context,
@@ -14499,15 +18245,15 @@ class ComfyImageGenMod(loader.Module):
             return None
         return self._reply_media_kind(reply)
 
-    def _trigger_reply_media_is_source_post(self, message, reply):
-        return self._reply_media_is_source_post(message, reply)
+    async def _trigger_reply_media_is_source_post(self, message, reply):
+        return await self._reply_media_is_source_post(message, reply)
 
-    def _trigger_reply_media_kind(self, message, reply):
-        return self._reply_media_kind_for_message(message, reply, context="trigger")
+    async def _trigger_reply_media_kind(self, message, reply):
+        return await self._reply_media_kind_for_message(message, reply, context="trigger")
 
     async def _make_trigger_inline_anchor(self, message):
         try:
-            return await self.client.send_message(
+            return await self._send_message_as_self_if_possible(
                 utils.get_chat_id(message),
                 self.strings("connecting"),
                 reply_to=message.id,
@@ -14590,6 +18336,9 @@ class ComfyImageGenMod(loader.Module):
         if not base:
             await self._notify_trigger_unavailable(message, self.strings("no_url"))
             return
+        if await self._is_channel_discussion_comment(message):
+            await self._send_trigger_reply(message, self.strings("comments_generation_disabled"))
+            return
 
         health_status = None
 
@@ -14668,7 +18417,7 @@ class ComfyImageGenMod(loader.Module):
         parsed_cfg = parsed["cfg"]
 
         reply = await message.get_reply_message()
-        reply_kind = self._trigger_reply_media_kind(message, reply)
+        reply_kind = await self._trigger_reply_media_kind(message, reply)
         has_photo = reply_kind == "image"
         has_video = reply_kind == "video"
         input_filename = None
@@ -14709,7 +18458,7 @@ class ComfyImageGenMod(loader.Module):
         model = (
             None
             if limited_mode
-            else (self.config["model_name"] or self._get_workflow_primary_model(wf_data))
+            else self._resolve_generation_model(wf_data)
         )
 
         if has_photo:
@@ -14819,7 +18568,7 @@ class ComfyImageGenMod(loader.Module):
             auto_delete_result_delay=settings["auto_delete_delay"] if settings.get("auto_delete") else None,
             trigger_origin={
                 "chat_id": utils.get_chat_id(message),
-                "sender_id": getattr(message, "sender_id", None),
+                "sender_id": self._trigger_sender_identity(message),
                 "message_id": message.id,
             },
             health_checked=True,
@@ -14834,24 +18583,57 @@ class ComfyImageGenMod(loader.Module):
             except Exception:
                 pass
 
-        await self._launch_generation_flow(
+        await self._maybe_render_cloud_confirm(
             await self._make_trigger_inline_anchor(message),
             generation_state,
+            skip_confirm=True,
         )
 
     @loader.watcher()
     async def watcher(self, message: Message):
         try:
             text = (getattr(message, "raw_text", None) or message.text or "").strip()
+            chat_id = utils.get_chat_id(message)
+            sender_id = getattr(message, "sender_id", None) or self.tg_id or 0
+            pending_key = f"{chat_id}:{sender_id}"
+            pending = self._emoji_theme_pending.pop(pending_key, None)
+            if pending:
+                slot = pending.get("slot")
+                slug = pending.get("slug")
+                extracted = self._extract_custom_emoji_from_message(message, slot=slot)
+                if not extracted:
+                    await utils.answer(message, self._apply_emoji_theme(self.strings("ult_theme_no_emoji")))
+                    return
+                emoji_id, char = extracted
+                if self._set_custom_theme_slot(slug, slot, emoji_id, char):
+                    saved_text = self._format_theme_slot_saved_text(slot, emoji_id, char)
+                    unit_id = pending.get("unit_id")
+                    inline_message_id = pending.get("inline_message_id")
+                    units = getattr(self.inline, "_units", {})
+                    if unit_id and unit_id in units and inline_message_id:
+                        units[unit_id]["inline_message_id"] = inline_message_id
+                        await self._ult_custom_theme_slot_menu(
+                            {"id": unit_id, "inline_message_id": inline_message_id},
+                            slug,
+                            slot,
+                            force_edit=True,
+                        )
+                    await utils.answer(
+                        message,
+                        saved_text,
+                    )
+                else:
+                    await utils.answer(message, self._apply_emoji_theme(self.strings("ult_theme_not_custom")))
+                return
             if not text:
                 return
-            chat_id = utils.get_chat_id(message)
             settings = self._get_trigger_settings_for_chat(chat_id, create=False)
             if not settings["enabled"]:
                 return
-            sender_id = getattr(message, "sender_id", None)
+            trigger_sender_id = self._trigger_sender_identity(message)
+            trigger_sender_numeric_id = self._trigger_sender_numeric_id(message)
             try:
-                if sender_id and int(sender_id) in settings.get("blacklist", []):
+                if trigger_sender_numeric_id and trigger_sender_numeric_id in settings.get("blacklist", []):
                     return
             except (TypeError, ValueError):
                 pass
@@ -14859,7 +18641,7 @@ class ComfyImageGenMod(loader.Module):
             if trigger_prompt is None:
                 return
 
-            cooldown_key = self._trigger_cooldown_key(chat_id, sender_id)
+            cooldown_key = self._trigger_cooldown_key(chat_id, trigger_sender_id)
             queue_key = self._trigger_queue_key(chat_id)
             too_often = False
             queue_full = False
@@ -14940,22 +18722,46 @@ class ComfyImageGenMod(loader.Module):
         return f"{float(value):.2f}".rstrip("0").rstrip(".")
 
     def _reply_media_kind(self, reply):
-        if not reply or not getattr(reply, "media", None):
+        if not reply:
+            return None
+        document = getattr(reply, "document", None)
+        file_obj = getattr(reply, "file", None)
+        has_media = bool(
+            getattr(reply, "media", None)
+            or document
+            or file_obj
+            or getattr(reply, "photo", None)
+            or getattr(reply, "video", None)
+            or getattr(reply, "gif", None)
+        )
+        if not has_media:
             return None
         if getattr(reply, "video", None) or getattr(reply, "gif", None):
             return "video"
         if getattr(reply, "photo", None):
             return "image"
-        mime = str(getattr(getattr(reply, "file", None), "mime_type", "") or "").lower()
+        mime = str(
+            getattr(file_obj, "mime_type", "")
+            or getattr(document, "mime_type", "")
+            or ""
+        ).lower()
         if mime.startswith("video/"):
+            return "video"
+        if mime == "image/gif" or "gif" in mime:
             return "video"
         if mime.startswith("image/"):
             return "image"
-        file_name = str(getattr(getattr(reply, "file", None), "name", "") or "")
+        file_name = str(getattr(file_obj, "name", "") or "")
+        for attr in getattr(document, "attributes", []) or []:
+            attr_name = type(attr).__name__
+            if attr_name in ("DocumentAttributeAnimated", "DocumentAttributeVideo"):
+                return "video"
+            if attr_name == "DocumentAttributeFilename" and getattr(attr, "file_name", None):
+                file_name = str(attr.file_name)
         ext = os.path.splitext(file_name)[1].lower()
-        if ext in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v"}:
+        if ext in {".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v", ".gif"}:
             return "video"
-        if ext in {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"}:
+        if ext in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
             return "image"
         return None
 
@@ -15013,15 +18819,29 @@ class ComfyImageGenMod(loader.Module):
             return target
         return await self._safe_answer(target, text)
 
-    async def _run_ctool(self, target, reply, tool_id, scale=None, chat_id=None, reply_to=None):
+    async def _run_ctool(self, target, reply, tool_id, scale=None, chat_id=None, reply_to=None, reply_kind=None):
         base = self._base_url()
         if not base:
             return await self._ctool_set_status(target, self.strings("no_url"))
-        tool = self._ctool_definitions().get(tool_id)
+        definitions = self._ctool_definitions()
+        tool = definitions.get(tool_id)
         if not tool:
             return await self._ctool_set_status(target, self.strings("ctools_bad_mode"))
-        if self._reply_media_kind(reply) != tool["input_kind"]:
-            key = "ctools_no_reply_video" if tool["input_kind"] == "video" else "ctools_no_reply_image"
+        reply_kind = reply_kind or self._reply_media_kind(reply)
+        effective_tool_id = (
+            _CTOOL_VIDEO_UPSCALE
+            if tool_id == _CTOOL_UPSCALE and reply_kind == "video"
+            else tool_id
+        )
+        tool = definitions.get(effective_tool_id) or tool
+        if effective_tool_id == _CTOOL_VIDEO_UPSCALE:
+            scale = None
+        if reply_kind != tool["input_kind"]:
+            key = (
+                "ctools_no_reply_media"
+                if tool_id == _CTOOL_UPSCALE
+                else ("ctools_no_reply_video" if tool["input_kind"] == "video" else "ctools_no_reply_image")
+            )
             return await self._ctool_set_status(target, self.strings(key))
 
         chat_id = chat_id or utils.get_chat_id(target)
@@ -15033,10 +18853,13 @@ class ComfyImageGenMod(loader.Module):
         input_path = None
         client_id = str(uuid.uuid4())
         try:
+            if self._is_comfy_cloud():
+                self._active_cloud_api_key.set(await self._select_cloud_api_key())
             default_suffix = ".mp4" if tool["input_kind"] == "video" else ".png"
             input_path, input_name = await self._download_input_media_to_temp(reply, prefix=f"ctool_{tool_id}", default_suffix=default_suffix)
             input_filename = await self._upload_input_path_to_comfyui(input_path, input_name, content_type=mimetypes.guess_type(input_name)[0])
-            workflow, output_node, output_kind = await self._prepare_ctool_workflow(tool_id, input_filename, scale)
+            workflow, output_node, output_kind = await self._prepare_ctool_workflow(effective_tool_id, input_filename, scale)
+            await self._raise_if_cloud_workflow_unsupported(workflow)
 
             async def _do_queue():
                 return await self._retry(self._queue_prompt, workflow, client_id)
@@ -15075,6 +18898,8 @@ class ComfyImageGenMod(loader.Module):
             else:
                 await self._safe_answer(target_for_error, text)
         finally:
+            if self._is_comfy_cloud():
+                self._active_cloud_api_key.set(None)
             self._cleanup_input_file(input_path)
 
     def _parse_ctools_args(self, raw_args):
@@ -15091,12 +18916,13 @@ class ComfyImageGenMod(loader.Module):
                 return tool_id, None, True
         return tool_id, scale, False
 
-    async def _render_ctools_menu(self, message, reply):
+    async def _render_ctools_menu(self, message, reply, reply_kind):
         state_id = str(uuid.uuid4())
         self._ctools_states[state_id] = {
             "chat_id": utils.get_chat_id(message),
             "reply_id": getattr(reply, "id", None),
             "reply_to": getattr(message, "reply_to_msg_id", None),
+            "reply_kind": reply_kind,
         }
         lines = [
             self.strings("ctools_title"),
@@ -15119,29 +18945,50 @@ class ComfyImageGenMod(loader.Module):
             return await self._render_inline(call, self._to_inline_emoji(self.strings("ctools_state_expired")))
         reply = await self.client.get_messages(state["chat_id"], ids=state["reply_id"])
         scale = 2.0 if tool_id == _CTOOL_UPSCALE else None
-        await self._run_ctool(call, reply, tool_id, scale=scale, chat_id=state["chat_id"], reply_to=state.get("reply_to"))
+        await self._run_ctool(
+            call,
+            reply,
+            tool_id,
+            scale=scale,
+            chat_id=state["chat_id"],
+            reply_to=state.get("reply_to"),
+            reply_kind=state.get("reply_kind"),
+        )
 
     @loader.command(
-        ru_doc=" [-upscale (0.1-8x)|-rmbg|-fps] - апскейл изображения, убрать фон, повысить FPS видео",
+        ru_doc=" [-upscale (0.1-8x)|-rmbg|-fps] - апскейл медиа, убрать фон, повысить FPS видео",
     )
     async def ctools(self, message: Message):
-        """ [-upscale (0.1-8x)|-rmbg|-fps] - upscale image, remove background, boost video FPS"""
+        """ [-upscale (0.1-8x)|-rmbg|-fps] - upscale media, remove background, boost video FPS"""
         reply = await message.get_reply_message()
+        reply_kind = await self._reply_media_kind_for_message(message, reply, context="ctools")
         raw_args = utils.get_args_raw(message).strip()
         if not raw_args:
-            if not reply or not getattr(reply, "media", None):
+            if not reply_kind:
                 return await self._safe_answer(message, "\n".join([self.strings("ctools_title"), self.strings("ctools_usage")]))
-            return await self._render_ctools_menu(message, reply)
+            return await self._render_ctools_menu(message, reply, reply_kind)
         tool_id, scale, bad = self._parse_ctools_args(raw_args)
         if bad or not tool_id:
             if tool_id == _CTOOL_UPSCALE:
                 return await self._safe_answer(message, self.strings("ctools_bad_scale"))
             return await self._safe_answer(message, self.strings("ctools_bad_mode"))
-        if not reply or not getattr(reply, "media", None):
+        if not reply_kind:
             tool = self._ctool_definitions().get(tool_id, {})
-            key = "ctools_no_reply_video" if tool.get("input_kind") == "video" else "ctools_no_reply_image"
+            key = (
+                "ctools_no_reply_media"
+                if tool_id == _CTOOL_UPSCALE
+                else ("ctools_no_reply_video" if tool.get("input_kind") == "video" else "ctools_no_reply_image")
+            )
             return await self._safe_answer(message, self.strings(key))
-        await self._run_ctool(message, reply, tool_id, scale=scale, chat_id=utils.get_chat_id(message), reply_to=getattr(message, "reply_to_msg_id", None))
+        await self._run_ctool(
+            message,
+            reply,
+            tool_id,
+            scale=scale,
+            chat_id=utils.get_chat_id(message),
+            reply_to=getattr(message, "reply_to_msg_id", None),
+            reply_kind=reply_kind,
+        )
 
     @loader.command(
         ru_doc=" [Реплай на генерацию из архива] [текст] - Поделиться своей генерацией в @ComfyIdeas. -anon, -top",
@@ -15218,6 +19065,8 @@ class ComfyImageGenMod(loader.Module):
         base = self._base_url()
         if not base:
             return await self._safe_answer(message, self.strings("no_url"))
+        if await self._is_channel_discussion_comment(message):
+            return await self._safe_answer(message, self.strings("comments_generation_disabled"))
 
         preflight_target = None
 
@@ -15242,7 +19091,7 @@ class ComfyImageGenMod(loader.Module):
 
         if not raw_args:
             preloaded_reply = await message.get_reply_message()
-            preloaded_reply_kind = self._reply_media_kind_for_message(
+            preloaded_reply_kind = await self._reply_media_kind_for_message(
                 message,
                 preloaded_reply,
                 context="generation",
@@ -15301,7 +19150,7 @@ class ComfyImageGenMod(loader.Module):
         parsed_cfg = parsed["cfg"]
 
         reply = preloaded_reply or await message.get_reply_message()
-        reply_kind = preloaded_reply_kind or self._reply_media_kind_for_message(
+        reply_kind = preloaded_reply_kind or await self._reply_media_kind_for_message(
             message,
             reply,
             context="generation",
@@ -15349,7 +19198,7 @@ class ComfyImageGenMod(loader.Module):
         model = (
             None
             if limited_mode or promptless_media_workflow
-            else (self.config["model_name"] or self._get_workflow_primary_model(wf_data))
+            else self._resolve_generation_model(wf_data)
         )
 
         if has_photo:
@@ -15481,7 +19330,316 @@ class ComfyImageGenMod(loader.Module):
             return
 
         await _ensure_preflight("preflight_launch")
-        await self._launch_generation_flow(preflight_target or message, generation_state)
+        await self._maybe_render_cloud_confirm(preflight_target or message, generation_state)
+
+    def _cdown_new_state(self):
+        return {
+            "type": _CDOWN_TYPE_CHECKPOINT,
+            "url": "",
+            "metadata": None,
+            "metadata_error": None,
+            "folder": None,
+            "result": None,
+        }
+
+    def _cdown_get_state(self, state_id):
+        state = self._cdown_states.get(state_id)
+        if not isinstance(state, dict):
+            state = self._cdown_new_state()
+            self._cdown_states[state_id] = state
+        return state
+
+    def _cdown_format_metadata_lines(self, state):
+        lines = []
+        metadata = state.get("metadata")
+        if isinstance(metadata, dict):
+            filename = metadata.get("filename") or metadata.get("name") or "-"
+            lines.append(self.strings("cdown_file").format(utils.escape_html(filename)))
+            lines.append(
+                self.strings("cdown_size").format(
+                    self._cdown_format_size(metadata.get("content_length"))
+                )
+            )
+
+        metadata_error = state.get("metadata_error")
+        if metadata_error:
+            lines.append(
+                self.strings("cdown_validation_fail").format(
+                    utils.escape_html(str(metadata_error)[:500])
+                )
+            )
+        elif isinstance(metadata, dict):
+            lines.append(self.strings("cdown_validation_ok"))
+
+        if state.get("folder"):
+            lines.append(
+                self.strings("cdown_folder").format(
+                    utils.escape_html(state["folder"])
+                )
+            )
+        elif state.get("url") and not metadata_error:
+            lines.append(self.strings("cdown_folder_unknown"))
+
+        result = state.get("result")
+        if isinstance(result, dict):
+            lines.append(
+                self.strings(
+                    "cdown_result_ready"
+                    if result.get("status") == 200
+                    else "cdown_result_started"
+                )
+            )
+        return lines
+
+    def _cdown_text(self, state):
+        type_id = state.get("type") or _CDOWN_TYPE_CHECKPOINT
+        url = state.get("url")
+        lines = [
+            self.strings("cdown_title"),
+            "",
+            self.strings("cdown_type").format(
+                utils.escape_html(self._cdown_type_label(type_id))
+            ),
+            (
+                self.strings("cdown_url").format(
+                    utils.escape_html(self._cdown_preview_url(url))
+                )
+                if url
+                else self.strings("cdown_url_missing")
+            ),
+        ]
+        extra = self._cdown_format_metadata_lines(state)
+        if extra:
+            lines.extend(["", *extra])
+        return "\n".join(lines)
+
+    def _cdown_markup(self, state_id, state):
+        current_type = state.get("type") or _CDOWN_TYPE_CHECKPOINT
+        type_buttons = []
+        for type_id in _CDOWN_TYPES:
+            selected = type_id == current_type
+            type_buttons.append(
+                {
+                    "text": ("✅ " if selected else "") + self._cdown_type_label(type_id),
+                    "callback": self._cdown_select_type,
+                    "args": (state_id, type_id),
+                    "style": "success" if selected else "primary",
+                }
+            )
+
+        markup = self._build_button_rows(type_buttons, columns=3)
+        markup.append(
+            [
+                {
+                    "text": self.strings("cdown_btn_url"),
+                    "input": self.strings("cdown_input_url"),
+                    "handler": self._cdown_url_input,
+                    "args": (state_id,),
+                }
+            ]
+        )
+        markup.append(
+            [
+                {
+                    "text": self.strings("cdown_btn_install"),
+                    "callback": self._cdown_install,
+                    "args": (state_id,),
+                    "style": "success",
+                }
+            ]
+        )
+        markup.append(
+            [
+                {
+                    "text": self.strings("btn_close"),
+                    "callback": self._safe_close_form,
+                    "style": "danger",
+                }
+            ]
+        )
+        return markup
+
+    async def _cdown_render(self, target, state_id):
+        state = self._cdown_get_state(state_id)
+        await self._render_inline(target, self._cdown_text(state), self._cdown_markup(state_id, state))
+
+    async def _cdown_refresh_metadata(self, state):
+        url = state.get("url")
+        state["metadata"] = None
+        state["metadata_error"] = None
+        state["folder"] = None
+        state["result"] = None
+        if not url:
+            state["metadata_error"] = self.strings("cdown_need_url")
+            return
+        if not self._cdown_url_allowed(url):
+            state["metadata_error"] = self.strings("cdown_bad_url")
+            return
+        api_key = self._cloud_api_key_or_raise()
+        candidates = self._cdown_url_candidates(url)
+        last_error = None
+        last_metadata = None
+        last_validation_error = None
+        for candidate_url in candidates:
+            try:
+                metadata = await self._cdown_remote_metadata(candidate_url, api_key)
+            except Exception as e:
+                last_error = e
+                continue
+            validation_error = self._cdown_validation_error(metadata)
+            last_metadata = metadata
+            last_validation_error = validation_error
+            if validation_error and candidate_url != candidates[-1]:
+                continue
+            state["url"] = candidate_url
+            state["metadata"] = metadata
+            state["metadata_error"] = validation_error
+            break
+        else:
+            if last_metadata is not None:
+                state["metadata"] = last_metadata
+                state["metadata_error"] = last_validation_error
+            elif last_error:
+                raise last_error
+        state["folder"] = await self._cdown_resolve_folder(state.get("type"), api_key)
+
+    async def _cdown_select_type(self, call: InlineCall, state_id: str, type_id: str):
+        state = self._cdown_get_state(state_id)
+        self._cdown_cancel_watch(state_id)
+        if type_id not in _CDOWN_TYPES:
+            type_id = _CDOWN_TYPE_CHECKPOINT
+        state["type"] = type_id
+        state["result"] = None
+        if state.get("url") and not state.get("metadata_error"):
+            try:
+                state["folder"] = await self._cdown_resolve_folder(type_id)
+            except Exception as e:
+                logger.debug("Cloud model folder refresh failed: %s", e)
+                state["folder"] = None
+        try:
+            await call.answer(self.strings("ult_toggle_saved"))
+        except Exception:
+            pass
+        await self._cdown_render(call, state_id)
+
+    async def _cdown_url_input(self, call: InlineCall, query: str, state_id: str):
+        state = self._cdown_get_state(state_id)
+        self._cdown_cancel_watch(state_id)
+        state["url"] = str(query or "").strip()
+        try:
+            await call.answer(self.strings("cdown_checking"))
+        except Exception:
+            pass
+        try:
+            await self._cdown_refresh_metadata(state)
+            if state.get("metadata_error"):
+                try:
+                    await call.answer(
+                        self._plain_text(str(state["metadata_error"])),
+                        show_alert=True,
+                    )
+                except Exception:
+                    pass
+        except Exception as e:
+            logger.debug("Cloud download metadata check failed: %s", e)
+            state["metadata_error"] = str(e)
+            state["metadata"] = None
+            state["folder"] = None
+            try:
+                await call.answer(
+                    self._plain_text(str(e))[:180],
+                    show_alert=True,
+                )
+            except Exception:
+                pass
+        await self._cdown_render(call, state_id)
+
+    async def _cdown_install(self, call: InlineCall, state_id: str):
+        state = self._cdown_get_state(state_id)
+        if not self._get_cloud_api_keys():
+            try:
+                await call.answer(self.strings("cdown_no_key"), show_alert=True)
+            except Exception:
+                pass
+            return await self._cdown_render(call, state_id)
+        if not state.get("url"):
+            try:
+                await call.answer(self.strings("cdown_need_url"), show_alert=True)
+            except Exception:
+                pass
+            return await self._cdown_render(call, state_id)
+        if not state.get("metadata"):
+            try:
+                await self._cdown_refresh_metadata(state)
+            except Exception as e:
+                state["metadata_error"] = str(e)
+        if state.get("metadata_error"):
+            try:
+                await call.answer(self.strings("cdown_need_valid"), show_alert=True)
+            except Exception:
+                pass
+            return await self._cdown_render(call, state_id)
+
+        try:
+            await call.answer(self.strings("cdown_installing"))
+        except Exception:
+            pass
+
+        try:
+            status, data = await self._cdown_download_asset(state)
+            state["result"] = {"status": status, "data": data}
+            self._comfy_cache.clear()
+            if status == 202:
+                self._cdown_start_watch(call, state_id)
+            try:
+                await call.answer(
+                    self._plain_text(
+                        self.strings(
+                            "cdown_result_ready"
+                            if status == 200
+                            else "cdown_result_started"
+                        )
+                    ),
+                    show_alert=True,
+                )
+            except Exception:
+                pass
+        except Exception as e:
+            logger.debug("Cloud download failed: %s", e)
+            state["result"] = None
+            state["metadata_error"] = None
+            try:
+                await call.answer(
+                    self._plain_text(str(e))[:180],
+                    show_alert=True,
+                )
+            except Exception:
+                pass
+            text = self.strings("cdown_result_failed").format(
+                utils.escape_html(str(e)[:500])
+            )
+            await self._render_inline(call, text, self._cdown_markup(state_id, state))
+            return
+
+        await self._cdown_render(call, state_id)
+
+    @loader.command(
+        ru_doc=" - загрузить модель в ComfyUI Cloud из Hugging Face/Civitai",
+    )
+    async def cdown(self, message: Message):
+        """ - download model to ComfyUI Cloud from Hugging Face/Civitai"""
+        state_id = str(uuid.uuid4())
+        state = self._cdown_new_state()
+        raw_url = utils.get_args_raw(message).strip()
+        if raw_url:
+            state["url"] = raw_url
+            try:
+                await self._cdown_refresh_metadata(state)
+            except Exception as e:
+                logger.debug("Initial cloud download metadata check failed: %s", e)
+                state["metadata_error"] = str(e)
+        self._cdown_states[state_id] = state
+        await self._cdown_render(message, state_id)
 
     @loader.command(
         ru_doc=" - Дополнительные настройки/функции. -bl [reply/@user/id] (блэклист для триггеров)",
@@ -15509,13 +19667,145 @@ class ComfyImageGenMod(loader.Module):
         if not rendered:
             await self._smart_answer(message, self.strings("help_text"))
 
+    async def _render_cmode(self, call_or_message):
+        backend = self._comfy_backend()
+        lines = [
+            self.strings("mode_title"),
+            self.strings("mode_current").format(utils.escape_html(self._format_comfy_backend_name(backend))),
+        ]
+        if backend == _COMFY_BACKEND_CLOUD:
+            keys_count = len(self._get_cloud_api_keys())
+            keys_text = (
+                self.strings("mode_keys_set").format(keys_count)
+                if keys_count
+                else self.strings("mode_keys_missing")
+            )
+            lines.append(self.strings("mode_cloud_keys").format(utils.escape_html(keys_text)))
+            lines.append(self.strings("mode_balance").format(utils.escape_html(await self._format_cloud_balance_for_ui())))
+            mode_buttons = [
+                {"text": self.strings("mode_btn_local"), "callback": self._cmode_select, "args": (_COMFY_BACKEND_LOCAL,)},
+                {"text": self.strings("mode_btn_cloud"), "callback": self._cmode_select, "args": (_COMFY_BACKEND_CLOUD,), "style": "success"},
+            ]
+            action_buttons = [
+                {
+                    "text": self.strings("mode_btn_key"),
+                    "input": self.strings("mode_input_key"),
+                    "handler": self._cmode_cloud_key_input,
+                },
+                {"text": self.strings("mode_btn_balance"), "callback": self._cmode_balance},
+            ]
+        else:
+            lines.append(
+                self.strings(
+                    "mode_local_url_set"
+                    if self._local_base_url()
+                    else "mode_local_url_missing"
+                )
+            )
+            mode_buttons = [
+                {"text": self.strings("mode_btn_local"), "callback": self._cmode_select, "args": (_COMFY_BACKEND_LOCAL,), "style": "success"},
+                {"text": self.strings("mode_btn_cloud"), "callback": self._cmode_select, "args": (_COMFY_BACKEND_CLOUD,)},
+            ]
+            action_buttons = [
+                {
+                    "text": self.strings("mode_btn_url"),
+                    "input": self.strings("mode_input_url"),
+                    "handler": self._cmode_local_url_input,
+                },
+                {"text": self.strings("mode_btn_check"), "callback": self._cmode_check},
+            ]
+
+        markup = [
+            mode_buttons,
+            action_buttons,
+        ]
+        if backend == _COMFY_BACKEND_CLOUD:
+            markup.append([{"text": self.strings("mode_btn_check"), "callback": self._cmode_check}])
+        markup.append([{"text": self.strings("btn_close"), "callback": self._safe_close_form, "style": "danger"}])
+        await self._render_inline(call_or_message, "\n".join(lines), markup)
+
+    async def _cmode_select(self, call: InlineCall, backend: str):
+        backend = _COMFY_BACKEND_CLOUD if backend == _COMFY_BACKEND_CLOUD else _COMFY_BACKEND_LOCAL
+        self.config["comfyui_backend"] = backend
+        if backend == _COMFY_BACKEND_CLOUD:
+            self._set_cloud_model_as_workflow(True)
+            self.set("default_workflow", _DEFAULT_CLOUD_WORKFLOW_NAME)
+            self._set_workflow_limited_mode(False)
+            self._update_default_arg_values()
+        self._comfy_cache.clear()
+        if backend == _COMFY_BACKEND_LOCAL:
+            self._restore_tunnel_watch_state()
+        try:
+            await call.answer(self.strings("mode_saved").format(self._format_comfy_backend_name(backend)))
+        except Exception:
+            pass
+        await self._render_cmode(call)
+
+    async def _cmode_local_url_input(self, call: InlineCall, query: str):
+        url = str(query or "").strip()
+        try:
+            self.config["comfyui_url"] = self._normalize_probe_url(url)
+            self._comfy_cache.clear()
+            self._restore_tunnel_watch_state()
+            await call.answer(self.strings("mode_url_saved"))
+        except Exception:
+            await call.answer(self.strings("ct_bad_url"), show_alert=True)
+        await self._render_cmode(call)
+
+    async def _cmode_cloud_key_input(self, call: InlineCall, query: str):
+        self._set_cloud_api_keys(query)
+        self._comfy_cache.clear()
+        try:
+            await call.answer(self.strings("mode_key_saved"))
+        except Exception:
+            pass
+        await self._render_cmode(call)
+
+    async def _cmode_check(self, call: InlineCall):
+        ok = False
+        try:
+            if self._is_comfy_cloud():
+                if not self._get_cloud_api_keys():
+                    raise UserFacingError("cloud_no_key", self._plain_text(self.strings("cloud_no_key")))
+                self._comfy_cache.clear()
+                await self._select_cloud_api_key(set_active=False)
+                ok = True
+            else:
+                ok = bool(await self._health_check(attempts=1))
+        except Exception as e:
+            logger.debug("cmode connection check failed: %s", e)
+            ok = False
+        try:
+            await call.answer(self.strings("mode_check_ok" if ok else "mode_check_fail"), show_alert=True)
+        except Exception:
+            pass
+        await self._render_cmode(call)
+
+    async def _cmode_balance(self, call: InlineCall):
+        balance = await self._format_cloud_balance_for_ui(force=True)
+        try:
+            await call.answer(self.strings("mode_balance").format(balance), show_alert=True)
+        except Exception:
+            pass
+        await self._render_cmode(call)
+
+    @loader.command(ru_doc=" - выбрать локальный ComfyUI или ComfyUI Cloud")
+    async def cmode(self, message: Message):
+        """ - Select local ComfyUI or ComfyUI Cloud backend"""
+        await self._render_cmode(message)
+
     @loader.command(ru_doc=" - Статус подключения к ComfyUI")
     async def ci(self, message: Message):
         """ - ComfyUI connection status"""
-        status = await self._safe_answer(
+        status = await self._render_inline(
             message,
             self._format_ci_loading_text(),
         )
+        if not status:
+            status = await self._safe_answer(
+                message,
+                self._format_ci_loading_text(),
+            )
         ping_state = {}
         ping_stop = asyncio.Event()
         ping_task = asyncio.create_task(self._ci_ping_loop(status or message, ping_state, ping_stop))
@@ -15607,7 +19897,15 @@ class ComfyImageGenMod(loader.Module):
         ]
         details = []
 
-        health = await self._health_check()
+        if self._is_comfy_cloud():
+            try:
+                await self._select_cloud_api_key(set_active=False)
+                health = {"system": {"comfyui": "ComfyUI Cloud"}, "devices": []}
+            except Exception as e:
+                logger.debug("ComfyUI Cloud info check failed: %s", e)
+                health = False
+        else:
+            health = await self._health_check()
         if health and isinstance(health, dict):
             lines.append(self.strings("info_ok"))
             system = health.get("system", {})
@@ -15662,7 +19960,7 @@ class ComfyImageGenMod(loader.Module):
                             self._format_memory_gb(vram_used),
                             self._format_memory_gb(vram_total),
                         ))
-            else:
+            elif not self._is_comfy_cloud():
                 details.append(self.strings("info_device").format(
                     self.strings("info_no_device")
                 ))
@@ -15675,7 +19973,18 @@ class ComfyImageGenMod(loader.Module):
         total_generations = self.strings("info_total_generations").format(
             self._get_total_generation_count()
         )
-        bottom_lines = [total_generations]
+        bottom_lines = [
+            self.strings("info_backend").format(
+                utils.escape_html(self._format_comfy_backend_name())
+            )
+        ]
+        if self._is_comfy_cloud():
+            bottom_lines.append(
+                self.strings("info_balance").format(
+                    utils.escape_html(await self._format_cloud_balance_for_ui())
+                )
+            )
+        bottom_lines.append(total_generations)
         if ping_stop_event:
             ping_stop_event.set()
         if ping_task and not ping_task.done():
@@ -15699,13 +20008,14 @@ class ComfyImageGenMod(loader.Module):
 
         text = self._to_inline_emoji("\n".join(lines))
         markup = [
-            [
-                {"text": self.strings("free_btn"), "callback": self._free_memory_callback, "style": "danger"},
-                {"text": self.strings("force_free_btn"), "callback": self._force_free_memory_callback, "style": "danger"},
-            ],
             [{"text": self.strings("refresh_btn"), "callback": self._refresh_comfyinfo_callback, "style": "primary"}],
             [{"text": self.strings("btn_close"), "callback": self._safe_close_form, "style": "danger"}],
         ]
+        if not self._is_comfy_cloud():
+            markup.insert(0, [
+                {"text": self.strings("free_btn"), "callback": self._free_memory_callback, "style": "danger"},
+                {"text": self.strings("force_free_btn"), "callback": self._force_free_memory_callback, "style": "danger"},
+            ])
 
         await self._render_inline_with_info_banner(target, text, markup)
 
@@ -15756,6 +20066,323 @@ class ComfyImageGenMod(loader.Module):
             models.extend(values)
         return list(dict.fromkeys(models))
 
+    def _cloud_model_current_text(self, state=None):
+        workflow_model = (
+            (state or {}).get("workflow_model")
+            or self._current_workflow_model()
+            or self.strings("not_set")
+        )
+        if self._cloud_model_as_workflow():
+            return self.strings("models_as_workflow").format(
+                self._format_model_name(workflow_model, max_length=None)
+            )
+        return self._format_model_name(
+            self.config["model_name"] or self.strings("not_set"),
+            max_length=None,
+        )
+
+    @staticmethod
+    def _model_short_button_text(value, limit=34):
+        value = str(value or "").strip()
+        return value[: limit - 2] + ".." if len(value) > limit else value
+
+    @staticmethod
+    def _cloud_default_folder_sort_key(folder):
+        folder = str(folder or "").strip()
+        lower = folder.lower()
+        root = lower.split("/", 1)[0]
+        priority = {
+            "checkpoints": 0,
+            "checkpoint": 0,
+            "diffusion_models": 1,
+            "diffusion_model": 1,
+            "unet": 1,
+            "unets": 1,
+            "loras": 2,
+            "lora": 2,
+            "vae": 3,
+            "vaes": 3,
+            "controlnet": 4,
+            "controlnets": 4,
+            "upscale_models": 5,
+            "latent_upscale_models": 6,
+            "text_encoders": 7,
+            "text_encoder": 7,
+            "clip": 8,
+            "clip_vision": 9,
+            "ipadapter": 10,
+            "embeddings": 11,
+            "embedding": 11,
+            "style_models": 12,
+            "model_patches": 13,
+            "sams": 14,
+            "sam": 14,
+            "sam2": 15,
+            "sam3": 16,
+            "llm": 17,
+        }
+        return (priority.get(root, 100), lower)
+
+    async def _render_cloud_model_main(self, call_or_message, state_id):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        state["view"] = "cloud_main"
+        state["page"] = 0
+        current = self._cloud_model_current_text(state)
+        lines = [
+            self.strings("models_cloud_title"),
+            self.strings("models_cloud_current").format(utils.escape_html(current)),
+        ]
+        as_workflow_text = (
+            ("\u2705 " if self._cloud_model_as_workflow() else "")
+            + self.strings("models_as_workflow_btn")
+        )
+        markup = [
+            [{
+                "text": as_workflow_text,
+                "callback": self._model_cloud_as_workflow,
+                "args": (state_id,),
+                "style": "success" if self._cloud_model_as_workflow() else "primary",
+            }],
+            [{
+                "text": self.strings("models_cloud_default_btn"),
+                "callback": self._model_cloud_source,
+                "args": (state_id, "default"),
+            }],
+            [{
+                "text": self.strings("models_cloud_custom_btn"),
+                "callback": self._model_cloud_source,
+                "args": (state_id, "custom"),
+            }],
+            [{"text": self.strings("btn_close"), "callback": self._safe_close_form, "style": "danger"}],
+        ]
+        await self._render_inline(call_or_message, "\n".join(lines), markup)
+
+    async def _render_cloud_model_folders(self, call_or_message, state_id):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        folders = list(state.get("folders") or [])
+        page = state.get("page", 0)
+        is_default = state.get("source") != "custom"
+        per_page = 18 if is_default else 8
+        total_pages = max(1, (len(folders) + per_page - 1) // per_page)
+        page = min(max(0, page), total_pages - 1)
+        state["page"] = page
+        page_folders = folders[page * per_page:(page + 1) * per_page]
+
+        title_key = (
+            "models_cloud_custom_title"
+            if state.get("source") == "custom"
+            else "models_cloud_default_title"
+        )
+        lines = [
+            self.strings(title_key),
+            self.strings("models_cloud_current").format(
+                utils.escape_html(self._cloud_model_current_text(state))
+            ),
+        ]
+        if not folders:
+            lines.append(self.strings("models_cloud_empty_folders"))
+        else:
+            lines.append(self.strings("models_page").format(page + 1, total_pages))
+
+        buttons = []
+        for folder in page_folders:
+            buttons.append({
+                "text": self._model_short_button_text(folder),
+                "callback": self._model_cloud_folder,
+                "args": (state_id, folder),
+            })
+        markup = self._build_button_rows(buttons, columns=3 if is_default else 1)
+        nav_row = []
+        if page > 0:
+            nav_row.append({"text": "\u25c0\ufe0f", "callback": self._model_cloud_page, "args": (state_id, -1)})
+        if page < total_pages - 1:
+            nav_row.append({"text": "\u25b6\ufe0f", "callback": self._model_cloud_page, "args": (state_id, 1)})
+        if nav_row:
+            markup.append(nav_row)
+        markup.append([
+            {"text": self.strings("btn_back"), "callback": self._model_cloud_back_main, "args": (state_id,)},
+            {"text": self.strings("btn_close"), "callback": self._safe_close_form, "style": "danger"},
+        ])
+        await self._render_inline(call_or_message, "\n".join(lines), markup)
+
+    async def _render_cloud_model_items(self, call_or_message, state_id):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        models = list(state.get("models") or [])
+        page = state.get("page", 0)
+        per_page = 6
+        total_pages = max(1, (len(models) + per_page - 1) // per_page)
+        page = min(max(0, page), total_pages - 1)
+        state["page"] = page
+        page_models = models[page * per_page:(page + 1) * per_page]
+        current_model = str(self.config["model_name"] or "")
+        cloud_as_workflow = self._cloud_model_as_workflow()
+        folder = str(state.get("folder") or "")
+
+        lines = [
+            self.strings("models_cloud_folder_title").format(utils.escape_html(folder)),
+            self.strings("models_cloud_current").format(
+                utils.escape_html(self._cloud_model_current_text(state))
+            ),
+        ]
+        for model in page_models:
+            icon = (
+                '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji>'
+                if not cloud_as_workflow and model == current_model
+                else '<tg-emoji emoji-id="5985346521103604145">\u2b1c</tg-emoji>'
+            )
+            lines.append(
+                f"<blockquote>{icon} {utils.escape_html(self._format_model_name(model, max_length=None))}</blockquote>"
+            )
+        if not models:
+            lines.append(self.strings("models_cloud_empty_models"))
+        else:
+            lines.append(self.strings("models_page").format(page + 1, total_pages))
+
+        buttons = []
+        for model in page_models:
+            icon = "\u2705 " if not cloud_as_workflow and model == current_model else "\u2b1c "
+            buttons.append({
+                "text": icon + self._model_short_button_text(self._format_model_name(model, max_length=None), limit=28),
+                "callback": self._model_cloud_select,
+                "args": (state_id, model),
+            })
+        markup = self._build_button_rows(buttons, columns=1)
+        nav_row = []
+        if page > 0:
+            nav_row.append({"text": "\u25c0\ufe0f", "callback": self._model_cloud_page, "args": (state_id, -1)})
+        if page < total_pages - 1:
+            nav_row.append({"text": "\u25b6\ufe0f", "callback": self._model_cloud_page, "args": (state_id, 1)})
+        if nav_row:
+            markup.append(nav_row)
+        markup.append([
+            {"text": self.strings("btn_back"), "callback": self._model_cloud_back_folders, "args": (state_id,)},
+            {"text": self.strings("btn_close"), "callback": self._safe_close_form, "style": "danger"},
+        ])
+        await self._render_inline(call_or_message, "\n".join(lines), markup)
+
+    async def _model_cloud_as_workflow(self, call: InlineCall, state_id: str):
+        self._set_cloud_model_as_workflow(True)
+        try:
+            await call.answer(self.strings("toast_model_as_workflow"))
+        except Exception:
+            pass
+        await self._render_cloud_model_main(call, state_id)
+
+    async def _model_cloud_source(self, call: InlineCall, state_id: str, source: str):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        source = "custom" if source == "custom" else "default"
+        try:
+            await call.answer(self.strings("models_loading"))
+        except Exception:
+            pass
+        if source == "custom":
+            try:
+                groups = await self._get_cloud_user_model_asset_groups()
+            except Exception as e:
+                logger.debug("Cloud user model assets failed: %s", e)
+                try:
+                    await call.answer(self._plain_text(str(e))[:180], show_alert=True)
+                except Exception:
+                    pass
+                return await self._render_cloud_model_main(call, state_id)
+            folders = sorted(groups.keys(), key=str.lower)
+            if not folders:
+                try:
+                    await call.answer(self.strings("models_cloud_empty_custom"), show_alert=True)
+                except Exception:
+                    pass
+            state["custom_groups"] = groups
+        else:
+            folder_data = await self._get_cloud_model_folders(authenticated=False)
+            folders = [item["name"] for item in folder_data if isinstance(item, dict) and item.get("name")]
+            folders = sorted(folders, key=self._cloud_default_folder_sort_key)
+            if not folders:
+                try:
+                    await call.answer(self.strings("models_cloud_empty_folders"), show_alert=True)
+                except Exception:
+                    pass
+        state.update({
+            "view": "cloud_folders",
+            "source": source,
+            "folders": folders,
+            "folder": None,
+            "models": [],
+            "page": 0,
+        })
+        await self._render_cloud_model_folders(call, state_id)
+
+    async def _model_cloud_folder(self, call: InlineCall, state_id: str, folder: str):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        try:
+            await call.answer(self.strings("models_loading"))
+        except Exception:
+            pass
+        if state.get("source") == "custom":
+            groups = state.get("custom_groups")
+            if not isinstance(groups, dict):
+                groups = await self._get_cloud_user_model_asset_groups()
+                state["custom_groups"] = groups
+            models = list(groups.get(folder) or [])
+        else:
+            models = await self._get_cloud_models_folder_for_scope(folder, authenticated=False)
+        state.update({
+            "view": "cloud_models",
+            "folder": folder,
+            "models": sorted(dict.fromkeys(models)),
+            "page": 0,
+        })
+        if not state["models"]:
+            try:
+                await call.answer(self.strings("models_cloud_empty_models"), show_alert=True)
+            except Exception:
+                pass
+        await self._render_cloud_model_items(call, state_id)
+
+    async def _model_cloud_select(self, call: InlineCall, state_id: str, model_name: str):
+        self.config["model_name"] = model_name
+        self._set_cloud_model_as_workflow(False)
+        self._sync_argset_for_current_model()
+        try:
+            await call.answer(
+                self.strings("toast_model_set").format(
+                    self._format_model_name(model_name, max_length=None)
+                )
+            )
+        except Exception:
+            pass
+        await self._render_cloud_model_items(call, state_id)
+
+    async def _model_cloud_page(self, call: InlineCall, state_id: str, direction: int):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        state["page"] = state.get("page", 0) + direction
+        if state.get("view") == "cloud_models":
+            await self._render_cloud_model_items(call, state_id)
+        else:
+            await self._render_cloud_model_folders(call, state_id)
+
+    async def _model_cloud_back_main(self, call: InlineCall, state_id: str):
+        await self._render_cloud_model_main(call, state_id)
+
+    async def _model_cloud_back_folders(self, call: InlineCall, state_id: str):
+        state = self._models_page_cache.get(state_id)
+        if not state:
+            return
+        state["view"] = "cloud_folders"
+        state["page"] = 0
+        await self._render_cloud_model_folders(call, state_id)
+
     async def _render_model_list(self, call_or_message, state_id):
         state = self._models_page_cache.get(state_id)
         if not state:
@@ -15769,10 +20396,21 @@ class ComfyImageGenMod(loader.Module):
         start = page * per_page
         page_models = models[start:start + per_page]
         current_model = self.config["model_name"]
+        cloud_as_workflow = self._is_comfy_cloud() and self._cloud_model_as_workflow()
+        workflow_model = state.get("workflow_model") or self._current_workflow_model() or self.strings("not_set")
 
         lines = [self.strings("models_title")]
+        if self._is_comfy_cloud():
+            workflow_icon = '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji>' if cloud_as_workflow else '<tg-emoji emoji-id="5985346521103604145">\u2b1c</tg-emoji>'
+            lines.append(
+                f"<blockquote>{workflow_icon} "
+                + self.strings("models_as_workflow").format(
+                    utils.escape_html(self._format_model_name(workflow_model, max_length=None))
+                )
+                + "</blockquote>"
+            )
         for m in page_models:
-            icon = '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji>' if m == current_model else '<tg-emoji emoji-id="5985346521103604145">\u2b1c</tg-emoji>'
+            icon = '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji>' if (not cloud_as_workflow and m == current_model) else '<tg-emoji emoji-id="5985346521103604145">\u2b1c</tg-emoji>'
             lines.append(f"<blockquote>{icon} {utils.escape_html(self._format_model_name(m, max_length=None))}</blockquote>")
         lines.append(self.strings("models_page").format(page + 1, total_pages))
         text = "\n".join(lines)
@@ -15782,7 +20420,7 @@ class ComfyImageGenMod(loader.Module):
             short_name = self._format_model_name(m, max_length=None)
             if len(short_name) > 25:
                 short_name = short_name[:23] + ".."
-            icon = "\u2705 " if m == current_model else "\u2b1c "
+            icon = "\u2705 " if (not cloud_as_workflow and m == current_model) else "\u2b1c "
             buttons.append({
                 "text": f"{icon}{short_name}",
                 "callback": self._model_select,
@@ -15790,6 +20428,12 @@ class ComfyImageGenMod(loader.Module):
             })
 
         markup = self._build_button_rows(buttons)
+        if self._is_comfy_cloud():
+            markup.append([{
+                "text": ("\u2705 " if cloud_as_workflow else "") + self.strings("models_as_workflow_btn"),
+                "callback": self._model_as_workflow,
+                "args": (state_id,),
+            }])
         nav_row = []
         if page > 0:
             nav_row.append({"text": "\u25c0\ufe0f", "callback": self._model_page, "args": (state_id, -1)})
@@ -15817,6 +20461,8 @@ class ComfyImageGenMod(loader.Module):
 
     async def _model_select(self, call: InlineCall, state_id: str, model_name: str):
         self.config["model_name"] = model_name
+        if self._is_comfy_cloud():
+            self._set_cloud_model_as_workflow(False)
         self._sync_argset_for_current_model()
         try:
             await call.answer(self.strings("toast_model_set").format(self._format_model_name(model_name, max_length=None)))
@@ -15831,6 +20477,8 @@ class ComfyImageGenMod(loader.Module):
         if not model_name:
             return
         self.config["model_name"] = model_name
+        if self._is_comfy_cloud():
+            self._set_cloud_model_as_workflow(False)
         self._sync_argset_for_current_model()
         try:
             await call.answer(self.strings("toast_model_set").format(self._format_model_name(model_name, max_length=None)))
@@ -15843,6 +20491,17 @@ class ComfyImageGenMod(loader.Module):
                 state["models"] = sorted(dict.fromkeys(state["models"]))
             await self._render_model_list(call, state_id)
 
+    async def _model_as_workflow(self, call: InlineCall, state_id: str):
+        if self._is_comfy_cloud():
+            self._set_cloud_model_as_workflow(True)
+        try:
+            await call.answer(self.strings("toast_model_as_workflow"))
+        except Exception:
+            pass
+        state = self._models_page_cache.get(state_id)
+        if state:
+            await self._render_model_list(call, state_id)
+
     @loader.command(
         ru_doc=" - Выбрать модель ComfyUI",
         aliases=["smodel", "setm"],
@@ -15852,11 +20511,26 @@ class ComfyImageGenMod(loader.Module):
         args = utils.get_args_raw(message).strip()
         if args:
             self.config["model_name"] = args
+            if self._is_comfy_cloud():
+                self._set_cloud_model_as_workflow(False)
             self._sync_argset_for_current_model()
             return await utils.answer(
                 message,
                 self.strings("models_set").format(utils.escape_html(self._format_model_name(args, max_length=None))),
             )
+
+        if self._is_comfy_cloud():
+            state_id = str(uuid.uuid4())
+            self._models_page_cache[state_id] = {
+                "view": "cloud_main",
+                "source": None,
+                "folders": [],
+                "folder": None,
+                "models": [],
+                "page": 0,
+                "workflow_model": self._current_workflow_model(),
+            }
+            return await self._render_cloud_model_main(message, state_id)
 
         base = self._base_url()
         if not base:
@@ -15867,13 +20541,14 @@ class ComfyImageGenMod(loader.Module):
             self._format_generation_preflight_inline(self.strings("models_loading")),
         )
         models = await self._get_available_checkpoints()
-        if not models:
+        if not models and not self._is_comfy_cloud():
             return await self._safe_answer(status or message, self.strings("models_empty"))
 
         state_id = str(uuid.uuid4())
         self._models_page_cache[state_id] = {
             "models": sorted(models),
             "page": 0,
+            "workflow_model": self._current_workflow_model(),
         }
         await self._render_model_list(status or message, state_id)
 
@@ -15893,8 +20568,10 @@ class ComfyImageGenMod(loader.Module):
                 {"text": self.strings("wf_builtin_btn"), "callback": self._wf_show_builtin, "args": (state_id,)},
                 {"text": self.strings("wf_custom_btn"), "callback": self._wf_show_custom, "args": (state_id,)},
             ],
-            [{"text": "\u274c", "callback": self._safe_close_form}],
         ]
+        if self._is_comfy_cloud():
+            markup.append([{"text": self.strings("wf_cloud_btn"), "callback": self._wf_show_cloud, "args": (state_id,)}])
+        markup.append([{"text": "\u274c", "callback": self._safe_close_form}])
         await self._render_inline(call_or_message, text, markup)
 
     async def _wf_show_builtin(self, call: InlineCall, state_id: str):
@@ -15922,6 +20599,17 @@ class ComfyImageGenMod(loader.Module):
         state["page"] = 0
         await self._render_wf_list(call, state_id)
 
+    async def _wf_show_cloud(self, call: InlineCall, state_id: str):
+        state = self._wf_page_cache.get(state_id)
+        if not state:
+            return
+        if not self._is_comfy_cloud():
+            return await self._render_wf_main(call, state_id)
+        state["workflows"] = list(self._CLOUD_WORKFLOWS)
+        state["wf_type"] = "cloud"
+        state["page"] = 0
+        await self._render_wf_list(call, state_id)
+
     async def _render_wf_list(self, call_or_message, state_id):
         state = self._wf_page_cache.get(state_id)
         if not state:
@@ -15936,14 +20624,16 @@ class ComfyImageGenMod(loader.Module):
         page_wfs = workflows[start:start + per_page]
         current_wf = self._canonical_workflow_name(self.get("default_workflow", _DEFAULT_WORKFLOW_NAME))
 
-        title_key = "wf_list_title_builtin" if state["wf_type"] == "builtin" else "wf_list_title_custom"
+        title_key = {
+            "builtin": "wf_list_title_builtin",
+            "cloud": "wf_list_title_cloud",
+        }.get(state["wf_type"], "wf_list_title_custom")
         limited_mode = self._workflow_limited_mode()
-        lines = [
-            self.strings(title_key),
-            f"<blockquote>{self.strings('wf_limited_hint')}</blockquote>",
-        ]
+        lines = [self.strings(title_key)]
+        if state["wf_type"] != "cloud":
+            lines.append(f"<blockquote>{self.strings('wf_limited_hint')}</blockquote>")
         for w in page_wfs:
-            if w == current_wf and limited_mode:
+            if w == current_wf and limited_mode and state["wf_type"] != "cloud":
                 icon = '<tg-emoji emoji-id="5271842287326863410">🔵</tg-emoji>'
             elif w == current_wf:
                 icon = '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji>'
@@ -15962,7 +20652,7 @@ class ComfyImageGenMod(loader.Module):
             if len(display) > 25:
                 display = display[:23] + ".."
             is_current = w == current_wf
-            if is_current and limited_mode:
+            if is_current and limited_mode and state["wf_type"] != "cloud":
                 icon = "🔵 "
                 style = "primary"
             elif is_current:
@@ -16004,8 +20694,15 @@ class ComfyImageGenMod(loader.Module):
         await self._render_wf_list(call, state_id)
 
     async def _wf_select(self, call: InlineCall, state_id: str, wf_name: str):
+        state = self._wf_page_cache.get(state_id)
         current_wf = self._canonical_workflow_name(self.get("default_workflow", _DEFAULT_WORKFLOW_NAME))
-        if wf_name == current_wf:
+        is_cloud_workflow = self._is_cloud_workflow_name(wf_name)
+        if is_cloud_workflow:
+            self.config["comfyui_backend"] = _COMFY_BACKEND_CLOUD
+            self._set_cloud_model_as_workflow(True)
+            self._comfy_cache.clear()
+
+        if wf_name == current_wf and not is_cloud_workflow:
             limited_mode = not self._workflow_limited_mode()
             self._set_workflow_limited_mode(limited_mode)
             toast_key = "toast_wf_limited_on" if limited_mode else "toast_wf_limited_off"
@@ -16019,7 +20716,6 @@ class ComfyImageGenMod(loader.Module):
             await call.answer(self.strings(toast_key).format(wf_name))
         except Exception:
             pass
-        state = self._wf_page_cache.get(state_id)
         if state:
             await self._render_wf_list(call, state_id)
 
@@ -16041,6 +20737,11 @@ class ComfyImageGenMod(loader.Module):
                     return await utils.answer(message, self._apply_emoji_theme(self.strings("err_reserved_wf")))
                 wf_name = self._canonical_workflow_name(raw_name)
                 if wf_name in self._get_all_workflow_names():
+                    if self._is_cloud_workflow_name(wf_name):
+                        self.config["comfyui_backend"] = _COMFY_BACKEND_CLOUD
+                        self._set_cloud_model_as_workflow(True)
+                        self._comfy_cache.clear()
+                        limited_mode = False
                     self.set("default_workflow", wf_name)
                     self._set_workflow_limited_mode(limited_mode)
                     self._update_default_arg_values()
@@ -16197,7 +20898,7 @@ class ComfyImageGenMod(loader.Module):
             return await utils.answer(message, self._apply_emoji_theme(self.strings("err_reserved_wf")))
 
         canonical_name = self._canonical_workflow_name(name)
-        if canonical_name in self._BUILTIN_WORKFLOWS:
+        if self._is_builtin_workflow(canonical_name):
             return await utils.answer(
                 message, self.strings("add_wf_exists").format(utils.escape_html(canonical_name))
             )
@@ -16314,7 +21015,7 @@ class ComfyImageGenMod(loader.Module):
             return await utils.answer(message, self._apply_emoji_theme(self.strings("err_reserved_wf")))
 
         canonical_name = self._canonical_workflow_name(name)
-        if canonical_name in self._BUILTIN_WORKFLOWS:
+        if self._is_builtin_workflow(canonical_name):
             return await utils.answer(
                 message, self.strings("del_wf_builtin").format(utils.escape_html(canonical_name))
             )
