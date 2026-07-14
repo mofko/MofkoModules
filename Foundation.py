@@ -1,11 +1,14 @@
-__version__ = (2, 4, 0)
-# diff: better antispam logic
+__version__ = (2, 5, 0)
+# diff: Обновлены триггеры + блеклист, уведомления об обновлениях, кэш, убраны все языкы кроме EN/RU.
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
+# requires: aiohttp
+# scope: heroku_min 2.0.0
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
-# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
-# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, nsfw, sfw
+#metapic:https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
+# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, говно, nsfw, sfw
+# meta tags: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, говно, nsfw, sfw
 
 import random
 import logging
@@ -14,10 +17,11 @@ import time
 import aiohttp
 import re
 from collections import defaultdict, deque
-from herokutl.types import Message
+from herokutl.errors import FloodWaitError
+from herokutl.errors.rpcerrorlist import ChannelPrivateError, UserNotParticipantError
+from herokutl.tl import functions
+from herokutl.tl.types import Message
 from .. import loader, utils
-from telethon.errors import FloodWaitError, UserNotParticipantError, ChannelPrivateError
-from telethon import functions
 from ..inline.types import InlineCall
 
 logger = logging.getLogger(__name__)
@@ -25,6 +29,8 @@ logger = logging.getLogger(__name__)
 
 @loader.tds
 class Foundation(loader.Module):
+    """Send random NSFW and SFW media from Foundation sources."""
+
     strings = {
         "name": "Foundation",
         "error": "<emoji document_id=6012681561286122335>🤤</emoji> Something went wrong, check logs",
@@ -34,15 +40,32 @@ class Foundation(loader.Module):
         "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
         "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Configuration of triggers for Foundation</b>\n\nChat: {} (ID: {})\n\nCurrent triggers:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
         "select_trigger": "Select trigger to configure:",
-        "enter_trigger_word": "✍️ Enter trigger word (or 'off' to disable):",
-        "trigger_updated": "✅ Trigger updated!\n\n{} will now trigger .{} in chat {}",
-        "trigger_disabled": "✅ Trigger disabled for .{} in chat {}",
+        "enter_trigger_word": "✍️ Enter trigger word (or 0 to disable):",
         "no_triggers": "No triggers configured",
         "fsfw_cmd_doc": "Send random SFW media from @sfwfond",
         "access_required_text": "To use this command, you must be in the channel and the channel chat!",
         "channel_button": "Channel",
         "chat_button": "Chat",
-        "update_available": "A Foundation update is available on GitHub.\nInstalled: <code>{}</code>\nGitHub: <code>{}</code>\nUpdate:\n<code>.dlm {}</code>",
+        "source_unavailable": "<b>Foundation source is temporarily unavailable.</b> Try again later.",
+        "update_available": '<tg-emoji emoji-id="5361979468887893611">🆕</tg-emoji> <b>Foundation update</b>\n\n<code>{}</code> -> <code>{}</code>{}\n\n<b>Install:</b>\n<code>{}</code>',
+        "update_diff": "\n\n<b>What's new:</b>\n<blockquote expandable>{}</blockquote>",
+        "trigger_reply_required": "Reply to a user message.",
+        "trigger_user_required": "This trigger blacklist only supports users.",
+        "trigger_blacklist_added": "<b>{}</b> is blocked from trigger generation.",
+        "trigger_blacklist_removed": "<b>{}</b> is removed from the trigger blacklist.",
+        "trigger_empty": "Trigger cannot be empty.",
+        "trigger_btn_fond": "Configure fond trigger",
+        "trigger_btn_vfond": "Configure vfond trigger",
+        "trigger_btn_fsfw": "Configure fsfw trigger",
+        "trigger_btn_set": "Set trigger for .{}",
+        "trigger_btn_delete": "Delete trigger",
+        "trigger_btn_back": "Back",
+        "trigger_btn_close": "Close",
+        "cfg_triggers_enabled": "Enable trigger watcher.",
+        "cfg_spam_protection": "Enable spam protection for commands and triggers.",
+        "cfg_auto_delete_media": "Automatically delete sent NSFW media after the configured delay.",
+        "cfg_auto_delete_delay": "Delay before auto-deleting NSFW media in seconds (0 disables it).",
+        "cfg_trigger_blacklist": "Global trigger blacklist. Entries are stored as @username - user_id.",
     }
 
     strings_ru = {
@@ -53,156 +76,33 @@ class Foundation(loader.Module):
         "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа в канале",
         "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
         "select_trigger": "Выберите триггер для настройки:",
-        "enter_trigger_word": "✍️ Введите слово-триггер (или 'off' для отключения):",
-        "trigger_updated": "✅ Триггер обновлен!\n\n{} теперь будет вызывать .{} в чате {}",
-        "trigger_disabled": "✅ Триггер отключен для .{} в чате {}",
+        "enter_trigger_word": "✍️ Введите слово-триггер (или 0 для отключения):",
         "no_triggers": "Триггеры не настроены",
         "_cls_doc": "Случайное NSFW медиа",
         "fsfw_cmd_doc": "Отправить рандомное SFW медиа с @sfwfond",
         "access_required_text": "Для использования команды необходимо состоять в канале и чате канала!",
         "channel_button": "Канал",
         "chat_button": "Чат",
-        "update_available": "Доступно обновление Foundation на GitHub.\nУстановлено: <code>{}</code>\nGitHub: <code>{}</code>\nОбновить:\n<code>.dlm {}</code>",
-    }
-
-    strings_de = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Etwas ist schiefgelaufen, überprüfe die Logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Du musst zuerst dem Kanal beitreten: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Videos im Kanal gefunden",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Keine Medien im Kanal gefunden",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Konfiguration der Auslöser für Foundation</b>\n\nChat: {} (ID: {})\n\nAktuelle Auslöser:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "Wähle den Auslöser zum Konfigurieren:",
-        "enter_trigger_word": "✍️ Gib das Auslöserwort ein (oder 'off' zum Deaktivieren):",
-        "trigger_updated": "✅ Auslöser aktualisiert!\n\n{} wird nun .{} im Chat {} auslösen",
-        "trigger_disabled": "✅ Auslöser für .{} im Chat {} deaktiviert",
-        "no_triggers": "Keine Auslöser konfiguriert",
-        "_cls_doc": "Zufällige NSFW-Medien",
-        "fsfw_cmd_doc": "Zufällige SFW-Medien von @sfwfond senden",
-        "access_required_text": "Um diesen Befehl zu verwenden, musst du im Kanal und im Chat des Kanals sein!",
-        "channel_button": "Kanal",
-        "chat_button": "Chat",
-        "update_available": "Ein Foundation-Update ist auf GitHub verfügbar.\nInstalliert: <code>{}</code>\nGitHub: <code>{}</code>\nAktualisieren:\n<code>.dlm {}</code>",
-    }
-
-    strings_zh = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> 出现问题，请检查日志",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 你需要先加入频道 {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到视频",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> 频道中未找到媒体",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Foundation 触发器配置</b>\n\n聊天: {} (ID: {})\n\n当前触发器:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "选择要配置的触发器:",
-        "enter_trigger_word": "✍️ 输入触发词 (或输入 'off' 禁用):",
-        "trigger_updated": "✅ 触发器已更新！\n\n{} 现在将在聊天 {} 中触发 .{}",
-        "trigger_disabled": "✅ 已在聊天 {} 中禁用 .{} 的触发器",
-        "no_triggers": "未配置触发器",
-        "_cls_doc": "随机NSFW媒体",
-        "fsfw_cmd_doc": "从 @sfwfond 发送随机 SFW 媒体",
-        "access_required_text": "要使用该命令，必须加入频道及其聊天！",
-        "channel_button": "频道",
-        "chat_button": "聊天",
-        "update_available": "GitHub 上有新的 Foundation 版本。\n已安装: <code>{}</code>\nGitHub: <code>{}</code>\n更新:\n<code>.dlm {}</code>",
-    }
-
-    strings_ja = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> 何かがうまくいかなかった、ログを確認してください",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> 最初にチャンネルに参加する必要があります: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにビデオが見つかりません",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> チャンネルにメディアが見つかりません",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Foundation のトリガー設定</b>\n\nチャット: {} (ID: {})\n\n現在のトリガー:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "設定するトリガーを選択:",
-        "enter_trigger_word": "✍️ トリガーワードを入力 (または無効にするには 'off'):",
-        "trigger_updated": "✅ トリガーが更新されました！\n\n{} はチャット {} で .{} をトリガーします",
-        "trigger_disabled": "✅ チャット {} で .{} のトリガーが無効になりました",
-        "no_triggers": "トリガーが設定されていません",
-        "_cls_doc": "ランダムなNSFWメディア",
-        "fsfw_cmd_doc": "@sfwfond からランダムな SFW メディアを送信",
-        "access_required_text": "このコマンドを使うには、チャンネルとそのチャットに参加している必要があります！",
-        "channel_button": "チャンネル",
-        "chat_button": "チャット",
-        "update_available": "GitHub で Foundation の更新が利用できます。\nインストール済み: <code>{}</code>\nGitHub: <code>{}</code>\n更新:\n<code>.dlm {}</code>",
-    }
-
-    strings_be = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Нешта не так, правярай логі",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Трэба ўступіць у канал, УВАЖЛІВА ЧЫТАЙ ПРЫ ПАДАЧЫ ЗАЯЎКІ: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена відэа",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знойдзена медыя ў канале",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Налада трыгераў для Foundation</b>\n\nЧат: {} (ID: {})\n\nБягучыя трыгеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "Выберыце трыгер для налады:",
-        "enter_trigger_word": "✍️ Увядзіце слова-трыгер (або 'off' для адключэння):",
-        "trigger_updated": "✅ Трыгер абноўлены!\n\n{} цяпер будзе выклікаць .{} у чаце {}",
-        "trigger_disabled": "✅ Трыгер адключаны для .{} у чаце {}",
-        "no_triggers": "Трыгеры не настроены",
-        "_cls_doc": "Выпадковыя NSFW медыя",
-        "fsfw_cmd_doc": "Адправіць выпадковае SFW медыя з @sfwfond",
-        "access_required_text": "Каб карыстацца камандай, трэба быць у канале і чаце канала!",
-        "channel_button": "Канал",
-        "chat_button": "Чат",
-        "update_available": "Даступна абнаўленне Foundation на GitHub.\nУсталявана: <code>{}</code>\nGitHub: <code>{}</code>\nАбнавіць:\n<code>.dlm {}</code>",
-    }
-    
-    strings_fr = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Quelque chose s'est mal passé, vérifiez les logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Vous devez d'abord rejoindre le canal : {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Aucune vidéo trouvée dans le canal",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Aucun média trouvé dans le canal",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Configuration des déclencheurs pour Foundation</b>\n\nChat : {} (ID : {})\n\nDéclencheurs actuels :\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "Sélectionnez le déclencheur à configurer :",
-        "enter_trigger_word": "✍️ Entrez le mot déclencheur (ou 'off' pour désactiver) :",
-        "trigger_updated": "✅ Déclencheur mis à jour !\n\n{} déclenchera désormais .{} dans le chat {}",
-        "trigger_disabled": "✅ Déclencheur désactivé pour .{} dans le chat {}",
-        "no_triggers": "Aucun déclencheur configuré",
-        "_cls_doc": "Média NSFW aléatoire",
-        "fsfw_cmd_doc": "Envoyer un média SFW aléatoire depuis @sfwfond",
-        "access_required_text": "Pour utiliser la commande, vous devez être membre du canal et du chat du canal !",
-        "channel_button": "Canal",
-        "chat_button": "Chat",
-        "update_available": "Une mise à jour de Foundation est disponible sur GitHub.\nInstallé : <code>{}</code>\nGitHub : <code>{}</code>\nMettre à jour :\n<code>.dlm {}</code>",
-    }
-    
-    strings_ua = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Щось пішло не так, перевір логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Потрібно вступити в канал, УВАЖНО ЧИТАЙ ПРИ ПОДАЧІ ЗАЯВКИ: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено відео",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не знайдено медіа в каналі",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Налаштування тригерів для Foundation</b>\n\nЧат: {} (ID: {})\n\nПоточні тригери:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "Виберіть тригер для налаштування:",
-        "enter_trigger_word": "✍️ Введіть слово-тригер (або 'off' для вимкнення):",
-        "trigger_updated": "✅ Тригер оновлено!\n\n{} тепер буде викликати .{} в чаті {}",
-        "trigger_disabled": "✅ Тригер вимкнено для .{} в чаті {}",
-        "no_triggers": "Тригери не налаштовані",
-        "_cls_doc": "Випадкові NSFW медіа",
-        "fsfw_cmd_doc": "Надіслати випадкове SFW медіа з @sfwfond",
-        "access_required_text": "Для використання команди необхідно перебувати в каналі та чаті каналу!",
-        "channel_button": "Канал",
-        "chat_button": "Чат",
-        "update_available": "Доступне оновлення Foundation на GitHub.\nВстановлено: <code>{}</code>\nGitHub: <code>{}</code>\nОновити:\n<code>.dlm {}</code>",
-    }
-
-    strings_kk = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Бірдеңе дұрыс болмады, логтарды тексеріңіз",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Алдымен арнаға қосылу керек, ӨТІНІШ БЕРГЕНДЕ МҰҚИЯТ ОҚЫҢЫЗ: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада видео табылмады",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Арнада медиа табылмады",
-        "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Foundation үшін триггерлерді конфигурациялау</b>\n\nЧат: {} (ID: {})\n\nАғымдағы триггерлер:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
-        "select_trigger": "Конфигурациялау үшін триггерді таңдаңыз:",
-        "enter_trigger_word": "✍️ Триггер сөзді енгізіңіз ('off' өшіру үшін):",
-        "trigger_updated": "✅ Триггер жаңартылды!\n\n{} енді {} чатында .{} іске қосады",
-        "trigger_disabled": "✅ {} чатында .{} үшін триггер өшірілді",
-        "no_triggers": "Триггерлер конфигурацияланбаған",
-        "_cls_doc": "Кездейсоқ NSFW медиа",
-        "fsfw_cmd_doc": "@sfwfond арнасынан кездейсоқ SFW медиа жіберу",
-        "access_required_text": "Команданы пайдалану үшін арнада және арнаның чатында болу керек!",
-        "channel_button": "Арна",
-        "chat_button": "Чат",
-        "update_available": "GitHub-та Foundation жаңартуы бар.\nОрнатылған: <code>{}</code>\nGitHub: <code>{}</code>\nЖаңарту:\n<code>.dlm {}</code>",
+        "source_unavailable": "<b>Источник Foundation временно недоступен.</b> Попробуйте позже.",
+        "update_available": '<tg-emoji emoji-id="5361979468887893611">🆕</tg-emoji> <b>Обновление Foundation</b>\n\n<code>{}</code> -> <code>{}</code>{}\n\n<b>Установка:</b>\n<code>{}</code>',
+        "update_diff": "\n\n<b>Что изменилось:</b>\n<blockquote expandable>{}</blockquote>",
+        "trigger_reply_required": "Ответьте на сообщение пользователя.",
+        "trigger_user_required": "Чёрный список триггеров поддерживает только пользователей.",
+        "trigger_blacklist_added": "<b>{}</b> заблокирован для генерации по триггеру.",
+        "trigger_blacklist_removed": "<b>{}</b> удалён из чёрного списка триггеров.",
+        "trigger_empty": "Триггер не может быть пустым.",
+        "trigger_btn_fond": "Настроить триггер fond",
+        "trigger_btn_vfond": "Настроить триггер vfond",
+        "trigger_btn_fsfw": "Настроить триггер fsfw",
+        "trigger_btn_set": "Задать триггер для .{}",
+        "trigger_btn_delete": "Удалить триггер",
+        "trigger_btn_back": "Назад",
+        "trigger_btn_close": "Закрыть",
+        "cfg_triggers_enabled": "Включить watcher триггеров.",
+        "cfg_spam_protection": "Включить защиту от спама для команд и триггеров.",
+        "cfg_auto_delete_media": "Автоматически удалять отправленное NSFW медиа через заданное время.",
+        "cfg_auto_delete_delay": "Задержка автоудаления NSFW медиа в секундах (0 отключает).",
+        "cfg_trigger_blacklist": "Глобальный чёрный список триггеров. Формат: @ник - ID пользователя.",
     }
 
     def __init__(self):
@@ -223,12 +123,18 @@ class Foundation(loader.Module):
         self._required_chat_entity = None
         self._required_chat_last_entity_check = 0
         self.update_source_url = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/Foundation.py"
-        self.update_check_interval = 3600
+        self.update_check_interval = 21600
+        self.update_notice_repeat_interval = 5 * 24 * 60 * 60
         self._update_check_task = None
+        self._update_notice_lock = asyncio.Lock()
         self.foundation_link_update_interval = 300
+        self.foundation_link_retry_interval = 30
         self._last_foundation_link_update = 0
         self._foundation_link_lock = asyncio.Lock()
         self._nsfw_cache_lock = asyncio.Lock()
+        self._membership_cache = {}
+        self._membership_cache_ttl = 60
+        self._auto_delete_tasks = set()
         
         self._sfw_channel_username = "sfwfond"
         self._sfw_channel_entity = None
@@ -243,6 +149,7 @@ class Foundation(loader.Module):
         self._spam_blocks = {}
         self._chat_spam_blocks = {}
         self._spam_lock = asyncio.Lock()
+        self._last_spam_cleanup = 0
         
         self.SPAM_LIMIT = 3
         self.SPAM_WINDOW = 3
@@ -254,42 +161,43 @@ class Foundation(loader.Module):
             loader.ConfigValue(
                 "triggers_enabled",
                 True,
-                lambda: "Enable trigger watcher",
+                lambda: self.strings("cfg_triggers_enabled"),
                 validator=loader.validators.Boolean()
             ),
             loader.ConfigValue(
                 "spam_protection",
                 True,
-                lambda: "Enable spam protection for triggers",
+                lambda: self.strings("cfg_spam_protection"),
                 validator=loader.validators.Boolean()
             ),
             loader.ConfigValue(
                 "auto_delete_media",
                 False,
-                lambda: "Автоматически удалять отправленное медиа через заданное время.",
+                lambda: self.strings("cfg_auto_delete_media"),
                 validator=loader.validators.Boolean()
             ),
             loader.ConfigValue(
                 "auto_delete_delay",
                 30,
-                lambda: "Задержка в секундах перед автоудалением отправленного медиа (0 для отключения).",
+                lambda: self.strings("cfg_auto_delete_delay"),
                 validator=loader.validators.Integer(minimum=0)
+            ),
+            loader.ConfigValue(
+                "trigger_blacklist",
+                [],
+                lambda: self.strings("cfg_trigger_blacklist"),
+                validator=loader.validators.Series(),
             )
         )
 
-    async def client_ready(self, client, db):
-        self.client = client
-        self._db = db
-        self.triggers = self._db.get(__name__, "triggers", {})
-        
-        self.actual_foundation_link = self._db.get(__name__, "actual_foundation_link", None)
-        self.uid = (await self.client.get_me()).id
-        
+    async def client_ready(self):
+        await self._migrate_legacy_storage()
+        self.triggers = self.get("triggers", {})
+        self.actual_foundation_link = self.get("actual_foundation_link", None)
         await self._update_foundation_link_on_demand()
         await self._load_entity()
         await self._load_required_chat_entity()
         await self._load_sfw_entity()
-        await self._check_module_update()
         if self._update_check_task and not self._update_check_task.done():
             self._update_check_task.cancel()
         self._update_check_task = asyncio.create_task(self._update_check_loop())
@@ -301,6 +209,28 @@ class Foundation(loader.Module):
                 await self._update_check_task
             except asyncio.CancelledError:
                 pass
+        for task in tuple(self._auto_delete_tasks):
+            task.cancel()
+        self._auto_delete_tasks.clear()
+
+    async def _migrate_legacy_storage(self):
+        if self.get("storage_v2_migrated", False):
+            return
+
+        for key in ("triggers", "actual_foundation_link"):
+            if self.get(key, None) is not None:
+                continue
+            value = self.db.get(__name__, key, None)
+            if value is not None:
+                self.set(key, value)
+
+        legacy_notice = self.db.get(__name__, "last_update_notified_version", None)
+        if legacy_notice and not self.get("update_notice", None):
+            self.set(
+                "update_notice",
+                {"version": list(legacy_notice), "sent_at": 0},
+            )
+        self.set("storage_v2_migrated", True)
 
     def _format_version(self, version):
         if not isinstance(version, (tuple, list)):
@@ -318,47 +248,117 @@ class Foundation(loader.Module):
             return None
         return version if len(version) == 3 else None
 
+    def _parse_remote_diff(self, module_source):
+        match = re.search(
+            r"#\s*diff:\s*(.*?)(?=\s+#\s*[A-Za-zА-Яа-я_ -]{1,40}:|$)",
+            module_source,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if not match:
+            return ""
+        return re.sub(r"\s+", " ", match.group(1).strip())[:1200]
+
+    @staticmethod
+    def _is_remote_version_newer(remote_version):
+        return remote_version > __version__
+
+    async def _fetch_remote_module_info(self):
+        timeout = aiohttp.ClientTimeout(total=30)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(
+                self.update_source_url,
+                headers={"Cache-Control": "no-cache"},
+                params={"t": int(time.time())},
+            ) as response:
+                if response.status != 200:
+                    logger.warning(
+                        "Could not check Foundation updates: HTTP %s", response.status
+                    )
+                    return None, ""
+                module_source = await response.text()
+        return self._parse_remote_version(module_source), self._parse_remote_diff(module_source)
+
+    def _update_notice_is_due(self, remote_version):
+        notice = self.get("update_notice", {})
+        if not isinstance(notice, dict):
+            return True
+        saved_version = notice.get("version")
+        if saved_version != list(remote_version):
+            return True
+        sent_at = notice.get("sent_at", 0)
+        try:
+            return time.time() - float(sent_at) >= self.update_notice_repeat_interval
+        except (TypeError, ValueError):
+            return True
+
+    def _mark_update_notice_sent(self, remote_version):
+        self.set(
+            "update_notice",
+            {"version": list(remote_version), "sent_at": int(time.time())},
+        )
+
+    async def _send_update_notice(self, text):
+        try:
+            await self.inline.bot.send_message(
+                self.tg_id,
+                text,
+                disable_web_page_preview=True,
+            )
+            return True
+        except Exception as e:
+            logger.debug("Inline update notice failed: %s", e)
+
+        try:
+            await self.client.send_message(
+                self.tg_id,
+                text,
+                link_preview=False,
+            )
+            return True
+        except Exception as e:
+            logger.debug("Saved Messages update notice fallback failed: %s", e)
+            return False
+
     async def _check_module_update(self):
         try:
-            timeout = aiohttp.ClientTimeout(total=30)
-            async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(self.update_source_url) as response:
-                    if response.status != 200:
-                        logger.warning(f"Could not check Foundation updates: HTTP {response.status}")
-                        return
-                    module_source = await response.text()
-            remote_version = self._parse_remote_version(module_source)
-            if not remote_version:
-                logger.warning("Could not parse Foundation version from GitHub source")
-                return
-            if remote_version == __version__:
-                self._db.set(__name__, "last_update_notified_version", None)
-                return
-            last_notified = self._db.get(__name__, "last_update_notified_version", None)
-            if isinstance(last_notified, list):
-                last_notified = tuple(last_notified)
-            elif not isinstance(last_notified, tuple):
-                last_notified = None
-            if last_notified == remote_version:
-                return
-            await self.client.send_message(
-                self.uid,
-                self.strings("update_available").format(
+            async with self._update_notice_lock:
+                remote_version, diff = await self._fetch_remote_module_info()
+                if not remote_version:
+                    return False
+                if not self._is_remote_version_newer(remote_version):
+                    if remote_version == __version__:
+                        self.set("update_notice", {})
+                    return False
+                if not self._update_notice_is_due(remote_version):
+                    return False
+
+                install_command = f"{self.get_prefix()}dlm {self.update_source_url}"
+                diff_text = (
+                    self.strings("update_diff").format(utils.escape_html(diff))
+                    if diff
+                    else ""
+                )
+                text = self.strings("update_available").format(
                     self._format_version(__version__),
                     self._format_version(remote_version),
-                    utils.escape_html(self.update_source_url),
-                ),
-                parse_mode="html",
-            )
-            self._db.set(__name__, "last_update_notified_version", list(remote_version))
+                    diff_text,
+                    utils.escape_html(install_command),
+                )
+                if await self._send_update_notice(text):
+                    self._mark_update_notice_sent(remote_version)
+                    return True
+                return False
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
-            logger.exception(e)
+            logger.warning("Could not check Foundation updates: %s", e)
+            return False
 
     async def _update_check_loop(self):
         while True:
             try:
-                await asyncio.sleep(self.update_check_interval)
                 await self._check_module_update()
+                await asyncio.sleep(self.update_check_interval)
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -366,29 +366,50 @@ class Foundation(loader.Module):
 
     async def _update_foundation_link_on_demand(self):
         current_time = time.time()
-        if current_time - self._last_foundation_link_update < self.foundation_link_update_interval:
-            return
+        interval = (
+            self.foundation_link_update_interval
+            if self.actual_foundation_link
+            else self.foundation_link_retry_interval
+        )
+        if current_time - self._last_foundation_link_update < interval:
+            return bool(self.actual_foundation_link)
         async with self._foundation_link_lock:
             current_time = time.time()
-            if current_time - self._last_foundation_link_update < self.foundation_link_update_interval:
-                return
-            self._last_foundation_link_update = current_time
+            interval = (
+                self.foundation_link_update_interval
+                if self.actual_foundation_link
+                else self.foundation_link_retry_interval
+            )
+            if current_time - self._last_foundation_link_update < interval:
+                return bool(self.actual_foundation_link)
             try:
                 link_channel_entity = await self.client.get_entity(self.link_channel_username)
                 message = await self.client.get_messages(link_channel_entity, ids=self.link_message_id)
-                
-                if message and message.raw_text:
-                    match = re.search(r"(https?://t\.me/[^\s\]]+)", message.raw_text)
-                    if match:
-                        new_link = match.group(1)
-                        if new_link != self.actual_foundation_link:
-                            logger.info(f"Foundation link updated: {self.actual_foundation_link} -> {new_link}")
-                            self.actual_foundation_link = new_link
-                            self._db.set(__name__, "actual_foundation_link", new_link)
-                            self._last_entity_check = 0
-                            await self._load_entity()
+                match = re.search(
+                    r"(https?://t\.me/[^\s\]]+)",
+                    getattr(message, "raw_text", "") or "",
+                )
+                if not match:
+                    raise RuntimeError("Foundation link is missing in the source message")
+                new_link = match.group(1).rstrip(".,)")
+                if new_link != self.actual_foundation_link:
+                    logger.info(
+                        "Foundation link updated: %s -> %s",
+                        self.actual_foundation_link,
+                        new_link,
+                    )
+                    self.actual_foundation_link = new_link
+                    self.set("actual_foundation_link", new_link)
+                    self._last_entity_check = 0
+                    await self._load_entity()
+                self._last_foundation_link_update = current_time
+                return True
             except Exception as e:
-                logger.warning(f"Error updating foundation link from channel: {e}. Using cached link if available.")
+                logger.warning(
+                    "Error updating Foundation link from channel: %s. Using cached link if available.",
+                    e,
+                )
+                return bool(self.actual_foundation_link)
     
     def _prune_spam_events(self, events, current_time, window):
         while events and current_time - events[0] > window:
@@ -402,6 +423,20 @@ class Foundation(loader.Module):
             return True
         del blocks[key]
         return False
+
+    def _cleanup_spam_state(self, current_time):
+        for events, window in (
+            (self._spam_events, self.SPAM_WINDOW),
+            (self._chat_spam_events, self.GLOBAL_WINDOW),
+        ):
+            for key, timestamps in tuple(events.items()):
+                self._prune_spam_events(timestamps, current_time, window)
+                if not timestamps:
+                    del events[key]
+        for blocks in (self._spam_blocks, self._chat_spam_blocks):
+            for key, block_until in tuple(blocks.items()):
+                if current_time >= block_until:
+                    del blocks[key]
 
     def _spam_user_key(self, user_id, chat_id):
         if user_id is None:
@@ -417,6 +452,9 @@ class Foundation(loader.Module):
         chat_key = str(chat_id)
         
         async with self._spam_lock:
+            if current_time - self._last_spam_cleanup >= 60:
+                self._cleanup_spam_state(current_time)
+                self._last_spam_cleanup = current_time
             if self._is_spam_blocked(self._chat_spam_blocks, chat_key, current_time):
                 return True
             if self._is_spam_blocked(self._spam_blocks, user_key, current_time):
@@ -492,6 +530,12 @@ class Foundation(loader.Module):
     async def _has_channel_access(self, channel_entity, participant):
         if not channel_entity or participant is None:
             return False
+        channel_id = getattr(channel_entity, "id", channel_entity)
+        cache_key = f"{channel_id}:{participant}"
+        cached = self._membership_cache.get(cache_key)
+        current_time = time.time()
+        if cached and current_time - cached[1] < self._membership_cache_ttl:
+            return cached[0]
         try:
             await self.client(
                 functions.channels.GetParticipantRequest(
@@ -499,12 +543,14 @@ class Foundation(loader.Module):
                     participant=participant,
                 )
             )
-            return True
+            result = True
         except (UserNotParticipantError, ChannelPrivateError, ValueError):
-            return False
+            result = False
         except Exception as e:
             logger.warning(f"Could not verify membership for participant {participant}: {e}")
-            return False
+            result = False
+        self._membership_cache[cache_key] = (result, current_time)
+        return result
 
     async def _has_required_chat_access(self, participant):
         if not await self._load_required_chat_entity():
@@ -512,30 +558,38 @@ class Foundation(loader.Module):
         return await self._has_channel_access(self._required_chat_entity, participant)
 
     async def _show_access_required(self, message: Message):
+        if not self.actual_foundation_link:
+            await utils.answer(message, self.strings("source_unavailable"))
+            return
+        markup = [
+            [
+                {
+                    "text": self.strings("channel_button"),
+                    "url": self.actual_foundation_link,
+                    "style": "primary",
+                },
+                {
+                    "text": self.strings("chat_button"),
+                    "url": self.required_chat_link,
+                    "style": "primary",
+                },
+            ]
+        ]
         try:
             await self.inline.form(
                 message=message,
                 text=self.strings("access_required_text"),
-                reply_markup=[
-                    [
-                        {
-                            "text": self.strings("channel_button"),
-                            "url": self.actual_foundation_link,
-                            "style": "primary",
-                        },
-                        {
-                            "text": self.strings("chat_button"),
-                            "url": self.required_chat_link,
-                            "style": "primary",
-                        },
-                    ]
-                ],
+                reply_markup=markup,
             )
         except Exception as e:
             logger.exception(e)
             await utils.answer(
                 message,
-                f"{self.strings('access_required_text')}\n{self.actual_foundation_link or ''}\n{self.required_chat_link}",
+                "{}\n{}\n{}".format(
+                    self.strings("access_required_text"),
+                    utils.escape_html(self.actual_foundation_link),
+                    utils.escape_html(self.required_chat_link),
+                ),
             )
 
     async def _ensure_foundation_access(self, message: Message):
@@ -650,6 +704,11 @@ class Foundation(loader.Module):
         except Exception as e:
             logger.warning(f"Failed to auto-delete message {message_to_delete.id} in chat {message_to_delete.chat_id}: {e}")
 
+    def _schedule_auto_delete(self, message_to_delete: Message, delay: int):
+        task = asyncio.create_task(self._schedule_delete(message_to_delete, delay))
+        self._auto_delete_tasks.add(task)
+        task.add_done_callback(self._auto_delete_tasks.discard)
+
     def _pick_random_media(self, media_list, pool_key: str):
         recent_ids = self._recent_media_ids.setdefault(pool_key, [])
         available_media = [
@@ -668,12 +727,12 @@ class Foundation(loader.Module):
         try:
             if is_sfw:
                 if not await self._load_sfw_entity():
-                    return await utils.answer(message, self.strings["error"])
+                    return await utils.answer(message, self.strings("error"))
                 media_list = await self._get_sfw_cached_media()
                 if media_list is None:
-                    return await utils.answer(message, self.strings["error"])
+                    return await utils.answer(message, self.strings("error"))
                 if not media_list:
-                    await utils.answer(message, self.strings["fsfw_no_media"])
+                    await utils.answer(message, self.strings("fsfw_no_media"))
                     return
             else:
                 if not await self._load_entity():
@@ -683,9 +742,9 @@ class Foundation(loader.Module):
                     return await self._show_access_required(message)
                 if not media_list:
                     if media_type == "any":
-                        await utils.answer(message, self.strings["no_media"])
+                        await utils.answer(message, self.strings("no_media"))
                     else:
-                        await utils.answer(message, self.strings["no_videos"])
+                        await utils.answer(message, self.strings("no_videos"))
                     return
             
             pool_key = "sfw_any" if is_sfw else media_type
@@ -698,7 +757,7 @@ class Foundation(loader.Module):
             )
             
             if self.config["auto_delete_media"] and self.config["auto_delete_delay"] > 0 and not is_sfw:
-                asyncio.create_task(self._schedule_delete(sent_message, self.config["auto_delete_delay"]))
+                self._schedule_auto_delete(sent_message, self.config["auto_delete_delay"])
 
             if delete_command:
                 await asyncio.sleep(0.1)
@@ -708,18 +767,9 @@ class Foundation(loader.Module):
                     pass
         except Exception as e:
             logger.exception(e)
-            await utils.answer(message, self.strings["error"])
+            await utils.answer(message, self.strings("error"))
 
-    @loader.command(
-        ru_doc="Отправить NSFW медиа с Фонда",
-        de_doc="NSFW-Medien von Foundation senden",
-        zh_doc="从 Foundation 发送 NSFW 媒体",
-        ja_doc="FoundationからNSFWメディアを送信",
-        be_doc="Адправіць NSFW медыя з Foundation",
-        fr_doc="Envoyer un média NSFW depuis Foundation",
-        ua_doc="Надіслати NSFW медіа з Foundation",
-        kk_doc="Foundation-нан NSFW медиа жіберу"
-    )
+    @loader.command(ru_doc="Отправить NSFW медиа с Фонда")
     async def fond(self, message: Message):
         """Send NSFW media from Foundation"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
@@ -729,16 +779,7 @@ class Foundation(loader.Module):
             return
         await self._send_media(message, "any", delete_command=True)
 
-    @loader.command(
-        ru_doc="Отправить NSFW видео с Фонда",
-        de_doc="NSFW-Video von Foundation senden",
-        zh_doc="从 Foundation 发送 NSFW 视频",
-        ja_doc="FoundationからNSFWビデオを送信",
-        be_doc="Адправіць NSFW відэа з Foundation",
-        fr_doc="Envoyer une vidéo NSFW depuis Foundation",
-        ua_doc="Надіслати NSFW відео з Foundation",
-        kk_doc="Foundation-нан NSFW видео жіберу"
-    )
+    @loader.command(ru_doc="Отправить NSFW видео с Фонда")
     async def vfond(self, message: Message):
         """Send NSFW video from Foundation"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
@@ -748,41 +789,87 @@ class Foundation(loader.Module):
             return
         await self._send_media(message, "video", delete_command=True)
 
-    @loader.command(
-        ru_doc="Отправить рандомное SFW медиа с @sfwfond",
-        de_doc="Zufällige SFW-Medien von @sfwfond senden",
-        zh_doc="从 @sfwfond 发送随机 SFW 媒体",
-        ja_doc="@sfwfond からランダムな SFW メディアを送信",
-        be_doc="Адправіць выпадковае SFW медыя з @sfwfond",
-        fr_doc="Envoyer un média SFW aléatoire depuis @sfwfond",
-        ua_doc="Надіслати випадкове SFW медіа з @sfwfond",
-        kk_doc="@sfwfond арнасынан кездейсоқ SFW медиа жіберу"
-    )
+    @loader.command(ru_doc="Отправить рандомное SFW медиа с @sfwfond")
     async def fsfw(self, message: Message):
         """Send random SFW media from @sfwfond"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
         await self._send_media(message, is_sfw=True, delete_command=True)
 
-    @loader.command(
-        ru_doc="Настроить триггеры для команд fond/vfond/fsfw",
-        de_doc="Auslöser für fond/vfond/fsfw-Befehle konfigurieren",
-        zh_doc="配置 fond/vfond/fsfw 命令的触发器",
-        ja_doc="fond/vfond/fsfwコマンドのトリガーを設定",
-        be_doc="Наладзіць трыгеры для каманд fond/vfond/fsfw",
-        fr_doc="Configurer les déclencheurs pour les commandes fond/vfond/fsfw",
-        ua_doc="Налаштувати тригери для команд fond/vfond/fsfw",
-        kk_doc="fond/vfond/fsfw командалары үшін триггерлерді конфигурациялау"
-    )
+    @staticmethod
+    def _trigger_sender_user_id(message):
+        sender_id = getattr(message, "sender_id", None)
+        from_id = getattr(message, "from_id", None)
+        if not sender_id or getattr(message, "post", False):
+            return None
+        if from_id is not None and "peeruser" not in type(from_id).__name__.lower():
+            return None
+        try:
+            return int(sender_id)
+        except (TypeError, ValueError):
+            return None
+
+    def _trigger_blacklist_entries(self):
+        entries = self.config["trigger_blacklist"]
+        return list(entries) if isinstance(entries, (list, tuple)) else []
+
+    def _trigger_blacklist_ids(self):
+        result = set()
+        for entry in self._trigger_blacklist_entries():
+            match = re.search(r"(-?\d+)\s*$", str(entry))
+            if match:
+                result.add(int(match.group(1)))
+        return result
+
+    def _trigger_main_markup(self, chat_id: int):
+        return [
+            [
+                {
+                    "text": self.strings("trigger_btn_fond"),
+                    "callback": self._configure_trigger,
+                    "args": (chat_id, "fond"),
+                    "style": "primary",
+                    "emoji_id": "4904936030232117798",
+                }
+            ],
+            [
+                {
+                    "text": self.strings("trigger_btn_vfond"),
+                    "callback": self._configure_trigger,
+                    "args": (chat_id, "vfond"),
+                    "style": "primary",
+                    "emoji_id": "5258391252914676042",
+                }
+            ],
+            [
+                {
+                    "text": self.strings("trigger_btn_fsfw"),
+                    "callback": self._configure_trigger,
+                    "args": (chat_id, "fsfw"),
+                    "style": "primary",
+                    "emoji_id": "5258254475386167466",
+                }
+            ],
+            [
+                {
+                    "text": self.strings("trigger_btn_close"),
+                    "action": "close",
+                    "style": "danger",
+                    "emoji_id": "5121063440311386962",
+                }
+            ],
+        ]
+
+    @loader.command(ru_doc="Настроить триггеры для команд fond/vfond/fsfw")
     async def ftriggers(self, message: Message):
         """Configure triggers for fond/vfond/fsfw commands"""
         chat_id = utils.get_chat_id(message)
         chat = await message.get_chat()
-        chat_title = getattr(chat, "title", "Private Chat")
+        chat_title = utils.escape_html(getattr(chat, "title", "Private Chat"))
         chat_triggers = self.triggers.get(str(chat_id), {})
-        fond_trigger = chat_triggers.get("fond", self.strings("no_triggers"))
-        vfond_trigger = chat_triggers.get("vfond", self.strings("no_triggers"))
-        fsfw_trigger = chat_triggers.get("fsfw", self.strings("no_triggers"))
+        fond_trigger = utils.escape_html(str(chat_triggers.get("fond", self.strings("no_triggers"))))
+        vfond_trigger = utils.escape_html(str(chat_triggers.get("vfond", self.strings("no_triggers"))))
+        fsfw_trigger = utils.escape_html(str(chat_triggers.get("fsfw", self.strings("no_triggers"))))
         await self.inline.form(
             message=message,
             text=self.strings("triggers_config").format(
@@ -792,43 +879,7 @@ class Foundation(loader.Module):
                 vfond_trigger,
                 fsfw_trigger
             ),
-            reply_markup=[
-                [
-                    {
-                        "text": "⚙️ Configure fond trigger",
-                        "callback": self._configure_trigger,
-                        "args": (chat_id, "fond"),
-                        "style": "primary",
-                        "emoji_id": "4904936030232117798"
-                    }
-                ],
-                [
-                    {
-                        "text": "⚙️ Configure vfond trigger",
-                        "callback": self._configure_trigger,
-                        "args": (chat_id, "vfond"),
-                        "style": "primary",
-                        "emoji_id": "5258391252914676042"
-                    }
-                ],
-                [
-                    {
-                        "text": "⚙️ Configure fsfw trigger",
-                        "callback": self._configure_trigger,
-                        "args": (chat_id, "fsfw"),
-                        "style": "primary",
-                        "emoji_id": "5258254475386167466"
-                    }
-                ],
-                [
-                    {
-                        "text": "❌ Close",
-                        "action": "close",
-                        "style": "danger",
-                        "emoji_id": "5121063440311386962"
-                    }
-                ]
-            ]
+            reply_markup=self._trigger_main_markup(chat_id),
         )
 
     async def _configure_trigger(self, call: InlineCall, chat_id: int, command: str):
@@ -838,7 +889,7 @@ class Foundation(loader.Module):
             reply_markup=[
                 [
                     {
-                        "text": f"✍️ Set trigger for .{command}",
+                        "text": self.strings("trigger_btn_set").format(command),
                         "input": self.strings("enter_trigger_word"),
                         "handler": self._save_trigger,
                         "args": (chat_id, command),
@@ -848,7 +899,16 @@ class Foundation(loader.Module):
                 ],
                 [
                     {
-                        "text": "🔙 Back",
+                        "text": self.strings("trigger_btn_delete"),
+                        "callback": self._delete_trigger,
+                        "args": (chat_id, command),
+                        "style": "danger",
+                        "emoji_id": "5121063440311386962"
+                    }
+                ],
+                [
+                    {
+                        "text": self.strings("trigger_btn_back"),
                         "callback": self._show_main_menu,
                         "args": (chat_id,),
                         "style": "danger",
@@ -860,51 +920,48 @@ class Foundation(loader.Module):
 
     async def _save_trigger(self, call: InlineCall, query: str, chat_id: int, command: str):
         query = query.strip().lower()
-        if str(chat_id) not in self.triggers:
-            self.triggers[str(chat_id)] = {}
-        if query == "off":
-            if command in self.triggers[str(chat_id)]:
-                del self.triggers[str(chat_id)][command]
-                if not self.triggers[str(chat_id)]:
-                    del self.triggers[str(chat_id)]
+        if not query:
+            try:
+                await call.answer(self.strings("trigger_empty"), show_alert=True)
+            except Exception:
+                pass
+            return
+        if query == "0":
+            chat_triggers = self.triggers.get(str(chat_id), {})
+            chat_triggers.pop(command, None)
+            if chat_triggers:
+                self.triggers[str(chat_id)] = chat_triggers
+            else:
+                self.triggers.pop(str(chat_id), None)
         else:
+            if str(chat_id) not in self.triggers:
+                self.triggers[str(chat_id)] = {}
             self.triggers[str(chat_id)][command] = query
-        self._db.set(__name__, "triggers", self.triggers)
-        try:
-            chat = await self.client.get_entity(chat_id)
-            chat_title = getattr(chat, "title", "Private Chat")
-        except Exception as e:
-            logger.warning(f"Could not load chat title for {chat_id}: {e}")
-            chat_title = f"Chat {chat_id}"
-        if query == "off":
-            try:
-                await call.answer(
-                    self.strings("trigger_disabled").format(command, chat_title),
-                    show_alert=True
-                )
-            except Exception:
-                pass
+        self.set("triggers", self.triggers)
+        await self._show_main_menu(call, chat_id)
+
+    async def _delete_trigger(self, call: InlineCall, chat_id: int, command: str):
+        chat_key = str(chat_id)
+        chat_triggers = self.triggers.get(chat_key, {})
+        chat_triggers.pop(command, None)
+        if chat_triggers:
+            self.triggers[chat_key] = chat_triggers
         else:
-            try:
-                await call.answer(
-                    self.strings("trigger_updated").format(query, command, chat_title),
-                    show_alert=True
-                )
-            except Exception:
-                pass
+            self.triggers.pop(chat_key, None)
+        self.set("triggers", self.triggers)
         await self._show_main_menu(call, chat_id)
 
     async def _show_main_menu(self, call: InlineCall, chat_id: int):
         try:
             chat = await self.client.get_entity(chat_id)
-            chat_title = getattr(chat, "title", "Private Chat")
+            chat_title = utils.escape_html(getattr(chat, "title", "Private Chat"))
         except Exception as e:
             logger.warning(f"Could not load chat title for {chat_id}: {e}")
-            chat_title = f"Chat {chat_id}"
+            chat_title = utils.escape_html(f"Chat {chat_id}")
         chat_triggers = self.triggers.get(str(chat_id), {})
-        fond_trigger = chat_triggers.get("fond", self.strings("no_triggers"))
-        vfond_trigger = chat_triggers.get("vfond", self.strings("no_triggers"))
-        fsfw_trigger = chat_triggers.get("fsfw", self.strings("no_triggers"))
+        fond_trigger = utils.escape_html(str(chat_triggers.get("fond", self.strings("no_triggers"))))
+        vfond_trigger = utils.escape_html(str(chat_triggers.get("vfond", self.strings("no_triggers"))))
+        fsfw_trigger = utils.escape_html(str(chat_triggers.get("fsfw", self.strings("no_triggers"))))
         await utils.answer(
             call,
             self.strings("triggers_config").format(
@@ -914,43 +971,50 @@ class Foundation(loader.Module):
                 vfond_trigger,
                 fsfw_trigger
             ),
-            reply_markup=[
-                [
-                    {
-                        "text": "⚙️ Configure fond trigger",
-                        "callback": self._configure_trigger,
-                        "args": (chat_id, "fond"),
-                        "style": "primary",
-                        "emoji_id": "4904936030232117798"
-                    }
-                ],
-                [
-                    {
-                        "text": "⚙️ Configure vfond trigger",
-                        "callback": self._configure_trigger,
-                        "args": (chat_id, "vfond"),
-                        "style": "primary",
-                        "emoji_id": "5258391252914676042"
-                    }
-                ],
-                [
-                    {
-                        "text": "⚙️ Configure fsfw trigger",
-                        "callback": self._configure_trigger,
-                        "args": (chat_id, "fsfw"),
-                        "style": "primary",
-                        "emoji_id": "5258254475386167466"
-                    }
-                ],
-                [
-                    {
-                        "text": "❌ Close",
-                        "action": "close",
-                        "style": "danger",
-                        "emoji_id": "5121063440311386962"
-                    }
-                ]
-            ]
+            reply_markup=self._trigger_main_markup(chat_id),
+        )
+
+    @loader.command(ru_doc="Добавить/удалить в чёрный список триггеров")
+    async def fbl(self, message: Message):
+        """Toggle a replied user's global trigger blacklist status."""
+        reply = await message.get_reply_message()
+        if not reply:
+            return await utils.answer(message, self.strings("trigger_reply_required"))
+
+        user_id = self._trigger_sender_user_id(reply)
+        if user_id is None:
+            return await utils.answer(message, self.strings("trigger_user_required"))
+
+        entries = self._trigger_blacklist_entries()
+        remaining_entries = [
+            entry
+            for entry in entries
+            if not re.search(rf"{re.escape(str(user_id))}\s*$", str(entry))
+        ]
+        user = None
+        try:
+            user = await self.client.get_entity(user_id)
+            username = getattr(user, "username", None)
+        except Exception:
+            username = None
+        if user is not None and "user" not in type(user).__name__.lower():
+            return await utils.answer(message, self.strings("trigger_user_required"))
+        label = f"@{username}" if username else str(user_id)
+
+        if len(remaining_entries) != len(entries):
+            self.config["trigger_blacklist"] = remaining_entries
+            return await utils.answer(
+                message,
+                self.strings("trigger_blacklist_removed").format(
+                    utils.escape_html(label)
+                ),
+            )
+
+        entries.append(f"{label} - {user_id}")
+        self.config["trigger_blacklist"] = entries
+        await utils.answer(
+            message,
+            self.strings("trigger_blacklist_added").format(utils.escape_html(label)),
         )
 
     @loader.watcher()
@@ -964,6 +1028,9 @@ class Foundation(loader.Module):
             chat_id = utils.get_chat_id(message)
             chat_triggers = self.triggers.get(str(chat_id), {})
             if not chat_triggers:
+                return
+            sender_id = self._trigger_sender_user_id(message)
+            if sender_id is not None and sender_id in self._trigger_blacklist_ids():
                 return
             for command, trigger in chat_triggers.items():
                 normalized_trigger = (trigger or "").strip().lower()
