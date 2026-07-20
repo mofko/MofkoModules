@@ -1,5 +1,4 @@
 Bredik
-FavoriteMusic
 Foundation
 M:Forward
 MindfulEdit
@@ -7,3 +6,4 @@ MusicS
 SelfDestruct
 РАТКОВiрусиЭпштеiнHeta
 ComfyImageGen
+CompareModules
