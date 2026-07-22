@@ -1,5 +1,5 @@
-__version__ = (2, 5, 0)
-# diff: Обновлены триггеры + блеклист, уведомления об обновлениях, кэш, убраны все языкы кроме EN/RU.
+__version__ = (2, 6, 0)
+# diff: теперь не требует нахождения в фонде/чате, все запросы идут через бота, а не юзербот. (По прежнему можно использовать старую систему отправки, в моменты когда бот недоступен)
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
@@ -14,13 +14,14 @@ import random
 import logging
 import asyncio
 import time
+import secrets
 import aiohttp
 import re
 from collections import defaultdict, deque
 from herokutl.errors import FloodWaitError
 from herokutl.errors.rpcerrorlist import ChannelPrivateError, UserNotParticipantError
 from herokutl.tl import functions
-from herokutl.tl.types import Message
+from herokutl.tl.types import InputPeerNotifySettings, Message
 from .. import loader, utils
 from ..inline.types import InlineCall
 
@@ -66,6 +67,16 @@ class Foundation(loader.Module):
         "cfg_auto_delete_media": "Automatically delete sent NSFW media after the configured delay.",
         "cfg_auto_delete_delay": "Delay before auto-deleting NSFW media in seconds (0 disables it).",
         "cfg_trigger_blacklist": "Global trigger blacklist. Entries are stored as @username - user_id.",
+        "cfg_delivery_mode": "Media delivery mode: bot or offline.",
+        "bot_access_required": "<b>Subscribe to @mofkomodules to use Foundation Bot.</b>",
+        "bot_subscribe_button": "Subscribe",
+        "bot_timeout": "<b>Foundation Bot did not reply within 30 seconds.</b>\n\nSwitch to offline mode?\n<blockquote expandable>Offline mode works when you are in Foundation and its chat.</blockquote>",
+        "bot_offline_button": "Use offline mode",
+        "bot_cancel_button": "Cancel",
+        "bot_offline_started": "<b>Starting offline mode…</b>",
+        "bot_reply": "<b>Foundation Bot:</b> {}",
+        "bot_empty_reply": "<b>Foundation Bot returned no media.</b> Try again.",
+        "bot_request_expired": "The offline request has expired. Send the command again.",
     }
 
     strings_ru = {
@@ -78,7 +89,7 @@ class Foundation(loader.Module):
         "select_trigger": "Выберите триггер для настройки:",
         "enter_trigger_word": "✍️ Введите слово-триггер (или 0 для отключения):",
         "no_triggers": "Триггеры не настроены",
-        "_cls_doc": "Случайное NSFW медиа",
+        "_cls_doc": "Случайное NSFW и SFW медиа",
         "fsfw_cmd_doc": "Отправить рандомное SFW медиа с @sfwfond",
         "access_required_text": "Для использования команды необходимо состоять в канале и чате канала!",
         "channel_button": "Канал",
@@ -103,6 +114,16 @@ class Foundation(loader.Module):
         "cfg_auto_delete_media": "Автоматически удалять отправленное NSFW медиа через заданное время.",
         "cfg_auto_delete_delay": "Задержка автоудаления NSFW медиа в секундах (0 отключает).",
         "cfg_trigger_blacklist": "Глобальный чёрный список триггеров. Формат: @ник - ID пользователя.",
+        "cfg_delivery_mode": "Режим отправки медиа: bot или offline.",
+        "bot_access_required": "<b>Подпишитесь на @mofkomodules, чтобы использовать модуль.</b>",
+        "bot_subscribe_button": "Подписаться",
+        "bot_timeout": "<b>Foundation Bot не ответил за 30 секунд.</b>\n\nПерейти в офлайн-режим?\n<blockquote expandable>Офлайн-режим работает, если вы есть в Фонде и чате Фонда.</blockquote>",
+        "bot_offline_button": "Перейти в офлайн-режим",
+        "bot_cancel_button": "Отмена",
+        "bot_offline_started": "<b>Запускаю офлайн-режим…</b>",
+        "bot_reply": "<b>Foundation Bot:</b> {}",
+        "bot_empty_reply": "<b>Foundation Bot не прислал медиа.</b> Попробуйте ещё раз.",
+        "bot_request_expired": "Запрос на офлайн-режим устарел. Отправьте команду заново.",
     }
 
     def __init__(self):
@@ -135,6 +156,21 @@ class Foundation(loader.Module):
         self._membership_cache = {}
         self._membership_cache_ttl = 60
         self._auto_delete_tasks = set()
+        self._background_tasks = set()
+        self._offline_requests = {}
+        self._bot_request_lock = asyncio.Lock()
+        self._delivery_bot_username = "foundationsend_bot"
+        self._delivery_bot_entity = None
+        self._delivery_bot_last_entity_check = 0
+        self._delivery_bot_muted = False
+        self._bot_required_channel_username = "mofkomodules"
+        self._bot_required_channel_entity = None
+        self._bot_required_channel_last_entity_check = 0
+        self._bot_response_timeout = 30
+        self._bot_request_limit = 9
+        self._bot_request_window = 10
+        self._bot_request_times = deque()
+        self._offline_request_ttl = 300
         
         self._sfw_channel_username = "sfwfond"
         self._sfw_channel_entity = None
@@ -187,6 +223,12 @@ class Foundation(loader.Module):
                 [],
                 lambda: self.strings("cfg_trigger_blacklist"),
                 validator=loader.validators.Series(),
+            ),
+            loader.ConfigValue(
+                "delivery_mode",
+                "bot",
+                lambda: self.strings("cfg_delivery_mode"),
+                validator=loader.validators.Choice(["bot", "offline"]),
             )
         )
 
@@ -212,6 +254,12 @@ class Foundation(loader.Module):
         for task in tuple(self._auto_delete_tasks):
             task.cancel()
         self._auto_delete_tasks.clear()
+        for task in tuple(self._background_tasks):
+            task.cancel()
+        if self._background_tasks:
+            await asyncio.gather(*self._background_tasks, return_exceptions=True)
+        self._background_tasks.clear()
+        self._offline_requests.clear()
 
     async def _migrate_legacy_storage(self):
         if self.get("storage_v2_migrated", False):
@@ -605,6 +653,366 @@ class Foundation(loader.Module):
             return False
         return True
 
+    async def _load_delivery_bot_entity(self):
+        current_time = time.time()
+        if (
+            self._delivery_bot_entity
+            and current_time - self._delivery_bot_last_entity_check < self.entity_check_interval
+        ):
+            return True
+        try:
+            self._delivery_bot_entity = await self.client.get_entity(
+                self._delivery_bot_username
+            )
+            self._delivery_bot_last_entity_check = current_time
+            return True
+        except Exception as e:
+            logger.warning("Could not load Foundation Bot entity: %s", e)
+            self._delivery_bot_entity = None
+            return False
+
+    async def _mute_delivery_bot(self):
+        if self._delivery_bot_muted:
+            return
+        try:
+            await self.client(
+                functions.account.UpdateNotifySettingsRequest(
+                    peer=self._delivery_bot_entity,
+                    settings=InputPeerNotifySettings(
+                        show_previews=False,
+                        silent=True,
+                        mute_until=2**31 - 1,
+                    ),
+                )
+            )
+            self._delivery_bot_muted = True
+        except Exception as e:
+            logger.warning("Could not mute Foundation Bot notifications: %s", e)
+
+    async def _load_bot_required_channel_entity(self):
+        current_time = time.time()
+        if (
+            self._bot_required_channel_entity
+            and current_time - self._bot_required_channel_last_entity_check
+            < self.entity_check_interval
+        ):
+            return True
+        try:
+            self._bot_required_channel_entity = await self.client.get_entity(
+                self._bot_required_channel_username
+            )
+            self._bot_required_channel_last_entity_check = current_time
+            return True
+        except Exception as e:
+            logger.warning("Could not load @mofkomodules entity: %s", e)
+            self._bot_required_channel_entity = None
+            return False
+
+    async def _show_bot_access_required(self, message: Message):
+        markup = [
+            [
+                {
+                    "text": self.strings("bot_subscribe_button"),
+                    "url": "https://t.me/mofkomodules",
+                    "style": "primary",
+                }
+            ]
+        ]
+        try:
+            await self.inline.form(
+                message=message,
+                text=self.strings("bot_access_required"),
+                reply_markup=markup,
+            )
+        except Exception as e:
+            logger.exception(e)
+            await utils.answer(message, self.strings("bot_access_required"))
+
+    async def _ensure_bot_access(self, message: Message):
+        if not await self._load_bot_required_channel_entity():
+            return True
+        channel_id = getattr(
+            self._bot_required_channel_entity,
+            "id",
+            self._bot_required_channel_entity,
+        )
+        cache_key = f"{channel_id}:me"
+        cached = self._membership_cache.get(cache_key)
+        if cached and not cached[0]:
+            self._membership_cache.pop(cache_key, None)
+        if await self._has_channel_access(self._bot_required_channel_entity, "me"):
+            return True
+        await self._show_bot_access_required(message)
+        return False
+
+    @staticmethod
+    def _reply_to_id(message):
+        reply_id = getattr(message, "reply_to_msg_id", None)
+        if reply_id is not None:
+            return reply_id
+        reply = getattr(message, "reply_to", None)
+        return getattr(reply, "reply_to_msg_id", None)
+
+    async def _remove_bot_dialog_message(self, message):
+        if message is None:
+            return
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+    async def _wait_for_bot_reply(self, request_message):
+        deadline = asyncio.get_running_loop().time() + self._bot_response_timeout
+        while asyncio.get_running_loop().time() < deadline:
+            try:
+                messages = await self.client.get_messages(
+                    self._delivery_bot_entity,
+                    limit=10,
+                    min_id=request_message.id,
+                )
+            except Exception as e:
+                logger.warning("Could not read Foundation Bot response: %s", e)
+                return None
+            for candidate in messages:
+                if getattr(candidate, "out", False):
+                    continue
+                if self._reply_to_id(candidate) == request_message.id:
+                    return candidate
+            await asyncio.sleep(0.7)
+        return None
+
+    async def _wait_for_bot_rate_limit(self):
+        while True:
+            current_time = asyncio.get_running_loop().time()
+            self._prune_spam_events(
+                self._bot_request_times,
+                current_time,
+                self._bot_request_window,
+            )
+            if len(self._bot_request_times) < self._bot_request_limit:
+                self._bot_request_times.append(current_time)
+                return
+            delay = (
+                self._bot_request_window
+                - (current_time - self._bot_request_times[0])
+                + 0.1
+            )
+            await asyncio.sleep(max(delay, 0.1))
+
+    async def _start_delivery_bot(self):
+        try:
+            await self.client(
+                functions.messages.StartBotRequest(
+                    bot=self._delivery_bot_entity,
+                    peer=self._delivery_bot_entity,
+                    random_id=random.getrandbits(63),
+                    start_param="",
+                )
+            )
+            return True
+        except Exception as e:
+            logger.warning("Could not start Foundation Bot dialog: %s", e)
+            return False
+
+    async def _send_via_bot(
+        self,
+        message: Message,
+        command: str,
+        delete_command: bool,
+        is_sfw: bool,
+    ):
+        if not await self._ensure_bot_access(message):
+            return "handled"
+        async with self._bot_request_lock:
+            request_message = None
+            response_message = None
+            try:
+                if not await self._load_delivery_bot_entity():
+                    return "unavailable"
+                await self._mute_delivery_bot()
+                await self._wait_for_bot_rate_limit()
+                try:
+                    request_message = await self.client.send_message(
+                        self._delivery_bot_entity,
+                        command,
+                    )
+                except Exception:
+                    if not await self._start_delivery_bot():
+                        return "unavailable"
+                    request_message = await self.client.send_message(
+                        self._delivery_bot_entity,
+                        command,
+                    )
+                response_message = await self._wait_for_bot_reply(request_message)
+                if response_message is None:
+                    return "unavailable"
+                if not getattr(response_message, "media", None):
+                    text = utils.escape_html(
+                        (getattr(response_message, "raw_text", None) or "").strip()
+                    )
+                    if text:
+                        await utils.answer(
+                            message,
+                            self.strings("bot_reply").format(text),
+                        )
+                    else:
+                        await utils.answer(message, self.strings("bot_empty_reply"))
+                    return "handled"
+                sent_message = await self.client.send_message(
+                    message.peer_id,
+                    message=response_message,
+                    reply_to=getattr(message, "reply_to_msg_id", None),
+                )
+                if (
+                    self.config["auto_delete_media"]
+                    and self.config["auto_delete_delay"] > 0
+                    and not is_sfw
+                ):
+                    self._schedule_auto_delete(
+                        sent_message,
+                        self.config["auto_delete_delay"],
+                    )
+                if delete_command:
+                    await asyncio.sleep(0.1)
+                    await self._remove_bot_dialog_message(message)
+                return "sent"
+            except Exception as e:
+                logger.warning("Foundation Bot request failed: %s", e)
+                return "unavailable"
+            finally:
+                await self._remove_bot_dialog_message(request_message)
+                await self._remove_bot_dialog_message(response_message)
+
+    def _create_offline_request(self, message, media_type, delete_command, is_sfw):
+        current_time = time.time()
+        for token, payload in tuple(self._offline_requests.items()):
+            if current_time - payload["created"] >= self._offline_request_ttl:
+                del self._offline_requests[token]
+        token = secrets.token_urlsafe(12)
+        self._offline_requests[token] = {
+            "message": message,
+            "media_type": media_type,
+            "delete_command": delete_command,
+            "is_sfw": is_sfw,
+            "created": current_time,
+        }
+        return token
+
+    async def _offer_offline_mode(
+        self,
+        message: Message,
+        media_type: str,
+        delete_command: bool,
+        is_sfw: bool,
+    ):
+        token = self._create_offline_request(
+            message,
+            media_type,
+            delete_command,
+            is_sfw,
+        )
+        markup = [
+            [
+                {
+                    "text": self.strings("bot_offline_button"),
+                    "callback": self._start_offline_request,
+                    "args": (token,),
+                    "style": "primary",
+                }
+            ],
+            [{"text": self.strings("bot_cancel_button"), "action": "close"}],
+        ]
+        try:
+            await self.inline.form(
+                message=message,
+                text=self.strings("bot_timeout"),
+                reply_markup=markup,
+            )
+        except Exception as e:
+            logger.exception(e)
+            await utils.answer(message, self.strings("bot_timeout"))
+
+    async def _start_offline_request(self, call: InlineCall, token: str):
+        payload = self._offline_requests.pop(token, None)
+        if (
+            payload is None
+            or time.time() - payload["created"] >= self._offline_request_ttl
+        ):
+            try:
+                await call.answer(self.strings("bot_request_expired"), show_alert=True)
+            except Exception:
+                pass
+            return
+        try:
+            await call.answer()
+        except Exception:
+            pass
+        try:
+            await call.edit(self.strings("bot_offline_started"), reply_markup=None)
+        except Exception:
+            pass
+        task = asyncio.create_task(self._run_offline_request(call, payload))
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    async def _run_offline_request(self, call: InlineCall, payload):
+        try:
+            await self._send_offline_media(
+                payload["message"],
+                payload["media_type"],
+                payload["delete_command"],
+                payload["is_sfw"],
+            )
+            try:
+                await call.delete()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.exception(e)
+
+    async def _send_offline_media(
+        self,
+        message: Message,
+        media_type: str,
+        delete_command: bool,
+        is_sfw: bool,
+    ):
+        if not is_sfw:
+            await self._update_foundation_link_on_demand()
+            if not await self._ensure_foundation_access(message):
+                return
+        await self._send_media(message, media_type, delete_command, is_sfw)
+
+    async def _dispatch_media(
+        self,
+        message: Message,
+        media_type: str = "any",
+        delete_command: bool = False,
+        is_sfw: bool = False,
+    ):
+        if self.config["delivery_mode"] == "offline":
+            await self._send_offline_media(
+                message,
+                media_type,
+                delete_command,
+                is_sfw,
+            )
+            return
+        command = "/sfw" if is_sfw else "/video" if media_type == "video" else "/nsfw"
+        result = await self._send_via_bot(
+            message,
+            command,
+            delete_command,
+            is_sfw,
+        )
+        if result == "unavailable":
+            await self._offer_offline_mode(
+                message,
+                media_type,
+                delete_command,
+                is_sfw,
+            )
+
     async def _get_cached_media(self, media_type="any"):
         current_time = time.time()
         cache_key = "messages"
@@ -774,27 +1182,21 @@ class Foundation(loader.Module):
         """Send NSFW media from Foundation"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
-        await self._update_foundation_link_on_demand()
-        if not await self._ensure_foundation_access(message):
-            return
-        await self._send_media(message, "any", delete_command=True)
+        await self._dispatch_media(message, "any", delete_command=True)
 
     @loader.command(ru_doc="Отправить NSFW видео с Фонда")
     async def vfond(self, message: Message):
         """Send NSFW video from Foundation"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
-        await self._update_foundation_link_on_demand()
-        if not await self._ensure_foundation_access(message):
-            return
-        await self._send_media(message, "video", delete_command=True)
+        await self._dispatch_media(message, "video", delete_command=True)
 
     @loader.command(ru_doc="Отправить рандомное SFW медиа с @sfwfond")
     async def fsfw(self, message: Message):
         """Send random SFW media from @sfwfond"""
         if await self._check_spam(message.sender_id, utils.get_chat_id(message)):
             return
-        await self._send_media(message, is_sfw=True, delete_command=True)
+        await self._dispatch_media(message, delete_command=True, is_sfw=True)
 
     @staticmethod
     def _trigger_sender_user_id(message):
@@ -1039,17 +1441,11 @@ class Foundation(loader.Module):
                 if await self._check_spam(message.sender_id, chat_id):
                     return
                 if command == "fond":
-                    await self._update_foundation_link_on_demand()
-                    if not await self._ensure_foundation_access(message):
-                        return
-                    await self._send_media(message, "any", delete_command=True)
+                    await self._dispatch_media(message, "any", delete_command=True)
                 elif command == "vfond":
-                    await self._update_foundation_link_on_demand()
-                    if not await self._ensure_foundation_access(message):
-                        return
-                    await self._send_media(message, "video", delete_command=True)
+                    await self._dispatch_media(message, "video", delete_command=True)
                 elif command == "fsfw":
-                    await self._send_media(message, is_sfw=True, delete_command=True)
+                    await self._dispatch_media(message, delete_command=True, is_sfw=True)
                 break
         except Exception as e:
             logger.exception(e)
