@@ -1,14 +1,14 @@
-__version__ = (1, 0, 3)
+__version__ = (1, 0, 4)
 # meta developer: @mofkomodules, @pureoffic
 # Name: ComfyImageGen
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
-#metapic:https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
 # meta fhsdesc: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
 # meta tags: image generation, imagegen, comfy, comfyui, mofko, image, генерация, ии, комфи, изображения
 # meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/ComfyImageGen.py
-# Diff: Добавлена почти полная поддержка comfy cloud, новые вф эксклюзивно под cloud режим. Новые функции и переработка старых в .ultcomfy, новая команда .cmode для переключение бекенда комфи (Ключи комфи клауд с ротацией)
+# Diff: Фиксы под 2.1.0. 
 # requires: aiohttp pillow cachetools google-genai
-# scope: heroku_min 2.0.0
+# scope: heroku_min 2.1.0
 
 import logging
 import asyncio
@@ -2930,6 +2930,21 @@ class ComfyImageGenMod(loader.Module):
             chat_id = target.get("chat_id")
             if not chat_id:
                 continue
+            if target.get("via_client"):
+                kwargs = {"link_preview": False}
+                if target.get("topic_id") is not None:
+                    kwargs["reply_to"] = target["topic_id"]
+                try:
+                    await self.client.send_message(chat_id, text, **kwargs)
+                    sent_any = True
+                except Exception as e:
+                    logger.debug(
+                        "Client tunnel notice failed for %s/%s: %s",
+                        chat_id,
+                        target.get("topic_id"),
+                        e,
+                    )
+                continue
             kwargs = {"disable_web_page_preview": True}
             if target.get("topic_id") is not None:
                 kwargs["message_thread_id"] = target["topic_id"]
@@ -3552,13 +3567,8 @@ class ComfyImageGenMod(loader.Module):
         self._set_custom_emoji_themes(themes)
         return True
 
-    def _restore_source_inline_message(self, call, source_inline_message_id=None):
-        if not source_inline_message_id:
-            return
-        unit_id = getattr(call, "unit_id", None)
-        units = getattr(self.inline, "_units", {})
-        if unit_id in units:
-            units[unit_id]["inline_message_id"] = source_inline_message_id
+    def _source_inline_target(self, call, source_inline_message_id=None):
+        return self._restore_inline_input_source(call, source_inline_message_id)
 
     async def _safe_call_answer(self, call, text="", **kwargs):
         try:
@@ -3729,6 +3739,7 @@ class ComfyImageGenMod(loader.Module):
                 continue
             topic_id = target.get("topic_id")
             bot_pm = bool(target.get("bot_pm", False))
+            via_client = bool(target.get("via_client", False))
             key = (
                 str(chat_id),
                 str(topic_id) if topic_id is not None else None,
@@ -3741,6 +3752,7 @@ class ComfyImageGenMod(loader.Module):
                     "chat_id": chat_id,
                     "topic_id": topic_id,
                     "bot_pm": bot_pm,
+                    "via_client": via_client,
                 }
             )
 
@@ -3900,7 +3912,14 @@ class ComfyImageGenMod(loader.Module):
             return None
         return {"chat_id": chat_id, "topic_id": None, "bot_pm": True}
 
-    def _add_tunnel_notify_target(self, config, chat_id, topic_id=None, bot_pm=False):
+    def _add_tunnel_notify_target(
+        self,
+        config,
+        chat_id,
+        topic_id=None,
+        bot_pm=False,
+        via_client=False,
+    ):
         targets = config.get("targets")
         if not isinstance(targets, list):
             targets = []
@@ -3915,6 +3934,8 @@ class ComfyImageGenMod(loader.Module):
             if target_key == key:
                 if bot_pm and not target.get("bot_pm"):
                     target["bot_pm"] = True
+                if via_client and not target.get("via_client"):
+                    target["via_client"] = True
                 config["targets"] = targets
                 return False
         targets.append(
@@ -3922,6 +3943,7 @@ class ComfyImageGenMod(loader.Module):
                 "chat_id": chat_id,
                 "topic_id": topic_id,
                 "bot_pm": bool(bot_pm),
+                "via_client": bool(via_client),
             }
         )
         config["targets"] = targets
@@ -3973,6 +3995,65 @@ class ComfyImageGenMod(loader.Module):
         if isinstance(message, Message):
             return utils.get_chat_id(message)
         return None
+
+    def _restore_inline_input_source(self, target, inline_message_id=None):
+        """Point an input callback back to the form that opened it.
+
+        Heroku 2.1 creates a temporary inline message for a submitted ``input``
+        value.  Its callback object retains the original form in ``form``, but
+        exposes the temporary message as ``inline_message_id``.  Editing that
+        temporary message leaves the original form and its input registry out
+        of sync.
+        """
+        if isinstance(target, dict) or isinstance(target, Message):
+            return target
+
+        form = getattr(target, "form", None)
+        if not isinstance(form, dict):
+            return target
+
+        source_id = inline_message_id or form.get("inline_message_id")
+        if not source_id or not hasattr(target, "inline_message_id"):
+            return target
+
+        try:
+            target.inline_message_id = source_id
+        except Exception as e:
+            logger.debug("Failed to restore inline input source: %s", e)
+        return target
+
+    def _wrap_inline_input_handlers(self, reply_markup):
+        """Restore the source form before every Heroku inline-input handler."""
+        if isinstance(reply_markup, dict):
+            rows = [[reply_markup]]
+        elif isinstance(reply_markup, list):
+            rows = [
+                row if isinstance(row, list) else [row]
+                for row in reply_markup
+            ]
+        else:
+            return reply_markup
+
+        for row in rows:
+            for button in row:
+                if not isinstance(button, dict) or "input" not in button:
+                    continue
+                handler = button.get("handler")
+                if not callable(handler) or getattr(handler, "_comfy_input_source_wrapped", False):
+                    continue
+
+                async def source_handler(call, query, *args, _handler=handler, **kwargs):
+                    return await _handler(
+                        self._restore_inline_input_source(call),
+                        query,
+                        *args,
+                        **kwargs,
+                    )
+
+                source_handler._comfy_input_source_wrapped = True
+                button["handler"] = source_handler
+
+        return reply_markup
 
     @staticmethod
     def _is_inline_too_long_error(error):
@@ -4054,38 +4135,19 @@ class ComfyImageGenMod(loader.Module):
         return candidates
 
     async def _create_inline_form(self, message, text, reply_markup=None, **kwargs):
-        if not self._self_has_premium:
-            return await self.inline.form(
-                message=message,
-                text=text,
-                reply_markup=reply_markup,
-                **kwargs,
-            )
-
-        form = await self.inline.form(message=message, text="👀")
-        try:
-            await form.edit(text=text, reply_markup=reply_markup, **kwargs)
-            return form
-        except Exception as e:
-            logger.debug("Premium dummy inline form edit failed: %s", e)
-            try:
-                if hasattr(form, "delete") and callable(form.delete):
-                    await form.delete()
-            except Exception as delete_error:
-                logger.debug("Failed to delete dummy inline form: %s", delete_error)
-            if self._is_inline_too_long_error(e):
-                raise
-            return await self.inline.form(
-                message=message,
-                text=text,
-                reply_markup=reply_markup,
-                **kwargs,
-            )
+        return await self.inline.form(
+            message=message,
+            text=text,
+            reply_markup=reply_markup,
+            **kwargs,
+        )
 
     async def _render_inline(self, target, text, reply_markup=None, apply_theme=True, **kwargs):
+        target = self._restore_inline_input_source(target)
         if apply_theme:
             text = self._apply_emoji_theme(text)
             reply_markup = self._apply_emoji_theme_markup(reply_markup)
+        reply_markup = self._wrap_inline_input_handlers(reply_markup)
         candidates = [text]
         retry_candidates = None
         last_error = None
@@ -4134,21 +4196,6 @@ class ComfyImageGenMod(loader.Module):
                     logger.debug("Inline direct edit failed: %s", e)
             form = target if isinstance(target, dict) else getattr(target, "form", {}) or {}
             if isinstance(form, dict):
-                unit_id = form.get("id") or form.get("uid") or getattr(target, "unit_id", None)
-                if unit_id and hasattr(self.inline, "_edit_unit"):
-                    try:
-                        edited = await self.inline._edit_unit(
-                            text=text,
-                            reply_markup=reply_markup,
-                            unit_id=unit_id,
-                            **kwargs,
-                        )
-                        if edited:
-                            return edited
-                    except Exception as e:
-                        if self._is_inline_too_long_error(e):
-                            raise
-                        logger.debug("Inline unit edit failed: %s", e)
                 caller = form.get("caller") or form.get("message")
                 if isinstance(caller, Message):
                     return await self._create_inline_form(
@@ -4206,32 +4253,47 @@ class ComfyImageGenMod(loader.Module):
         return await self._render_inline(target, text, reply_markup, **kwargs)
 
     async def _edit_inline_status(self, target, text, reply_markup=None, apply_theme=True):
+        target = self._restore_inline_input_source(target)
         if apply_theme:
             text = self._apply_emoji_theme(text)
             reply_markup = self._apply_emoji_theme_markup(reply_markup)
+        reply_markup = self._wrap_inline_input_handlers(reply_markup)
         form = getattr(target, "form", {}) or {}
         if isinstance(target, dict):
             form = target
-        unit_id = None
-        if isinstance(form, dict):
-            unit_id = form.get("id") or form.get("uid")
-        unit_id = unit_id or getattr(target, "unit_id", None)
-        if unit_id and hasattr(self.inline, "_edit_unit"):
+        if hasattr(target, "edit") and callable(target.edit):
             try:
-                edited = await self.inline._edit_unit(
+                if await target.edit(text=text, reply_markup=reply_markup):
+                    return True
+            except Exception as e:
+                logger.debug("Inline status edit failed: %s", e)
+
+        unit_id = (
+            form.get("id") or form.get("unit_id")
+            if isinstance(form, dict)
+            else getattr(target, "unit_id", None)
+        )
+        inline_message_id = (
+            form.get("inline_message_id")
+            if isinstance(form, dict)
+            else getattr(target, "inline_message_id", None)
+        )
+        edit_unit = getattr(self.inline, "_edit_unit", None)
+        if unit_id and callable(edit_unit):
+            try:
+                if await edit_unit(
                     text=text,
                     reply_markup=reply_markup,
                     unit_id=unit_id,
-                )
-                if edited:
+                    inline_message_id=inline_message_id,
+                ):
                     return True
             except Exception as e:
-                logger.debug("Inline unit status edit failed: %s", e)
+                logger.debug("Inline form state edit failed: %s", e)
 
         bot = getattr(self.inline, "bot", None)
         if bot is not None:
             try:
-                inline_message_id = getattr(target, "inline_message_id", None)
                 chat_id = getattr(target, "chat_id", None)
                 message_id = getattr(target, "message_id", None)
                 if not chat_id:
@@ -4256,12 +4318,7 @@ class ComfyImageGenMod(loader.Module):
                     return True
             except Exception as e:
                 logger.debug("Direct inline status edit failed: %s", e)
-
-        try:
-            return bool(await target.edit(text=text, reply_markup=reply_markup))
-        except Exception as e:
-            logger.warning("Inline status edit failed: %s", e)
-            return False
+        return False
 
     def _disable_gens_chat(self, drop_chat_id=False):
         settings = self._get_ult_settings()
@@ -4543,22 +4600,35 @@ class ComfyImageGenMod(loader.Module):
     async def _resolve_tunnel_notify_target(self, query):
         chat_id, topic_id = self._parse_archive_target(query)
         if not chat_id:
-            return None, None
-        entity = await self.client.get_entity(chat_id)
-        bot_chat_id = self._bot_api_chat_id(entity, chat_id)
-        bot = self.inline.bot
-        await bot.get_chat(bot_chat_id)
-        bot_user = await bot.get_me()
-        membership = await bot.get_chat_member(bot_chat_id, bot_user.id)
-        status = getattr(membership, "status", "")
-        status = str(getattr(status, "value", status)).lower()
-        if status in ("left", "kicked", "banned"):
-            raise RuntimeError("bot is not a member of this chat")
-        if getattr(membership, "can_post_messages", True) is False:
-            raise RuntimeError("bot cannot post messages in this channel")
-        if getattr(membership, "can_send_messages", True) is False:
-            raise RuntimeError("bot cannot send messages in this chat")
-        return bot_chat_id, topic_id
+            return None, None, False
+
+        candidates = [chat_id]
+        if int(chat_id) > 0:
+            # A bare numeric ID from t.me/c is the channel's base ID.  The
+            # actual Telegram peer ID is -100<base ID>.
+            candidates.insert(0, int(f"-100{chat_id}"))
+
+        entity = None
+        resolved_chat_id = None
+        for candidate in candidates:
+            try:
+                candidate_entity = await self.client.get_entity(candidate)
+            except Exception:
+                continue
+            if "user" in type(candidate_entity).__name__.lower():
+                continue
+            entity = candidate_entity
+            resolved_chat_id = self._bot_api_chat_id(candidate_entity, candidate)
+            break
+
+        if entity is None or resolved_chat_id is None:
+            raise RuntimeError("chat is unavailable to this account")
+
+        # In Heroku 2.1, get_permissions() can report stale/default banned
+        # rights for channels where the account can actually write.  Resolving
+        # the peer is sufficient here; Telegram remains the source of truth
+        # when the notification is sent from the user account.
+        return resolved_chat_id, topic_id, True
 
     async def _ult_render_main(self, target, notice=None):
         settings = self._get_ult_settings()
@@ -4760,7 +4830,11 @@ class ComfyImageGenMod(loader.Module):
             text = f"{text}\n\n<b>{self.strings('ult_theme_custom')}</b>\n{self.strings('ult_theme_custom_empty')}"
 
         current_slug = self._emoji_theme_custom_slug(current)
-        source_inline_message_id = getattr(target, "inline_message_id", None)
+        source_inline_message_id = (
+            target.get("inline_message_id")
+            if isinstance(target, dict)
+            else getattr(target, "inline_message_id", None)
+        )
         markup.append(
             [
                 {
@@ -4833,9 +4907,9 @@ class ComfyImageGenMod(loader.Module):
         settings = self._get_ult_settings()
         settings["ui"]["theme"] = self._emoji_theme_custom_id(slug)
         self._set_ult_settings(settings)
-        self._restore_source_inline_message(call, source_inline_message_id)
+        target = self._source_inline_target(call, source_inline_message_id)
         await self._safe_call_answer(call, self.strings("ult_theme_created").format(title))
-        await self._ult_render_emoji_theme(call, force_edit=True)
+        await self._ult_render_emoji_theme(target, force_edit=True)
 
     async def _ult_custom_theme_delete(self, call: InlineCall, slug: str):
         themes = self._get_custom_emoji_themes()
@@ -4877,7 +4951,11 @@ class ComfyImageGenMod(loader.Module):
                 )
             lines.append(line)
         text = "\n".join(lines)
-        source_inline_message_id = getattr(target, "inline_message_id", None)
+        source_inline_message_id = (
+            target.get("inline_message_id")
+            if isinstance(target, dict)
+            else getattr(target, "inline_message_id", None)
+        )
         buttons = []
         for slot in _EMOJI_THEME_SLOT_ORDER:
             buttons.append(
@@ -4915,9 +4993,9 @@ class ComfyImageGenMod(loader.Module):
             return await self._safe_call_answer(call, self.strings("ult_theme_not_custom"), show_alert=True)
         theme["title"] = title
         self._set_custom_emoji_themes(themes)
-        self._restore_source_inline_message(call, source_inline_message_id)
+        target = self._source_inline_target(call, source_inline_message_id)
         await self._safe_call_answer(call, self.strings("ult_theme_renamed"))
-        await self._ult_render_custom_theme_editor(call, slug, force_edit=True)
+        await self._ult_render_custom_theme_editor(target, slug, force_edit=True)
 
     async def _ult_custom_theme_slot_menu(self, target, slug: str, slot: str, force_edit=False):
         themes = self._get_custom_emoji_themes()
@@ -4934,7 +5012,11 @@ class ComfyImageGenMod(loader.Module):
             custom_line = f'{self._inline_premium_emoji(item["id"], item.get("char") or old_char)} <code>{item["id"]}</code>'
         else:
             custom_line = self.strings("ult_theme_slot_custom_empty")
-        source_inline_message_id = getattr(target, "inline_message_id", None)
+        source_inline_message_id = (
+            target.get("inline_message_id")
+            if isinstance(target, dict)
+            else getattr(target, "inline_message_id", None)
+        )
         text = "\n".join(
             [
                 self.strings("ult_theme_slot_title").format(utils.escape_html(self._emoji_slot_label(slot))),
@@ -4981,8 +5063,8 @@ class ComfyImageGenMod(loader.Module):
         self._emoji_theme_pending[key] = {
             "slug": slug,
             "slot": slot,
-            "unit_id": getattr(call, "unit_id", None),
             "inline_message_id": getattr(call, "inline_message_id", None),
+            "unit_id": getattr(call, "unit_id", None),
         }
         await call.answer(self.strings("ult_theme_slot_waiting"), show_alert=True)
 
@@ -4997,8 +5079,8 @@ class ComfyImageGenMod(loader.Module):
             return await self._safe_call_answer(call, self.strings("ult_theme_not_custom"), show_alert=True)
         saved_text = self._format_theme_slot_saved_text(slot, emoji_id, char)
         await self._edit_inline_transfer_message(call, saved_text)
-        self._restore_source_inline_message(call, source_inline_message_id)
-        await self._ult_custom_theme_slot_menu(call, slug, slot, force_edit=True)
+        target = self._source_inline_target(call, source_inline_message_id)
+        await self._ult_custom_theme_slot_menu(target, slug, slot, force_edit=True)
 
     async def _ult_custom_theme_reset_slot(self, call: InlineCall, slug: str, slot: str):
         themes = self._get_custom_emoji_themes()
@@ -5034,7 +5116,7 @@ class ComfyImageGenMod(loader.Module):
             utils.escape_html(str(target.get("chat_id")))
         )
 
-    async def _ult_render_tunnel_notify(self, target):
+    async def _ult_render_tunnel_notify(self, target, notice=None):
         config = self._get_tunnel_notify_config()
         enabled = bool(config.get("enabled", True))
         status = self.strings("ult_status_on") if enabled else self.strings("ult_status_off")
@@ -5046,6 +5128,8 @@ class ComfyImageGenMod(loader.Module):
             self.strings("tunnel_menu_desc"),
             "",
         ]
+        if notice:
+            lines.extend([utils.escape_html(str(notice)), ""])
         if targets:
             lines.append(
                 self.strings("tunnel_targets").format(
@@ -5164,37 +5248,35 @@ class ComfyImageGenMod(loader.Module):
 
     async def _ult_bind_tunnel_target(self, call: InlineCall, query: str):
         try:
-            chat_id, topic_id = await self._resolve_tunnel_notify_target(query)
+            chat_id, topic_id, via_client = await self._resolve_tunnel_notify_target(query)
         except Exception as e:
             logger.debug("Tunnel notification target validation failed: %s", e)
-            await self._safe_call_answer(
-                call,
-                self._plain_text(self.strings("tunnel_target_bind_failed")).format(str(e)[:160]),
-                show_alert=True,
+            notice = self._plain_text(self.strings("tunnel_target_bind_failed")).format(
+                str(e)[:160]
             )
-            return await self._ult_render_tunnel_notify(call)
+            await self._safe_call_answer(call, notice, show_alert=True)
+            return await self._ult_render_tunnel_notify(call, notice=notice)
         if not chat_id:
-            await self._safe_call_answer(
-                call,
-                self._plain_text(self.strings("tunnel_target_bad")),
-                show_alert=True,
-            )
-            return await self._ult_render_tunnel_notify(call)
+            notice = self._plain_text(self.strings("tunnel_target_bad"))
+            await self._safe_call_answer(call, notice, show_alert=True)
+            return await self._ult_render_tunnel_notify(call, notice=notice)
 
         settings = self._get_ult_settings()
         config = settings["tunnel_notify"]
-        added = self._add_tunnel_notify_target(config, chat_id, topic_id)
+        added = self._add_tunnel_notify_target(
+            config,
+            chat_id,
+            topic_id,
+            via_client=via_client,
+        )
         config["enabled"] = True
         self._set_ult_settings(settings)
         self._start_tunnel_watch_task()
-        await self._safe_call_answer(
-            call,
-            self._plain_text(
-                self.strings("tunnel_target_bound" if added else "tunnel_target_already_bound")
-            ),
-            show_alert=True,
+        notice = self._plain_text(
+            self.strings("tunnel_target_bound" if added else "tunnel_target_already_bound")
         )
-        await self._ult_render_tunnel_notify(call)
+        await self._safe_call_answer(call, notice, show_alert=True)
+        await self._ult_render_tunnel_notify(call, notice=notice)
 
     async def _ult_remove_tunnel_target(self, call: InlineCall, index: int):
         settings = self._get_ult_settings()
@@ -10771,26 +10853,17 @@ class ComfyImageGenMod(loader.Module):
 
     async def _edit_cmon_form(self, form, text, reply_markup):
         text = self._apply_emoji_theme(text)
+        reply_markup = self._wrap_inline_input_handlers(reply_markup)
         if hasattr(form, "edit") and callable(form.edit):
             await form.edit(text=text, reply_markup=reply_markup)
             return True
-        form_data = form if isinstance(form, dict) else getattr(form, "form", {}) or {}
-        if isinstance(form_data, dict):
-            unit_id = form_data.get("id") or form_data.get("uid") or getattr(form, "unit_id", None)
-            if unit_id and hasattr(self.inline, "_edit_unit"):
-                await self.inline._edit_unit(
-                    text=text,
-                    reply_markup=reply_markup,
-                    unit_id=unit_id,
-                )
-                return True
         return False
 
     async def _create_cmon_form(self, message, text, reply_markup):
         return await self.inline.form(
             message=message,
             text=self._apply_emoji_theme(text),
-            reply_markup=reply_markup,
+            reply_markup=self._wrap_inline_input_handlers(reply_markup),
         )
 
     @staticmethod
@@ -14236,6 +14309,23 @@ class ComfyImageGenMod(loader.Module):
                     raise e
                 raise
 
+    async def _response_message_from_updates(self, result, peer):
+        candidates = [result, *(getattr(result, "updates", None) or [])]
+        for candidate in candidates:
+            message = getattr(candidate, "message", None)
+            if message is not None:
+                return message
+            message_id = getattr(candidate, "id", None)
+            if message_id is None:
+                continue
+            try:
+                message = await self.client.get_messages(peer, ids=message_id)
+                if message:
+                    return message
+            except Exception as e:
+                logger.debug("Could not resolve sent message %s: %s", message_id, e)
+        return None
+
     async def _cshare_send_file_raw(self, target, file_obj, reply_to, **kwargs):
         if not (InputMediaUploadedDocument and DocumentAttributeFilename):
             raise UserFacingError("cshare_direct_unavailable", self._plain_text(self.strings("cshare_direct_unavailable")))
@@ -14253,8 +14343,9 @@ class ComfyImageGenMod(loader.Module):
             mime_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
             attributes=[DocumentAttributeFilename(filename)],
         )
+        peer = await self.client.get_input_entity(self._cshare_peer(target))
         request = SendMediaRequest(
-            peer=await self.client.get_input_entity(self._cshare_peer(target)),
+            peer=peer,
             media=media,
             message=text,
             random_id=random.getrandbits(63),
@@ -14262,18 +14353,16 @@ class ComfyImageGenMod(loader.Module):
             entities=entities or [],
         )
         result = await self.client(request)
-        try:
-            return self.client._get_response_message(request, result, await self.client.get_input_entity(self._cshare_peer(target)))
-        except Exception:
-            return None
+        return await self._response_message_from_updates(result, peer)
 
     async def _cshare_send_message_raw(self, target, text, reply_to, **kwargs):
         try:
             parsed_text, entities = self.client.parse_mode.parse(text)
         except Exception:
             parsed_text, entities = text, []
+        peer = await self.client.get_input_entity(self._cshare_peer(target))
         request = SendMessageRequest(
-            peer=await self.client.get_input_entity(self._cshare_peer(target)),
+            peer=peer,
             message=parsed_text,
             random_id=random.getrandbits(63),
             no_webpage=not kwargs.get("link_preview", False),
@@ -14281,10 +14370,7 @@ class ComfyImageGenMod(loader.Module):
             entities=entities or [],
         )
         result = await self.client(request)
-        try:
-            return self.client._get_response_message(request, result, await self.client.get_input_entity(self._cshare_peer(target)))
-        except Exception:
-            return None
+        return await self._response_message_from_updates(result, peer)
 
     async def _resolve_cshare_direct_target(self):
         channel = await self.client.get_entity("comfyideas")
@@ -15908,8 +15994,9 @@ class ComfyImageGenMod(loader.Module):
                 and isinstance(reply_to, int)
             ):
                 request_reply_to = InputReplyToMessage(reply_to_msg_id=reply_to)
+            peer = await self.client.get_input_entity(chat_id)
             request_kwargs = {
-                "peer": await self.client.get_input_entity(chat_id),
+                "peer": peer,
                 "media": InputMediaUploadedPhoto(file=uploaded, spoiler=True),
                 "message": text,
                 "random_id": random.getrandbits(63),
@@ -15924,14 +16011,7 @@ class ComfyImageGenMod(loader.Module):
                 request_kwargs.pop("send_as", None)
                 request = SendMediaRequest(**request_kwargs)
             result = await self.client(request)
-            try:
-                return self.client._get_response_message(
-                    request,
-                    result,
-                    await self.client.get_input_entity(chat_id),
-                )
-            except Exception:
-                return None
+            return await self._response_message_from_updates(result, peer)
         except Exception as e:
             logger.error("Failed to send spoiler photo: %s: %s", type(e).__name__, e)
             logger.exception(e)
@@ -18607,13 +18687,13 @@ class ComfyImageGenMod(loader.Module):
                 emoji_id, char = extracted
                 if self._set_custom_theme_slot(slug, slot, emoji_id, char):
                     saved_text = self._format_theme_slot_saved_text(slot, emoji_id, char)
-                    unit_id = pending.get("unit_id")
                     inline_message_id = pending.get("inline_message_id")
-                    units = getattr(self.inline, "_units", {})
-                    if unit_id and unit_id in units and inline_message_id:
-                        units[unit_id]["inline_message_id"] = inline_message_id
+                    if inline_message_id:
                         await self._ult_custom_theme_slot_menu(
-                            {"id": unit_id, "inline_message_id": inline_message_id},
+                            {
+                                "inline_message_id": inline_message_id,
+                                "unit_id": pending.get("unit_id"),
+                            },
                             slug,
                             slot,
                             force_edit=True,
