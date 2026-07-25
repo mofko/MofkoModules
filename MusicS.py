@@ -1,13 +1,15 @@
 # meta developer: @mofkomodules
 # Name: MusicS
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
-#metapic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_038.png
+# meta pic: https://raw.githubusercontent.com/mofko/hass/refs/heads/main/IMG_20260209_182634_445.jpg
 # meta fhsdesc: tool, music, finder, mofko, поиск, музыка
 # meta tags: tool, music, finder, mofko, поиск, музыка
 # requires: cachetools ShazamAPI audioop-lts
 # packages: ffmpeg
+# scope: heroku_min 2.1.0
+# scope:ffmpeg
 
-__version__ = (1, 4, 0)
+__version__ = (1, 4, 1)
 
 import asyncio
 import contextlib
@@ -20,7 +22,7 @@ from urllib.parse import quote
 
 from cachetools import TTLCache
 from ShazamAPI import Shazam
-from telethon.tl.types import (
+from herokutl.tl.types import (
     DocumentAttributeAudio,
     DocumentAttributeFilename,
     DocumentAttributeVideo,
@@ -38,7 +40,6 @@ class MusicSMod(loader.Module):
 
     strings = {
         "name": "MusicS",
-        "processing": "<tg-emoji emoji-id=5325543345760509967>🔄</tg-emoji> Processing media...",
         "downloading": "<tg-emoji emoji-id=5873225338984599714>📤</tg-emoji> Downloading media...",
         "extracting": "<tg-emoji emoji-id=5325543345760509967>🔄</tg-emoji> Preparing audio segments...",
         "recognizing": "<tg-emoji emoji-id=5447429226221303478>⚫️</tg-emoji> Recognizing music...",
@@ -57,7 +58,6 @@ class MusicSMod(loader.Module):
 
     strings_ru = {
         "_cls_doc": "Распознавание музыки из медиа.",
-        "processing": "<tg-emoji emoji-id=5325543345760509967>🔄</tg-emoji> Обрабатываю медиа...",
         "downloading": "<tg-emoji emoji-id=5873225338984599714>📤</tg-emoji> Скачиваю медиа...",
         "extracting": "<tg-emoji emoji-id=5325543345760509967>🔄</tg-emoji> Подготавливаю аудиофрагменты...",
         "recognizing": "<tg-emoji emoji-id=5447429226221303478>⚫️</tg-emoji> Распознаю музыку...",
@@ -101,21 +101,13 @@ class MusicSMod(loader.Module):
             ),
         )
         self.ffmpeg_available = False
-        self.uid = None
         self._recognition_lock = asyncio.Lock()
         self._result_cache = TTLCache(maxsize=200, ttl=self._CACHE_TTL)
 
     async def client_ready(self, client, db):
-        self.client = client
-        self.db = db
         self.ffmpeg_available = await self._check_ffmpeg()
         if not self.ffmpeg_available:
             logger.error(self.strings("ffmpeg_not_found_log"))
-        try:
-            me = await self.client.get_me()
-            self.uid = me.id
-        except Exception as e:
-            logger.exception(e)
 
     async def on_unload(self):
         self._result_cache.clear()
