@@ -2,15 +2,17 @@
 # name: Bredik
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161046_829.png
 # meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161046_829.png
-# meta fhsdesc: fun, trash, random, funny, бред
+# meta fhsdesc: fun, trash, random, funny, бред, mofko
+# meta tags: fun, trash, random, funny, бред, mofko
+# scope: heroku_min 2.1.0
 
-__version__ = (1, 2, 0)
+__version__ = (1, 2, 1)
 
 import logging
 import random
 import time
 
-from telethon.tl.types import Message
+from herokutl.tl.types import Message
 
 from .. import loader, utils
 
@@ -173,7 +175,7 @@ class BredMod(loader.Module):
 
             await self.client.send_message(
                 message.peer_id,
-                text,
+                utils.escape_html(text),
                 reply_to=getattr(message, "reply_to_msg_id", None),
             )
 
