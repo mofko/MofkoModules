@@ -1,11 +1,12 @@
-__version__ = (1, 0, 0)
+__version__ = (1, 0, 1)
 # meta developer: @mofkomodules
 # Name: CompareModules
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/compare_modules.png
-#metapic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/compare_modules.png
-# meta fhsdesc: ai, module comparison, code review, ии, сравнение модулей, mofko, хуйня
-# meta tags: ai, module comparison, code review, ии, сравнение модулей, mofko, хуйня
-# Diff: релиз
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/compare_modules.png
+# meta fhsdesc: ai, module comparison, code review, ии, сравнение модулей, mofko
+# meta tags: ai, module comparison, code review, ии, сравнение модулей, mofko
+# Diff: Фиксы под 2.1.0
+# scope: heroku_min 2.1.0
 
 import ast
 import asyncio
@@ -20,7 +21,7 @@ import re
 import shutil
 import tokenize
 import uuid
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 import aiohttp
 from herokutl.tl.functions.messages import SendMessageRequest
@@ -341,28 +342,85 @@ class CompareModulesMod(loader.Module):
         host = urlparse(url).netloc or "сервер источника"
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
-                async with session.get(
-                    url,
-                    allow_redirects=True,
-                    max_redirects=3,
-                    headers={"Cache-Control": "no-cache", "User-Agent": "CompareModules/1.0.0"},
-                ) as response:
-                    if response.status >= 500:
-                        raise ValueError(
-                            f"API {host} в данный момент не отвечает. Попробуйте позже или используйте другую raw-ссылку"
+                urls = [url]
+                fallback_url = self._github_raw_fallback_url(url)
+                if fallback_url and fallback_url != url:
+                    urls.append(fallback_url)
+                for mirror_url in self._github_mirror_fallback_urls(url):
+                    if mirror_url not in urls:
+                        urls.append(mirror_url)
+                is_github_source = bool(self._github_contents_api_url(url))
+
+                raw_bytes = None
+                last_status = None
+                failed_hosts = []
+                for request_url in urls:
+                    async with session.get(
+                        request_url,
+                        allow_redirects=True,
+                        max_redirects=3,
+                        headers={"Cache-Control": "no-cache", "User-Agent": "Mozilla/5.0 CompareModules/1.0.6"},
+                    ) as response:
+                        last_status = response.status
+                        failed_hosts.append(
+                            f"{urlparse(request_url).netloc}:{response.status}"
                         )
-                    if response.status != 200:
-                        raise ValueError(f"сервер вернул HTTP {response.status}")
-                    if response.content_length and response.content_length > limit:
-                        raise ValueError(f"файл больше {self.config['max_source_kb']} КиБ")
-                    chunks = []
-                    size = 0
-                    async for chunk in response.content.iter_chunked(65536):
-                        size += len(chunk)
-                        if size > limit:
+                        if response.status in {403, 404} and is_github_source:
+                            continue
+                        if response.status >= 500:
+                            raise ValueError(
+                                f"API {host} в данный момент не отвечает. Попробуйте позже или используйте другую raw-ссылку"
+                            )
+                        if response.status != 200:
+                            raise ValueError(f"сервер вернул HTTP {response.status}")
+                        if response.content_length and response.content_length > limit:
                             raise ValueError(f"файл больше {self.config['max_source_kb']} КиБ")
-                        chunks.append(chunk)
-                    raw_bytes = b"".join(chunks)
+                        chunks = []
+                        size = 0
+                        async for chunk in response.content.iter_chunked(65536):
+                            size += len(chunk)
+                            if size > limit:
+                                raise ValueError(f"файл больше {self.config['max_source_kb']} КиБ")
+                            chunks.append(chunk)
+                        raw_bytes = b"".join(chunks)
+                        break
+
+                if raw_bytes is None:
+                    api_url = self._github_contents_api_url(url)
+                    if api_url:
+                        async with session.get(
+                            api_url,
+                            headers={
+                                "Accept": "application/vnd.github+json",
+                                "User-Agent": "Mozilla/5.0 CompareModules/1.0.6",
+                            },
+                        ) as response:
+                            last_status = response.status
+                            failed_hosts.append(
+                                f"{urlparse(api_url).netloc}:{response.status}"
+                            )
+                            if response.status == 200:
+                                data = await response.json(content_type=None)
+                                encoded = "".join(
+                                    str(data.get("content") or "").split()
+                                )
+                                if str(data.get("encoding") or "").lower() != "base64" or not encoded:
+                                    raise ValueError("GitHub Contents API вернул исходник в неподдерживаемом формате")
+                                try:
+                                    raw_bytes = base64.b64decode(encoded)
+                                except Exception as e:
+                                    raise ValueError("GitHub Contents API вернул повреждённый исходник") from e
+                                if len(raw_bytes) > limit:
+                                    raise ValueError(f"файл больше {self.config['max_source_kb']} КиБ")
+
+                if raw_bytes is None:
+                    if is_github_source and failed_hosts:
+                        raise ValueError(
+                            "GitHub недоступен из этой сети ("
+                            + ", ".join(failed_hosts)
+                            + ")"
+                        )
+                    raise ValueError(f"сервер вернул HTTP {last_status or 404}")
         except ValueError:
             raise
         except asyncio.TimeoutError as e:
@@ -380,6 +438,66 @@ class CompareModulesMod(loader.Module):
         except Exception as e:
             raise ValueError(f"не удалось загрузить URL: {type(e).__name__}") from e
         return raw_bytes
+
+    @staticmethod
+    def _github_raw_fallback_url(url):
+        parsed = urlparse(url)
+        if parsed.netloc.lower() != "raw.githubusercontent.com":
+            return None
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) < 6 or parts[2:4] != ["refs", "heads"]:
+            return None
+        canonical_path = "/".join([*parts[:2], parts[4], *parts[5:]])
+        return parsed._replace(path=f"/{canonical_path}").geturl()
+
+    @staticmethod
+    def _github_contents_api_url(url):
+        parsed = urlparse(url)
+        if parsed.netloc.lower() != "raw.githubusercontent.com":
+            return None
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) < 4:
+            return None
+        owner, repository = parts[:2]
+        if parts[2:4] == ["refs", "heads"]:
+            if len(parts) < 6:
+                return None
+            branch, source_path = parts[4], parts[5:]
+        else:
+            branch, source_path = parts[2], parts[3:]
+        if not source_path:
+            return None
+        encoded_path = quote("/".join(source_path), safe="/")
+        return (
+            f"https://api.github.com/repos/{quote(owner, safe='')}/"
+            f"{quote(repository, safe='')}/contents/{encoded_path}?ref={quote(branch, safe='')}"
+        )
+
+    @staticmethod
+    def _github_mirror_fallback_urls(url):
+        parsed = urlparse(url)
+        if parsed.netloc.lower() != "raw.githubusercontent.com":
+            return ()
+        parts = parsed.path.strip("/").split("/")
+        if len(parts) < 4:
+            return ()
+        owner, repository = parts[:2]
+        if parts[2:4] == ["refs", "heads"]:
+            if len(parts) < 6:
+                return ()
+            branch, source_path = parts[4], parts[5:]
+        else:
+            branch, source_path = parts[2], parts[3:]
+        if not source_path:
+            return ()
+        encoded_owner = quote(owner, safe="")
+        encoded_repository = quote(repository, safe="")
+        encoded_branch = quote(branch, safe="")
+        encoded_path = quote("/".join(source_path), safe="/")
+        return (
+            f"https://cdn.jsdelivr.net/gh/{encoded_owner}/{encoded_repository}@{encoded_branch}/{encoded_path}",
+            f"https://cdn.statically.io/gh/{encoded_owner}/{encoded_repository}/{encoded_branch}/{encoded_path}",
+        )
 
     def _normalize_url(self, url):
         if "github.com" in url and "/blob/" in url:
@@ -476,7 +594,53 @@ class CompareModulesMod(loader.Module):
             return f"{left}.{node.attr}" if left else node.attr
         return ""
 
+    def _restore_inline_input_source(self, target):
+        """Edit the form that opened an Heroku 2.1 inline input.
+
+        Chosen inline results have their own temporary message ID.  The
+        original form and its handlers are retained in ``form``; edits must
+        therefore be directed back to that message.
+        """
+        if not isinstance(target, InlineCall):
+            return target
+        form = getattr(target, "form", None)
+        source_id = form.get("inline_message_id") if isinstance(form, dict) else None
+        if source_id:
+            target.inline_message_id = source_id
+        return target
+
+    def _wrap_inline_input_handlers(self, markup):
+        """Normalize every input callback before module code handles it."""
+        if isinstance(markup, dict):
+            rows = [[markup]]
+        elif isinstance(markup, list):
+            rows = [row if isinstance(row, list) else [row] for row in markup]
+        else:
+            return markup
+
+        for row in rows:
+            for button in row:
+                if not isinstance(button, dict) or "input" not in button:
+                    continue
+                handler = button.get("handler")
+                if not callable(handler) or getattr(handler, "_comparemods_input_wrapped", False):
+                    continue
+
+                async def source_handler(call, query, *args, _handler=handler, **kwargs):
+                    return await _handler(
+                        self._restore_inline_input_source(call),
+                        query,
+                        *args,
+                        **kwargs,
+                    )
+
+                source_handler._comparemods_input_wrapped = True
+                button["handler"] = source_handler
+
+        return markup
+
     async def _render_compare_menu(self, target, recipient=None):
+        target = self._restore_inline_input_source(target)
         first = self._slots.get(1)
         second = self._slots.get(2)
         if not first or not second:
@@ -508,6 +672,7 @@ class CompareModulesMod(loader.Module):
             [{"text": "🤖 Сравнить", "callback": self._confirm_compare, "style": "success"}],
             [{"text": "❌ Отмена", "callback": self._cancel_compare, "style": "danger"}],
         ])
+        markup = self._wrap_inline_input_handlers(markup)
         if isinstance(target, InlineCall):
             try:
                 await target.edit(text, reply_markup=markup)
@@ -703,13 +868,13 @@ class CompareModulesMod(loader.Module):
 
     async def _send_result_pages(self, target, recipient, text):
         text = self._safe_regular_html(text)
-        parsed_text, entities = self._client.parse_mode.parse(text)
+        parsed_text, entities = self.client.parse_mode.parse(text)
         pages = list(utils.smart_split(parsed_text, entities, 3300))
         if len(pages) > 1:
             await self._render_result_pagination(target, pages, 0)
             return True
-        peer = await self._client.get_input_entity(recipient)
-        page_text, page_entities = self._client.parse_mode.parse(pages[0])
+        peer = await self.client.get_input_entity(recipient)
+        page_text, page_entities = self.client.parse_mode.parse(pages[0])
         request = SendMessageRequest(
             peer=peer,
             message=page_text,
@@ -718,7 +883,7 @@ class CompareModulesMod(loader.Module):
             reply_to=None,
             entities=page_entities or [],
         )
-        await self._client(request)
+        await self.client(request)
         return False
 
     def _safe_regular_html(self, text):
@@ -834,6 +999,18 @@ Heroku UserBot — Telegram userbot на Python, форк Hikka. Модуль �
 Снижать security можно только за конкретное доказательство: скрытую эксфильтрацию секретов или переписок на неочевидный адрес, eval/exec непроверенного ввода, shell-команду с непроверенными аргументами, удаление произвольных пользовательских путей без защиты, вредные действия без команды/согласия владельца, обход прав доступа, отключённые safeguards или намеренно скрытую логику. Статический вызов сам по себе не является доказательством. Не используй фразы «требует ручной проверки», «широкая поверхность риска», «не устанавливать без аудита» без прямого доказательства из кода.
 
 Если исходник усечён, не предполагай риск в отсутствующей части и не понижай за неё баллы. Укажи ограничение только нейтрально, если оно действительно мешает оценке конкретного пункта.
+
+HEROKU 2.1.0 — ОБЯЗАТЕЛЬНАЯ ПРОВЕРКА СОВМЕСТИМОСТИ
+
+Целевая версия платформы — именно Heroku 2.1.0. Оцени совместимость по реальному коду, а не по старым примерам Hikka, FTG, GeekTG или aiogram.
+
+Предпочтительны публичные объекты модуля: self.client, self.db и self.inline. Прямой доступ модуля к private internals self.inline._units, self.inline._custom_map, self.inline._bot_client, self.inline._edit_unit, self.inline._* или self._client является подтверждённым техническим долгом и может снижать heroku_compatibility, если для него нет явной необходимости. Не штрафуй вызовы публичных методов InlineCall.edit(), InlineCall.delete() и InlineCall.answer(): их внутренняя реализация не является ошибкой модуля.
+
+Для форм используй модель Heroku 2.1: self.inline.form() создаёт форму; callback получает InlineCall и может редактировать её через call.edit(). Кнопка с полем input создаёт временный chosen-inline-result. Если input handler должен перерисовать исходное меню, модуль обязан вернуть редактирование к inline_message_id исходной формы, сохранённому в call.form, либо применить эквивалентный совместимый нормализатор. Простой input handler, который не редактирует форму, не является проблемой.
+
+Нативный pre-edit и premium emoji поддерживаются платформой. Не требуй от модуля dummy/pre-edit workaround и не считай его отсутствие дефектом. Для custom emoji корректен тег <tg-emoji>; старый тег <emoji> является несовместимым. self.inline.bot — Telethon-backed bot client и допустим для собственно bot-message сценариев; не смешивай его с userbot-клиентом self.client и не требуй aiogram.
+
+Не понижай балл только за отсутствие # scope, метаданных или конкретного варианта оформления. Снижай heroku_compatibility только за доказанное использование несовместимого API, private internals, старого <emoji>, сломанный lifecycle/inline flow либо за отсутствие необходимой обработки именно в фактическом сценарии кода.
 
 КРИТЕРИИ ОЦЕНКИ
 
@@ -1439,6 +1616,8 @@ comparison: только различия, важные при выборе ме
             await self._render_inline(call, self.strings("codex_login_fail").format(utils.escape_html(type(e).__name__)), [[{"text": "◀️ Назад", "callback": self._provider_detail, "args": ("codex",)}]])
 
     async def _render_inline(self, target, text, markup):
+        target = self._restore_inline_input_source(target)
+        markup = self._wrap_inline_input_handlers(markup)
         if isinstance(target, InlineCall):
             try:
                 await target.edit(text, reply_markup=markup)
