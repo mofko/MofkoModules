@@ -1,10 +1,12 @@
-__version__ = (1, 5, 0)
+__version__ = (1, 6, 0)
+# diff: Фиксы под 2.1.0.
 # meta developer: @mofkomodules
 # Name: SelfDestruct
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_686.png
-#metapic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_686.png
-# meta fhsdesc: cleaner, deleter, auto, tool, privacy, mofko, мофко, автоудаление, самоуничтожение, deleteme
-# meta tags: cleaner, deleter, auto, tool, privacy, mofko, мофко, автоудаление, самоуничтожение, deleteme
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_686.png
+# meta fhsdesc: cleaner, deleter, auto, tool, privacy, mofko, мофко, автоудаление, самоуничтожение, конфиденциальность
+# meta tags: cleaner, deleter, auto, tool, privacy, mofko, мофко, автоудаление, самоуничтожение, конфиденциальность
+# scope: heroku_min 2.1.0
 
 import asyncio
 import logging
@@ -16,12 +18,16 @@ from herokutl.tl.types import (
     DocumentAttributeAudio,
     DocumentAttributeSticker,
     DocumentAttributeVideo,
+    Message,
     MessageMediaDocument,
     MessageMediaPhoto,
     MessageMediaWebPage,
 )
-from herokutl.types import Message
-from telethon.errors import ChannelPrivateError, ChatAdminRequiredError, UserNotParticipantError
+from herokutl.errors.rpcerrorlist import (
+    ChannelPrivateError,
+    ChatAdminRequiredError,
+    UserNotParticipantError,
+)
 
 from .. import loader, utils
 from ..inline.types import InlineCall
@@ -181,7 +187,10 @@ class SelfDestructMod(loader.Module):
     async def client_ready(self, client, db):
         self.client = client
         self.db = db
-        self.chats = self.db.get(__name__, "chats", {})
+        stored_chats = self.db.get(__name__, "chats", {})
+        self.chats = stored_chats if isinstance(stored_chats, dict) else {}
+        if self.chats is not stored_chats:
+            self.db.set(__name__, "chats", self.chats)
 
     def _settings_key(self, chat_id: int, topic_id: int = None) -> str:
         return f"{chat_id}:{topic_id or 0}"
