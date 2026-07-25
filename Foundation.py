@@ -1,12 +1,12 @@
-__version__ = (2, 6, 0)
-# diff: теперь не требует нахождения в фонде/чате, все запросы идут через бота, а не юзербот. (По прежнему можно использовать старую систему отправки, в моменты когда бот недоступен)
+__version__ = (2, 6, 1)
+# diff: Фиксы под 2.1.0, фикс офлайн режима, теперь корректно переключает.
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
 # requires: aiohttp
-# scope: heroku_min 2.0.0
+# scope: heroku_min 2.1.0
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
-#metapic:https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
 # meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, говно, nsfw, sfw
 # meta tags: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, говно, nsfw, sfw
 
@@ -34,11 +34,11 @@ class Foundation(loader.Module):
 
     strings = {
         "name": "Foundation",
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Something went wrong, check logs",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> You need to join the channel first: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> No videos found in channel",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> No media found in channel",
+        "error": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Something went wrong, check logs",
+        "not_joined": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> You need to join the channel first: {link}",
+        "no_media": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> No media found in channel",
+        "no_videos": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> No videos found in channel",
+        "fsfw_no_media": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> No media found in channel",
         "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Configuration of triggers for Foundation</b>\n\nChat: {} (ID: {})\n\nCurrent triggers:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
         "select_trigger": "Select trigger to configure:",
         "enter_trigger_word": "✍️ Enter trigger word (or 0 to disable):",
@@ -80,11 +80,11 @@ class Foundation(loader.Module):
     }
 
     strings_ru = {
-        "error": "<emoji document_id=6012681561286122335>🤤</emoji> Чот не то, чекай логи",
-        "not_joined": "<emoji document_id=6012681561286122335>🤤</emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: {link}",
-        "no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа",
-        "no_videos": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено видео",
-        "fsfw_no_media": "<emoji document_id=6012681561286122335>🤤</emoji> Не найдено медиа в канале",
+        "error": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Чот не то, чекай логи",
+        "not_joined": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: {link}",
+        "no_media": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Не найдено медиа",
+        "no_videos": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Не найдено видео",
+        "fsfw_no_media": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Не найдено медиа в канале",
         "triggers_config": '<tg-emoji emoji-id="4904936030232117798">⚙️</tg-emoji> <b>Настройка триггеров для Foundation</b>\n\nЧат: {} (ID: {})\n\nТекущие триггеры:\n• <code>fond</code>: {}\n• <code>vfond</code>: {}\n• <code>fsfw</code>: {}',
         "select_trigger": "Выберите триггер для настройки:",
         "enter_trigger_word": "✍️ Введите слово-триггер (или 0 для отключения):",
@@ -943,6 +943,7 @@ class Foundation(loader.Module):
             except Exception:
                 pass
             return
+        self.config["delivery_mode"] = "offline"
         try:
             await call.answer()
         except Exception:
