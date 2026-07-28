@@ -1,8 +1,8 @@
 __version__ = (2, 0, 0)
 # meta developer: @mofkomodules
 # Name: MindfulEdit
-# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161046_829.png
-# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161046_829.png
+# meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_101.png
+# meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_101.png
 # meta fhsdesc: random, edits, mofko, эдиты, рандом
 # meta tags: random, edits, mofko, эдиты, рандом
 # diff: Фиксы под 2.1.0
