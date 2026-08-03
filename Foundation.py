@@ -1,5 +1,5 @@
-__version__ = (2, 7, 0)
-# diff: Удалена отправка через Foundation бота (больше неработает). Медиа снова берётся напрямую из канала, вступление в чат больше не требуется.
+__version__ = (2, 7, 1)
+# diff: Исправлена ложная ошибка о необходимости вступить в канал.
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
@@ -19,7 +19,6 @@ import re
 from collections import defaultdict, deque
 from herokutl.errors import FloodWaitError
 from herokutl.errors.rpcerrorlist import ChannelPrivateError, UserNotParticipantError
-from herokutl.tl import functions
 from herokutl.tl.types import Message
 from .. import loader, utils
 from ..inline.types import InlineCall
@@ -126,8 +125,6 @@ class Foundation(loader.Module):
         self._last_foundation_link_update = 0
         self._foundation_link_lock = asyncio.Lock()
         self._nsfw_cache_lock = asyncio.Lock()
-        self._membership_cache = {}
-        self._membership_cache_ttl = 60
         self._auto_delete_tasks = set()
         
         self._sfw_channel_username = "sfwfond"
@@ -393,8 +390,13 @@ class Foundation(loader.Module):
                     )
                     self.actual_foundation_link = new_link
                     self.set("actual_foundation_link", new_link)
+                    self.entity = None
                     self._last_entity_check = 0
-                    await self._load_entity()
+                    self._media_cache.clear()
+                    self._video_cache.clear()
+                    self._cache_time.clear()
+                    self._recent_media_ids["any"].clear()
+                    self._recent_media_ids["video"].clear()
                 self._last_foundation_link_update = current_time
                 return True
             except Exception as e:
@@ -504,31 +506,6 @@ class Foundation(loader.Module):
             self._sfw_channel_entity = None
             return False
 
-    async def _has_channel_access(self, channel_entity, participant):
-        if not channel_entity or participant is None:
-            return False
-        channel_id = getattr(channel_entity, "id", channel_entity)
-        cache_key = f"{channel_id}:{participant}"
-        cached = self._membership_cache.get(cache_key)
-        current_time = time.time()
-        if cached and current_time - cached[1] < self._membership_cache_ttl:
-            return cached[0]
-        try:
-            await self.client(
-                functions.channels.GetParticipantRequest(
-                    channel=channel_entity,
-                    participant=participant,
-                )
-            )
-            result = True
-        except (UserNotParticipantError, ChannelPrivateError, ValueError):
-            result = False
-        except Exception as e:
-            logger.warning(f"Could not verify membership for participant {participant}: {e}")
-            result = False
-        self._membership_cache[cache_key] = (result, current_time)
-        return result
-
     async def _show_access_required(self, message: Message):
         if not self.actual_foundation_link:
             await utils.answer(message, self.strings("source_unavailable"))
@@ -558,16 +535,6 @@ class Foundation(loader.Module):
                 ),
             )
 
-    async def _ensure_foundation_access(self, message: Message):
-        participant = "me"
-        if not await self._load_entity():
-            await self._show_access_required(message)
-            return False
-        if not await self._has_channel_access(self.entity, participant):
-            await self._show_access_required(message)
-            return False
-        return True
-
     async def _dispatch_media(
         self,
         message: Message,
@@ -577,8 +544,6 @@ class Foundation(loader.Module):
     ):
         if not is_sfw:
             await self._update_foundation_link_on_demand()
-            if not await self._ensure_foundation_access(message):
-                return
         await self._send_media(message, media_type, delete_command, is_sfw)
 
     async def _get_cached_media(self, media_type="any"):
@@ -711,8 +676,6 @@ class Foundation(loader.Module):
                     await utils.answer(message, self.strings("fsfw_no_media"))
                     return
             else:
-                if not await self._load_entity():
-                    return await self._show_access_required(message)
                 media_list = await self._get_cached_media(media_type)
                 if media_list is None:
                     return await self._show_access_required(message)
