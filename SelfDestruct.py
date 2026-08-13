@@ -1,5 +1,5 @@
-__version__ = (1, 6, 0)
-# diff: Фиксы под 2.1.0.
+__version__ = (1, 7, 0)
+# diff: Фикс ошибочного выключения автоудаления
 # meta developer: @mofkomodules
 # Name: SelfDestruct
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_686.png
@@ -26,6 +26,8 @@ from herokutl.tl.types import (
 from herokutl.errors.rpcerrorlist import (
     ChannelPrivateError,
     ChatAdminRequiredError,
+    FloodWaitError,
+    MessageDeleteForbiddenError,
     UserNotParticipantError,
 )
 
@@ -97,6 +99,14 @@ class SelfDestructMod(loader.Module):
         "type_link": "links/previews",
         "all_plain": "all messages",
         "media_plain": "any media",
+        "quick_usage": "<b>Usage:</b> <code>deleteme on [minutes] [chat]</code> or <code>deleteme off [chat]</code>\nThe chat can be specified by ID, link or @username.",
+        "quick_chat_error": "Could not find or access the specified chat.",
+        "quick_enabled": "{} <b>SelfDestruct enabled</b>\n\n<blockquote><b>Chat:</b> {}\n<b>ID:</b> <code>{}</code>\n<b>Interval:</b> <code>{}</code>\nAll your messages will be deleted automatically.</blockquote>",
+        "quick_disabled": "{} <b>SelfDestruct disabled</b>\n\n<blockquote><b>Chat:</b> {}\n<b>ID:</b> <code>{}</code>\nAutomatic deletion is disabled.</blockquote>",
+        "quick_week": "wk.",
+        "quick_day": "d.",
+        "quick_hour": "hr.",
+        "quick_minute": "min.",
     }
 
     strings_ru = {
@@ -156,6 +166,14 @@ class SelfDestructMod(loader.Module):
         "type_link": "ссылки/превью",
         "all_plain": "все сообщения",
         "media_plain": "любые медиа",
+        "quick_usage": "<b>Использование:</b> <code>deleteme on [минуты] [чат]</code> или <code>deleteme off [чат]</code>\nЧат можно указать через ID, ссылку или @username.",
+        "quick_chat_error": "Не удалось найти указанный чат или получить к нему доступ.",
+        "quick_enabled": "{} <b>SelfDestruct включен</b>\n\n<blockquote><b>Чат:</b> {}\n<b>ID:</b> <code>{}</code>\n<b>Интервал:</b> <code>{}</code>\nВсе ваши сообщения будут удаляться автоматически.</blockquote>",
+        "quick_disabled": "{} <b>SelfDestruct выключен</b>\n\n<blockquote><b>Чат:</b> {}\n<b>ID:</b> <code>{}</code>\nАвтоудаление отключено.</blockquote>",
+        "quick_week": "нед.",
+        "quick_day": "д.",
+        "quick_hour": "ч.",
+        "quick_minute": "мин.",
     }
 
     _BATCH_SIZE = 100
@@ -165,6 +183,7 @@ class SelfDestructMod(loader.Module):
     _MAX_DESTME_DELETE_PER_BATCH = 100
     _MAX_INTERVAL_MINUTES = 10080
     _ERROR_COOLDOWN_SECONDS = 300
+    _ACCESS_RETRY_SECONDS = 1800
     _DELETE_TYPES = {
         "all",
         "media",
@@ -214,6 +233,7 @@ class SelfDestructMod(loader.Module):
             "type": "all",
             "interval": 60,
             "last_run": 0,
+            "retry_at": 0,
             "error_count": 0,
             "chat_id": chat_id,
             "topic_id": topic_id,
@@ -410,6 +430,228 @@ class SelfDestructMod(loader.Module):
         sender_id = getattr(msg, "sender_id", None)
         return bool(getattr(msg, "out", False) or sender_id == chat_id)
 
+    @staticmethod
+    def _normalize_quick_chat_reference(value: str):
+        value = str(value or "").strip().split("?", 1)[0].split("#", 1)[0].rstrip("/")
+        private_match = re.fullmatch(
+            r"(?:https?://)?t\.me/c/(\d+)(?:/\d+)?",
+            value,
+            re.IGNORECASE,
+        )
+        if private_match:
+            return int(private_match.group(1))
+        public_match = re.fullmatch(
+            r"(?:https?://)?t\.me/(?:s/)?([A-Za-z0-9_]+)(?:/\d+)?",
+            value,
+            re.IGNORECASE,
+        )
+        if public_match:
+            return f"@{public_match.group(1)}"
+        if value.lstrip("-").isdigit():
+            return int(value)
+        return value
+
+    def _format_quick_interval(self, minutes: int):
+        remaining = int(minutes)
+        values = []
+        for size, key in (
+            (7 * 24 * 60, "quick_week"),
+            (24 * 60, "quick_day"),
+            (60, "quick_hour"),
+            (1, "quick_minute"),
+        ):
+            amount, remaining = divmod(remaining, size)
+            if amount:
+                values.append(f"{amount} {self.strings(key)}")
+        return " ".join(values)
+
+    def _parse_quick_arguments(self, raw_args: str):
+        parts = raw_args.split()
+        actions = [
+            part.lower()
+            for part in parts
+            if part.lower() in {"on", "off"}
+        ]
+        if len(actions) != 1:
+            raise ValueError("usage")
+        action = actions[0]
+        operands = [
+            part
+            for part in parts
+            if part.lower() not in {"on", "off"}
+        ]
+        interval = None
+        references = []
+        for operand in operands:
+            interval_match = re.fullmatch(
+                r"(\d+)(?:m|м|min|мин)?",
+                operand,
+                re.IGNORECASE,
+            )
+            has_suffix = bool(
+                re.search(r"[A-Za-zА-Яа-яЁё]", operand)
+            )
+            numeric_interval = (
+                interval_match
+                and (
+                    has_suffix
+                    or len(interval_match.group(1)) <= 5
+                )
+            )
+            if action == "on" and numeric_interval:
+                if interval is not None:
+                    raise ValueError("usage")
+                interval = int(interval_match.group(1))
+                if not 1 <= interval <= self._MAX_INTERVAL_MINUTES:
+                    raise ValueError("interval")
+            else:
+                references.append(operand)
+        if len(references) > 1:
+            raise ValueError("usage")
+        return action, interval or 60, references[0] if references else None
+
+    async def _resolve_quick_chat(self, message: Message, reference=None):
+        if reference is None:
+            chat_id = int(utils.get_chat_id(message))
+            entity = await self.client.get_entity(chat_id)
+        else:
+            normalized = self._normalize_quick_chat_reference(reference)
+            candidates = [normalized]
+            if isinstance(normalized, int) and normalized > 0:
+                candidates = [
+                    int(f"-100{normalized}"),
+                    -normalized,
+                    normalized,
+                ]
+            entity = None
+            for candidate in candidates:
+                try:
+                    entity = await self.client.get_entity(candidate)
+                    break
+                except Exception:
+                    continue
+            if entity is None:
+                raise ValueError("chat not found")
+            chat_id = int(entity.id)
+        title = (
+            getattr(entity, "title", None)
+            or " ".join(
+                part
+                for part in (
+                    getattr(entity, "first_name", None),
+                    getattr(entity, "last_name", None),
+                )
+                if part
+            ).strip()
+            or getattr(entity, "username", None)
+            or f"ID {chat_id}"
+        )
+        return chat_id, title
+
+    def _disable_quick_chat_settings(self, chat_id: int):
+        for key in list(self.chats):
+            stored_chat_id, topic_id = self._parse_settings_key(key)
+            if stored_chat_id != chat_id:
+                continue
+            settings = self._get_settings(chat_id, topic_id)
+            settings["enabled"] = False
+            settings["last_run"] = 0
+            settings["retry_at"] = 0
+            settings["error_count"] = 0
+            self.chats[self._settings_key(chat_id, topic_id)] = settings
+            if topic_id is None:
+                self.chats.pop(self._legacy_settings_key(chat_id), None)
+
+    async def _quick_deleteme(self, message: Message, raw_args: str):
+        try:
+            action, interval, reference = self._parse_quick_arguments(
+                raw_args
+            )
+        except ValueError as error:
+            key = (
+                "invalid_interval"
+                if str(error) == "interval"
+                else "quick_usage"
+            )
+            await utils.answer(message, self.strings(key))
+            return
+        try:
+            chat_id, chat_title = await self._resolve_quick_chat(
+                message,
+                reference,
+            )
+        except Exception:
+            await utils.answer(message, self.strings("quick_chat_error"))
+            return
+        self._disable_quick_chat_settings(chat_id)
+        if action == "on":
+            settings = self._get_settings(chat_id)
+            settings["enabled"] = True
+            settings["type"] = "all"
+            settings["interval"] = interval
+            settings["last_run"] = time.time()
+            settings["retry_at"] = 0
+            settings["error_count"] = 0
+            self.chats[self._settings_key(chat_id)] = settings
+        self.db.set(__name__, "chats", self.chats)
+        enabled = action == "on"
+        icon = self._premium_emoji(
+            "5206607081334906820" if enabled else "5121063440311386962",
+            "✅" if enabled else "❌",
+        )
+        template = self.strings(
+            "quick_enabled" if enabled else "quick_disabled"
+        )
+        values = [icon, utils.escape_html(chat_title), chat_id]
+        if enabled:
+            values.append(self._format_quick_interval(interval))
+        await utils.answer(message, template.format(*values))
+
+    async def _delete_batch(self, chat_id: int, message_ids: list[int]) -> int:
+        if not message_ids:
+            return 0
+        try:
+            await self.client.delete_messages(chat_id, message_ids)
+            return len(message_ids)
+        except MessageDeleteForbiddenError:
+            if len(message_ids) == 1:
+                logger.warning(
+                    "Could not delete message %s in chat %s",
+                    message_ids[0],
+                    chat_id,
+                )
+                return 0
+            middle = len(message_ids) // 2
+            return await self._delete_batch(
+                chat_id,
+                message_ids[:middle],
+            ) + await self._delete_batch(
+                chat_id,
+                message_ids[middle:],
+            )
+
+    def _schedule_retry(
+        self,
+        chat_id: int,
+        topic_id: int,
+        delay: int,
+    ):
+        current_settings = self._get_settings(chat_id, topic_id)
+        if not current_settings.get("enabled"):
+            return
+        current_settings["retry_at"] = time.time() + max(int(delay), 1)
+        current_settings["error_count"] = 0
+        self._save_settings(chat_id, current_settings, topic_id)
+
+    def _save_successful_run(self, chat_id: int, topic_id: int):
+        current_settings = self._get_settings(chat_id, topic_id)
+        if not current_settings.get("enabled"):
+            return
+        current_settings["last_run"] = time.time()
+        current_settings["retry_at"] = 0
+        current_settings["error_count"] = 0
+        self._save_settings(chat_id, current_settings, topic_id)
+
     @loader.loop(interval=60, autostart=True)
     async def _deleter_loop(self):
         now = time.time()
@@ -423,6 +665,8 @@ class SelfDestructMod(loader.Module):
                 continue
             settings = self._get_settings(chat_id, topic_id)
             if not settings.get("enabled"):
+                continue
+            if now < settings.get("retry_at", 0):
                 continue
             interval_seconds = settings.get("interval", 60) * 60
             last_run = settings.get("last_run", 0)
@@ -450,32 +694,53 @@ class SelfDestructMod(loader.Module):
                         ):
                             break
                     if ids_to_delete:
-                        await self.client.delete_messages(chat_id, ids_to_delete)
-                        deleted_count += len(ids_to_delete)
+                        deleted_in_batch = await self._delete_batch(
+                            chat_id,
+                            ids_to_delete,
+                        )
+                        deleted_count += deleted_in_batch
+                        if not deleted_in_batch:
+                            break
                         await asyncio.sleep(self._BATCH_DELAY)
                     if len(ids_to_delete) < self._BATCH_SIZE:
                         break
-                settings["last_run"] = time.time()
-                settings["error_count"] = 0
-                self._save_settings(chat_id, settings, topic_id)
-            except (ChannelPrivateError, ChatAdminRequiredError, UserNotParticipantError):
-                logger.warning(f"No access to chat {chat_id}, removing from config.")
-                del self.chats[chat_id_str]
-                self.db.set(__name__, "chats", self.chats)
+                self._save_successful_run(chat_id, topic_id)
+            except FloodWaitError as e:
+                self._schedule_retry(
+                    chat_id,
+                    topic_id,
+                    e.seconds,
+                )
+                logger.warning(
+                    "FloodWait for %s seconds in chat %s",
+                    e.seconds,
+                    chat_id,
+                )
+            except (ChannelPrivateError, ChatAdminRequiredError, UserNotParticipantError) as e:
+                self._schedule_retry(
+                    chat_id,
+                    topic_id,
+                    self._ACCESS_RETRY_SECONDS,
+                )
+                logger.warning("No access to chat %s: %s", chat_id, e)
             except Exception as e:
-                settings["last_run"] = time.time() + self._ERROR_COOLDOWN_SECONDS - interval_seconds
-                settings["error_count"] = int(settings.get("error_count", 0)) + 1
-                if settings["error_count"] >= 3:
-                    settings["enabled"] = False
-                self._save_settings(chat_id, settings, topic_id)
+                self._schedule_retry(
+                    chat_id,
+                    topic_id,
+                    self._ERROR_COOLDOWN_SECONDS,
+                )
                 logger.exception(self.strings("loop_error").format(chat_id, e))
 
     @loader.command(
-        ru_doc="Настроить авто-удаление своих сообщений в этом чате.",
-        en_doc="Configure auto-deletion of your messages in this chat.",
+        ru_doc=" [on|off] [минуты] [чат] - настроить автоудаление.",
+        en_doc=" [on|off] [minutes] [chat] - configure auto-deletion.",
     )
     async def deleteme(self, message: Message):
-        """Configure self-destruct for this chat."""
+        """[on|off] [minutes] [chat] - configure self-destruct."""
+        raw_args = utils.get_args_raw(message).strip()
+        if raw_args:
+            await self._quick_deleteme(message, raw_args)
+            return
         chat_id = utils.get_chat_id(message)
         current_topic_id = await self._detect_topic_id(message, chat_id)
         await self._show_main_menu(message, chat_id, current_topic_id, current_topic_id)
@@ -586,6 +851,7 @@ class SelfDestructMod(loader.Module):
         settings = self._get_settings(chat_id, scope_topic_id)
         settings["enabled"] = not settings["enabled"]
         settings["last_run"] = time.time() if settings["enabled"] else 0
+        settings["retry_at"] = 0
         settings["error_count"] = 0
         self._save_settings(chat_id, settings, scope_topic_id)
         try:
@@ -653,6 +919,7 @@ class SelfDestructMod(loader.Module):
     ):
         settings = self._get_settings(chat_id, scope_topic_id)
         settings["type"] = new_type
+        settings["retry_at"] = 0
         settings["error_count"] = 0
         self._save_settings(chat_id, settings, scope_topic_id)
         try:
@@ -682,6 +949,7 @@ class SelfDestructMod(loader.Module):
         settings = self._get_settings(chat_id, scope_topic_id)
         settings["interval"] = interval
         settings["last_run"] = 0
+        settings["retry_at"] = 0
         settings["error_count"] = 0
         self._save_settings(chat_id, settings, scope_topic_id)
         try:
