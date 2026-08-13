@@ -1,5 +1,5 @@
-__version__ = (2, 7, 1)
-# diff: Исправлена ложная ошибка о необходимости вступить в канал.
+__version__ = (2, 7, 2)
+# diff: Добавлен резервный канал для тех у кого перестал открываться основной канал.
 # meta developer: @mofkomodules
 # Original author module: @HaloperidolPills 
 # Name: Foundation
@@ -7,8 +7,8 @@ __version__ = (2, 7, 1)
 # scope: heroku_min 2.1.0
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
 # meta pic: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/IMG_20260408_161047_275.png
-# meta fhsdesc: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, говно, nsfw, sfw
-# meta tags: hentai, 18+, random, хентай, porn, fun, mofko, хуйня, порно, говно, nsfw, sfw
+# meta fhsdesc: hentai, 18+, random, porn, fun, mofko, хуйня, говно, nsfw, sfw
+# meta tags: hentai, 18+, random, porn, fun, mofko, хуйня, говно, nsfw, sfw
 
 import random
 import logging
@@ -30,8 +30,12 @@ logger = logging.getLogger(__name__)
 class Foundation(loader.Module):
     """Send random NSFW and SFW media from Foundation sources."""
 
+    SOURCE_MAIN = "main"
+    SOURCE_RESERVE = "reserve"
+
     strings = {
         "name": "Foundation",
+        "_cls_doc": "Random NSFW and SFW media",
         "error": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Something went wrong, check logs",
         "not_joined": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> You need to join the channel first: {link}",
         "no_media": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> No media found in channel",
@@ -42,8 +46,10 @@ class Foundation(loader.Module):
         "enter_trigger_word": "✍️ Enter trigger word (or 0 to disable):",
         "no_triggers": "No triggers configured",
         "fsfw_cmd_doc": "Send random SFW media from @sfwfond",
-        "access_required_text": "To use this command, you must be in the channel!",
-        "channel_button": "Channel",
+        "access_main_text": "To use the module, you need to join the main channel.\n\nThe reserve channel is optional and is used as a backup source.",
+        "access_reserve_text": "The reserve source is selected. To receive media, you need to join the reserve channel.",
+        "main_channel_button": "Main channel",
+        "reserve_channel_button": "Reserve channel",
         "source_unavailable": "<b>Foundation source is temporarily unavailable.</b> Try again later.",
         "update_available": '<tg-emoji emoji-id="5361979468887893611">🆕</tg-emoji> <b>Foundation update</b>\n\n<code>{}</code> -> <code>{}</code>{}\n\n<b>Install:</b>\n<code>{}</code>',
         "update_diff": "\n\n<b>What's new:</b>\n<blockquote expandable>{}</blockquote>",
@@ -64,9 +70,15 @@ class Foundation(loader.Module):
         "cfg_auto_delete_media": "Automatically delete sent NSFW media after the configured delay.",
         "cfg_auto_delete_delay": "Delay before auto-deleting NSFW media in seconds (0 disables it).",
         "cfg_trigger_blacklist": "Global trigger blacklist. Entries are stored as @username - user_id.",
+        "cfg_source_channel": "Where to get media for Fond commands.",
+        "source_main_option": "Main",
+        "source_reserve_option": "Reserve",
+        "private_chat": "Private chat",
+        "chat_fallback": "Chat {}",
     }
 
     strings_ru = {
+        "name": "Foundation",
         "error": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Чот не то, чекай логи",
         "not_joined": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Нужно вступить в канал, ВНИМАТЕЛЬНО ЧИТАЙ ПРИ ПОДАЧЕ ЗАЯВКИ: {link}",
         "no_media": "<tg-emoji emoji-id=6012681561286122335>🤤</tg-emoji> Не найдено медиа",
@@ -78,8 +90,10 @@ class Foundation(loader.Module):
         "no_triggers": "Триггеры не настроены",
         "_cls_doc": "Случайное NSFW и SFW медиа",
         "fsfw_cmd_doc": "Отправить рандомное SFW медиа с @sfwfond",
-        "access_required_text": "Для использования команды необходимо состоять в канале!",
-        "channel_button": "Канал",
+        "access_main_text": "Для работы модуля необходимо вступить в основной канал.\n\nРезервный канал необязателен и используется как запасной источник.",
+        "access_reserve_text": "Выбран резервный источник. Для получения медиа необходимо вступить в резервный канал.",
+        "main_channel_button": "Основной канал",
+        "reserve_channel_button": "Резервный канал",
         "source_unavailable": "<b>Источник Foundation временно недоступен.</b> Попробуйте позже.",
         "update_available": '<tg-emoji emoji-id="5361979468887893611">🆕</tg-emoji> <b>Обновление Foundation</b>\n\n<code>{}</code> -> <code>{}</code>{}\n\n<b>Установка:</b>\n<code>{}</code>',
         "update_diff": "\n\n<b>Что изменилось:</b>\n<blockquote expandable>{}</blockquote>",
@@ -100,21 +114,51 @@ class Foundation(loader.Module):
         "cfg_auto_delete_media": "Автоматически удалять отправленное NSFW медиа через заданное время.",
         "cfg_auto_delete_delay": "Задержка автоудаления NSFW медиа в секундах (0 отключает).",
         "cfg_trigger_blacklist": "Глобальный чёрный список триггеров. Формат: @ник - ID пользователя.",
+        "cfg_source_channel": "Откуда брать медиа для команд Fond.",
+        "source_main_option": "Основная",
+        "source_reserve_option": "Резерв",
+        "private_chat": "Личный чат",
+        "chat_fallback": "Чат {}",
     }
 
     def __init__(self):
-        self._media_cache = {}
-        self._video_cache = {}
-        self._cache_time = {}
-        self._recent_media_ids = {"any": [], "video": [], "sfw_any": []}
+        self._foundation_links = {
+            self.SOURCE_MAIN: None,
+            self.SOURCE_RESERVE: None,
+        }
+        self._foundation_entities = {
+            self.SOURCE_MAIN: None,
+            self.SOURCE_RESERVE: None,
+        }
+        self._foundation_entity_times = {
+            self.SOURCE_MAIN: 0,
+            self.SOURCE_RESERVE: 0,
+        }
+        self._media_cache = {
+            self.SOURCE_MAIN: {},
+            self.SOURCE_RESERVE: {},
+        }
+        self._video_cache = {
+            self.SOURCE_MAIN: {},
+            self.SOURCE_RESERVE: {},
+        }
+        self._cache_time = {
+            self.SOURCE_MAIN: {},
+            self.SOURCE_RESERVE: {},
+        }
+        self._recent_media_ids = {
+            f"{self.SOURCE_MAIN}:any": [],
+            f"{self.SOURCE_MAIN}:video": [],
+            f"{self.SOURCE_RESERVE}:any": [],
+            f"{self.SOURCE_RESERVE}:video": [],
+            "sfw_any": [],
+        }
         self._recent_media_limit = 20
-        self.entity = None
-        self._last_entity_check = 0
         self.entity_check_interval = 300
+        self.reserve_membership_check_interval = 60
         self.cache_ttl = 1200
         self.link_channel_username = "foundationlink"
         self.link_message_id = 4
-        self.actual_foundation_link = None
         self.update_source_url = "https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/Foundation.py"
         self.update_check_interval = 21600
         self.update_notice_repeat_interval = 5 * 24 * 60 * 60
@@ -124,7 +168,10 @@ class Foundation(loader.Module):
         self.foundation_link_retry_interval = 30
         self._last_foundation_link_update = 0
         self._foundation_link_lock = asyncio.Lock()
-        self._nsfw_cache_lock = asyncio.Lock()
+        self._nsfw_cache_locks = {
+            self.SOURCE_MAIN: asyncio.Lock(),
+            self.SOURCE_RESERVE: asyncio.Lock(),
+        }
         self._auto_delete_tasks = set()
         
         self._sfw_channel_username = "sfwfond"
@@ -178,15 +225,73 @@ class Foundation(loader.Module):
                 [],
                 lambda: self.strings("cfg_trigger_blacklist"),
                 validator=loader.validators.Series(),
+            ),
+            loader.ConfigValue(
+                "source_channel",
+                self.SOURCE_MAIN,
+                lambda: self.strings("cfg_source_channel"),
+                validator=loader.validators.Choice(
+                    [
+                        self.SOURCE_MAIN,
+                        self.SOURCE_RESERVE,
+                        "Main",
+                        "Reserve",
+                        "Основная",
+                        "Резерв",
+                    ]
+                ),
+                on_change=self._on_source_channel_change,
             )
         )
+
+    def config_complete(self):
+        source = self._source_code(self.config["source_channel"])
+        options = [
+            self.strings("source_main_option"),
+            self.strings("source_reserve_option"),
+        ]
+        self.config.change_validator(
+            "source_channel",
+            loader.validators.Choice(options),
+        )
+        self.config._config["source_channel"].default = options[0]
+        self.config["source_channel"] = self._source_option(source)
+
+    def _source_code(self, value):
+        return {
+            self.SOURCE_MAIN: self.SOURCE_MAIN,
+            self.SOURCE_RESERVE: self.SOURCE_RESERVE,
+            "Main": self.SOURCE_MAIN,
+            "Reserve": self.SOURCE_RESERVE,
+            "Основная": self.SOURCE_MAIN,
+            "Резерв": self.SOURCE_RESERVE,
+        }.get(value, self.SOURCE_MAIN)
+
+    def _source_option(self, source):
+        return self.strings(
+            "source_reserve_option"
+            if source == self.SOURCE_RESERVE
+            else "source_main_option"
+        )
+
+    def _on_source_channel_change(self):
+        source = self._source_code(self.config["source_channel"])
+        if source in self._foundation_links:
+            self._reset_foundation_source(source)
 
     async def client_ready(self):
         await self._migrate_legacy_storage()
         self.triggers = self.get("triggers", {})
-        self.actual_foundation_link = self.get("actual_foundation_link", None)
+        self._foundation_links[self.SOURCE_MAIN] = self.get(
+            "main_foundation_link",
+            self.get("actual_foundation_link", None),
+        )
+        self._foundation_links[self.SOURCE_RESERVE] = self.get(
+            "reserve_foundation_link",
+            None,
+        )
         await self._update_foundation_link_on_demand()
-        await self._load_entity()
+        await self._load_entity(self._source_code(self.config["source_channel"]))
         await self._load_sfw_entity()
         if self._update_check_task and not self._update_check_task.done():
             self._update_check_task.cancel()
@@ -354,49 +459,76 @@ class Foundation(loader.Module):
             except Exception as e:
                 logger.exception(e)
 
+    @staticmethod
+    def _parse_foundation_links(text):
+        main = re.search(r"\[\s*(https?://t\.me/[^\s\]]+)\s*\]", text)
+        reserve = re.search(r"\{\s*(https?://t\.me/[^\s}]+)\s*\}", text)
+        return (
+            main.group(1).rstrip(".,)") if main else None,
+            reserve.group(1).rstrip(".,)") if reserve else None,
+        )
+
+    def _reset_foundation_source(self, source):
+        self._foundation_entities[source] = None
+        self._foundation_entity_times[source] = 0
+        self._media_cache[source].clear()
+        self._video_cache[source].clear()
+        self._cache_time[source].clear()
+        self._recent_media_ids[f"{source}:any"].clear()
+        self._recent_media_ids[f"{source}:video"].clear()
+
     async def _update_foundation_link_on_demand(self):
         current_time = time.time()
+        links_available = any(self._foundation_links.values())
         interval = (
             self.foundation_link_update_interval
-            if self.actual_foundation_link
+            if links_available
             else self.foundation_link_retry_interval
         )
         if current_time - self._last_foundation_link_update < interval:
-            return bool(self.actual_foundation_link)
+            return links_available
         async with self._foundation_link_lock:
             current_time = time.time()
+            links_available = any(self._foundation_links.values())
             interval = (
                 self.foundation_link_update_interval
-                if self.actual_foundation_link
+                if links_available
                 else self.foundation_link_retry_interval
             )
             if current_time - self._last_foundation_link_update < interval:
-                return bool(self.actual_foundation_link)
+                return links_available
             try:
                 link_channel_entity = await self.client.get_entity(self.link_channel_username)
                 message = await self.client.get_messages(link_channel_entity, ids=self.link_message_id)
-                match = re.search(
-                    r"(https?://t\.me/[^\s\]]+)",
-                    getattr(message, "raw_text", "") or "",
+                main_link, reserve_link = self._parse_foundation_links(
+                    getattr(message, "raw_text", "") or ""
                 )
-                if not match:
-                    raise RuntimeError("Foundation link is missing in the source message")
-                new_link = match.group(1).rstrip(".,)")
-                if new_link != self.actual_foundation_link:
+                if not main_link:
+                    raise RuntimeError("Main Foundation link is missing in the source message")
+                old_main_link = self._foundation_links[self.SOURCE_MAIN]
+                if main_link != old_main_link:
                     logger.info(
-                        "Foundation link updated: %s -> %s",
-                        self.actual_foundation_link,
-                        new_link,
+                        "Main Foundation link updated: %s -> %s",
+                        old_main_link,
+                        main_link,
                     )
-                    self.actual_foundation_link = new_link
-                    self.set("actual_foundation_link", new_link)
-                    self.entity = None
-                    self._last_entity_check = 0
-                    self._media_cache.clear()
-                    self._video_cache.clear()
-                    self._cache_time.clear()
-                    self._recent_media_ids["any"].clear()
-                    self._recent_media_ids["video"].clear()
+                    self._foundation_links[self.SOURCE_MAIN] = main_link
+                    self.set("main_foundation_link", main_link)
+                    self.set("actual_foundation_link", main_link)
+                    self._reset_foundation_source(self.SOURCE_MAIN)
+                    if old_main_link:
+                        self.config["source_channel"] = self._source_option(
+                            self.SOURCE_MAIN
+                        )
+                if reserve_link and reserve_link != self._foundation_links[self.SOURCE_RESERVE]:
+                    logger.info(
+                        "Reserve Foundation link updated: %s -> %s",
+                        self._foundation_links[self.SOURCE_RESERVE],
+                        reserve_link,
+                    )
+                    self._foundation_links[self.SOURCE_RESERVE] = reserve_link
+                    self.set("reserve_foundation_link", reserve_link)
+                    self._reset_foundation_source(self.SOURCE_RESERVE)
                 self._last_foundation_link_update = current_time
                 return True
             except Exception as e:
@@ -404,7 +536,7 @@ class Foundation(loader.Module):
                     "Error updating Foundation link from channel: %s. Using cached link if available.",
                     e,
                 )
-                return bool(self.actual_foundation_link)
+                return any(self._foundation_links.values())
     
     def _prune_spam_events(self, events, current_time, window):
         while events and current_time - events[0] > window:
@@ -475,22 +607,42 @@ class Foundation(loader.Module):
             chat_events.append(current_time)
             return False
 
-    async def _load_entity(self):
+    async def _load_entity(self, source):
         current_time = time.time()
-        if (self.entity and 
-            current_time - self._last_entity_check < self.entity_check_interval):
+        check_interval = (
+            self.reserve_membership_check_interval
+            if source == self.SOURCE_RESERVE
+            else self.entity_check_interval
+        )
+        if (
+            self._foundation_entities[source]
+            and current_time - self._foundation_entity_times[source]
+            < check_interval
+        ):
             return True
-        if not self.actual_foundation_link:
-            self.entity = None
+        link = self._foundation_links[source]
+        if not link:
+            self._foundation_entities[source] = None
             return False
         try:
-            self.entity = await self.client.get_entity(self.actual_foundation_link)
-            self._last_entity_check = current_time
+            self._foundation_entities[source] = await self.client.get_entity(link)
+            self._foundation_entity_times[source] = current_time
             return True
         except Exception as e:
-            logger.warning(f"Could not load foundation entity from {self.actual_foundation_link}: {e}")
-            self.entity = None
+            logger.warning("Could not load %s Foundation entity from %s: %s", source, link, e)
+            self._foundation_entities[source] = None
             return False
+
+    async def _has_source_access(self, source):
+        if not await self._load_entity(source):
+            return False
+        if (
+            source == self.SOURCE_RESERVE
+            and getattr(self._foundation_entities[source], "left", False)
+        ):
+            self._foundation_entity_times[source] = 0
+            return False
+        return True
 
     async def _load_sfw_entity(self):
         current_time = time.time()
@@ -506,34 +658,59 @@ class Foundation(loader.Module):
             self._sfw_channel_entity = None
             return False
 
-    async def _show_access_required(self, message: Message):
-        if not self.actual_foundation_link:
+    async def _show_access_required(self, message: Message, source):
+        selected_link = self._foundation_links[source]
+        if not selected_link:
             await utils.answer(message, self.strings("source_unavailable"))
             return
-        markup = [
-            [
-                {
-                    "text": self.strings("channel_button"),
-                    "url": self.actual_foundation_link,
-                    "style": "primary",
-                },
-            ]
-        ]
+        order = (
+            (self.SOURCE_RESERVE, self.SOURCE_MAIN)
+            if source == self.SOURCE_RESERVE
+            else (self.SOURCE_MAIN, self.SOURCE_RESERVE)
+        )
+        markup = []
+        for item in order:
+            link = self._foundation_links[item]
+            if not link:
+                continue
+            markup.append(
+                [
+                    {
+                        "text": self.strings(
+                            "reserve_channel_button"
+                            if item == self.SOURCE_RESERVE
+                            else "main_channel_button"
+                        ),
+                        "url": link,
+                        "style": "primary",
+                    }
+                ]
+            )
+        text = self.strings(
+            "access_reserve_text"
+            if source == self.SOURCE_RESERVE
+            else "access_main_text"
+        )
+        form = None
         try:
-            await self.inline.form(
+            form = await self.inline.form(
                 message=message,
-                text=self.strings("access_required_text"),
+                text=text,
                 reply_markup=markup,
             )
         except Exception as e:
-            logger.exception(e)
-            await utils.answer(
-                message,
-                "{}\n{}".format(
-                    self.strings("access_required_text"),
-                    utils.escape_html(self.actual_foundation_link),
-                ),
-            )
+            logger.warning("Could not show Foundation access form: %s", e)
+        if form:
+            return
+        links = "\n".join(
+            utils.escape_html(self._foundation_links[item])
+            for item in order
+            if self._foundation_links[item]
+        )
+        await utils.answer(
+            message,
+            f"{text}\n\n{links}",
+        )
 
     async def _dispatch_media(
         self,
@@ -546,49 +723,57 @@ class Foundation(loader.Module):
             await self._update_foundation_link_on_demand()
         await self._send_media(message, media_type, delete_command, is_sfw)
 
-    async def _get_cached_media(self, media_type="any"):
+    async def _get_cached_media(self, source, media_type="any"):
+        if (
+            source == self.SOURCE_RESERVE
+            and not await self._has_source_access(source)
+        ):
+            return None
         current_time = time.time()
         cache_key = "messages"
         if (
-            cache_key in self._cache_time and
-            current_time - self._cache_time[cache_key] < self.cache_ttl
+            cache_key in self._cache_time[source]
+            and current_time - self._cache_time[source][cache_key] < self.cache_ttl
         ):
             if media_type == "any":
-                if "any" in self._media_cache:
-                    return self._media_cache["any"]
-            elif "video" in self._video_cache:
-                return self._video_cache["video"]
-        async with self._nsfw_cache_lock:
+                if "any" in self._media_cache[source]:
+                    return self._media_cache[source]["any"]
+            elif "video" in self._video_cache[source]:
+                return self._video_cache[source]["video"]
+        async with self._nsfw_cache_locks[source]:
             current_time = time.time()
             if (
-                cache_key in self._cache_time and
-                current_time - self._cache_time[cache_key] < self.cache_ttl
+                cache_key in self._cache_time[source]
+                and current_time - self._cache_time[source][cache_key] < self.cache_ttl
             ):
                 if media_type == "any":
-                    if "any" in self._media_cache:
-                        return self._media_cache["any"]
-                elif "video" in self._video_cache:
-                    return self._video_cache["video"]
-            if not await self._load_entity():
+                    if "any" in self._media_cache[source]:
+                        return self._media_cache[source]["any"]
+                elif "video" in self._video_cache[source]:
+                    return self._video_cache[source]["video"]
+            if not await self._load_entity(source):
                 return None
             while True:
                 try:
-                    messages = await self.client.get_messages(self.entity, limit=1500)
+                    messages = await self.client.get_messages(
+                        self._foundation_entities[source],
+                        limit=1500,
+                    )
                     break
                 except FloodWaitError as e:
-                    logger.warning(f"FloodWait for {e.seconds} seconds")
+                    logger.warning("FloodWait for %s seconds on %s Foundation", e.seconds, source)
                     await asyncio.sleep(e.seconds)
                 except (UserNotParticipantError, ChannelPrivateError) as e:
-                    logger.warning(f"Userbot is not participant or channel is private: {e}")
+                    logger.warning("No access to %s Foundation source: %s", source, e)
                     return None
                 except ValueError as e:
                     if "Could not find the entity" in str(e):
                         return None
                     raise e
             if not messages:
-                self._media_cache["any"] = []
-                self._video_cache["video"] = []
-                self._cache_time[cache_key] = time.time()
+                self._media_cache[source]["any"] = []
+                self._video_cache[source]["video"] = []
+                self._cache_time[source][cache_key] = time.time()
                 return []
             media_messages = [msg for msg in messages if msg.media]
             video_messages = []
@@ -597,10 +782,14 @@ class Foundation(loader.Module):
                     attr = getattr(msg.media.document, 'mime_type', '')
                     if 'video' in attr:
                         video_messages.append(msg)
-            self._media_cache["any"] = media_messages
-            self._video_cache["video"] = video_messages
-            self._cache_time[cache_key] = time.time()
-            return self._media_cache["any"] if media_type == "any" else self._video_cache["video"]
+            self._media_cache[source]["any"] = media_messages
+            self._video_cache[source]["video"] = video_messages
+            self._cache_time[source][cache_key] = time.time()
+            return (
+                self._media_cache[source]["any"]
+                if media_type == "any"
+                else self._video_cache[source]["video"]
+            )
     
     async def _get_sfw_cached_media(self):
         current_time = time.time()
@@ -650,6 +839,23 @@ class Foundation(loader.Module):
         self._auto_delete_tasks.add(task)
         task.add_done_callback(self._auto_delete_tasks.discard)
 
+    @staticmethod
+    def _filter_random_media(media_list):
+        return [
+            item
+            for item in media_list
+            if not re.search(
+                r"(?<!\w)#игра(?!\w)",
+                str(
+                    getattr(item, "raw_text", None)
+                    or getattr(item, "message", None)
+                    or getattr(item, "text", None)
+                    or ""
+                ),
+                flags=re.IGNORECASE,
+            )
+        ]
+
     def _pick_random_media(self, media_list, pool_key: str):
         recent_ids = self._recent_media_ids.setdefault(pool_key, [])
         available_media = [
@@ -672,13 +878,30 @@ class Foundation(loader.Module):
                 media_list = await self._get_sfw_cached_media()
                 if media_list is None:
                     return await utils.answer(message, self.strings("error"))
+                media_list = self._filter_random_media(media_list)
                 if not media_list:
                     await utils.answer(message, self.strings("fsfw_no_media"))
                     return
             else:
-                media_list = await self._get_cached_media(media_type)
+                source = self._source_code(self.config["source_channel"])
+                media_list = await self._get_cached_media(source, media_type)
                 if media_list is None:
-                    return await self._show_access_required(message)
+                    return await self._show_access_required(message, source)
+                media_list = self._filter_random_media(media_list)
+                if (
+                    not media_list
+                    and media_type == "any"
+                    and source == self.SOURCE_MAIN
+                    and self._foundation_links[self.SOURCE_RESERVE]
+                ):
+                    self.config["source_channel"] = self._source_option(
+                        self.SOURCE_RESERVE
+                    )
+                    source = self.SOURCE_RESERVE
+                    media_list = await self._get_cached_media(source, media_type)
+                    if media_list is None:
+                        return await self._show_access_required(message, source)
+                    media_list = self._filter_random_media(media_list)
                 if not media_list:
                     if media_type == "any":
                         await utils.answer(message, self.strings("no_media"))
@@ -686,7 +909,7 @@ class Foundation(loader.Module):
                         await utils.answer(message, self.strings("no_videos"))
                     return
             
-            pool_key = "sfw_any" if is_sfw else media_type
+            pool_key = "sfw_any" if is_sfw else f"{source}:{media_type}"
             random_message = self._pick_random_media(media_list, pool_key)
             
             sent_message = await self.client.send_message(
@@ -798,7 +1021,9 @@ class Foundation(loader.Module):
         """Configure triggers for fond/vfond/fsfw commands"""
         chat_id = utils.get_chat_id(message)
         chat = await message.get_chat()
-        chat_title = utils.escape_html(getattr(chat, "title", "Private Chat"))
+        chat_title = utils.escape_html(
+            getattr(chat, "title", self.strings("private_chat"))
+        )
         chat_triggers = self.triggers.get(str(chat_id), {})
         fond_trigger = utils.escape_html(str(chat_triggers.get("fond", self.strings("no_triggers"))))
         vfond_trigger = utils.escape_html(str(chat_triggers.get("vfond", self.strings("no_triggers"))))
@@ -887,10 +1112,14 @@ class Foundation(loader.Module):
     async def _show_main_menu(self, call: InlineCall, chat_id: int):
         try:
             chat = await self.client.get_entity(chat_id)
-            chat_title = utils.escape_html(getattr(chat, "title", "Private Chat"))
+            chat_title = utils.escape_html(
+                getattr(chat, "title", self.strings("private_chat"))
+            )
         except Exception as e:
             logger.warning(f"Could not load chat title for {chat_id}: {e}")
-            chat_title = utils.escape_html(f"Chat {chat_id}")
+            chat_title = utils.escape_html(
+                self.strings("chat_fallback").format(chat_id)
+            )
         chat_triggers = self.triggers.get(str(chat_id), {})
         fond_trigger = utils.escape_html(str(chat_triggers.get("fond", self.strings("no_triggers"))))
         vfond_trigger = utils.escape_html(str(chat_triggers.get("vfond", self.strings("no_triggers"))))
