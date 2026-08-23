@@ -49,7 +49,7 @@
       "scheduler": "normal",
       "denoise": 1,
       "model": [
-        "65",
+        "64",
         0
       ],
       "positive": [
@@ -132,7 +132,7 @@
   },
   "40": {
     "inputs": {
-      "seed": 4
+      "seed": 5
     },
     "class_type": "Seed (rgthree)",
     "_meta": {
@@ -164,8 +164,8 @@
         0
       ],
       "clip": [
-        "65",
-        1
+        "19",
+        0
       ]
     },
     "class_type": "CLIPTextEncode",
@@ -257,7 +257,7 @@
       "rescale_after_model": true,
       "rescale_method": "lanczos",
       "rescale": "by percentage",
-      "percent": 50,
+      "percent": 0,
       "width": 1024,
       "height": 1024,
       "longer_side": 1024,
@@ -315,22 +315,6 @@
     "class_type": "UNETLoader",
     "_meta": {
       "title": "Load Diffusion Model"
-    }
-  },
-  "65": {
-    "inputs": {
-      "model": [
-        "64",
-        0
-      ],
-      "clip": [
-        "19",
-        0
-      ]
-    },
-    "class_type": "Power Lora Loader (rgthree)",
-    "_meta": {
-      "title": "Power Lora Loader (rgthree)"
     }
   },
   "66": {
