@@ -1,0 +1,352 @@
+{
+  "3": {
+    "inputs": {
+      "wildcard_text": "",
+      "populated_text": "",
+      "mode": "populate",
+      "seed": [
+        "40",
+        0
+      ],
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "POSITIVE"
+    }
+  },
+  "4": {
+    "inputs": {
+      "wildcard_text": "",
+      "populated_text": "",
+      "mode": "populate",
+      "seed": [
+        "40",
+        0
+      ],
+      "Select to add Wildcard": "Select the Wildcard to add to the text"
+    },
+    "class_type": "ImpactWildcardProcessor",
+    "_meta": {
+      "title": "NEGATIVE"
+    }
+  },
+  "5": {
+    "inputs": {
+      "seed": [
+        "40",
+        0
+      ],
+      "steps": [
+        "42",
+        0
+      ],
+      "cfg": [
+        "44",
+        0
+      ],
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 1,
+      "model": [
+        "65",
+        0
+      ],
+      "positive": [
+        "45",
+        0
+      ],
+      "negative": [
+        "66",
+        0
+      ],
+      "latent_image": [
+        "50",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "13": {
+    "inputs": {
+      "filename_prefix": "Anima",
+      "images": [
+        "58",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "19": {
+    "inputs": {
+      "clip_name": "miaomiaoHarem_anima16_txt.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "24": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "25": {
+    "inputs": {
+      "value": 920
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "34": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "38": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Batch Size"
+    }
+  },
+  "40": {
+    "inputs": {
+      "seed": 4
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "42": {
+    "inputs": {
+      "value": 30
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "44": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "45": {
+    "inputs": {
+      "text": [
+        "3",
+        0
+      ],
+      "clip": [
+        "65",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "49": {
+    "inputs": {
+      "width": [
+        "25",
+        0
+      ],
+      "height": [
+        "34",
+        0
+      ],
+      "batch_size": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "50": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "51": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "54": {
+    "inputs": {
+      "model_name": "RealESRGAN_x2.pth",
+      "rescale_after_model": true,
+      "rescale_method": "lanczos",
+      "rescale": "by percentage",
+      "percent": 50,
+      "width": 1024,
+      "height": 1024,
+      "longer_side": 1024,
+      "crop": "disabled",
+      "image_output": "Hide",
+      "link_id": 0,
+      "save_prefix": "ComfyUI",
+      "image": [
+        "51",
+        0
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "easy hiresFix",
+    "_meta": {
+      "title": "HiresFix"
+    }
+  },
+  "55": {
+    "inputs": {
+      "model_name": "RealESRGAN_x2.pth",
+      "rescale_after_model": true,
+      "rescale_method": "lanczos",
+      "rescale": "by percentage",
+      "percent": 50,
+      "width": 1024,
+      "height": 1024,
+      "longer_side": 1024,
+      "crop": "disabled",
+      "image_output": "Hide",
+      "link_id": 0,
+      "save_prefix": "ComfyUI",
+      "image": [
+        "54",
+        1
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "easy hiresFix",
+    "_meta": {
+      "title": "HiresFix"
+    }
+  },
+  "57": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "55",
+        1
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "58": {
+    "inputs": {
+      "auto_detect": "enable",
+      "compression_level": 100,
+      "image": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "JPEG artifacts removal FBCNN",
+    "_meta": {
+      "title": "Compression Removal"
+    }
+  },
+  "64": {
+    "inputs": {
+      "unet_name": "miaomiaoHarem_anima16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "65": {
+    "inputs": {
+      "model": [
+        "64",
+        0
+      ],
+      "clip": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "66": {
+    "inputs": {
+      "text": [
+        "4",
+        0
+      ],
+      "clip": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  }
+}
