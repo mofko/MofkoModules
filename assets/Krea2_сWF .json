@@ -1,0 +1,201 @@
+{
+  "3": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "11": {
+    "inputs": {
+      "width": 1152,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "16": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "119": {
+    "inputs": {
+      "value": "A woman is captured as a melancholic succubus with horns and wings, posed against a backdrop of ethereal white cherry blossoms and cool blue atmospheric lighting. She looks at the viewer with a haughty look, her long, flowing lavender-grey hair framed by pointed ears and a delicate bronze circlet featuring a crescent moon pendant. Her gothic outfit consists of a black lace-trimmed corset top with ribbon lacing and a heavy utility belt laden with leather pouches and silver buckles over a thigh-slit skirt. The lighting is heavily desaturated and moody, casting deep shadows across her features and catching the fine textures of the lace and hardware. Soft, hazy light filters through the floral arrangement behind her, creating a dreamy, nocturnal glow that emphasizes her pale complexion and dramatic smoky eye makeup. Her hands are held close to her chest in a delicate, hesitant gesture, drawing focus to the intricate details of her bodice and her large breasts. A big stylized text that reads \"LUSTIFY\" is on top of the frame."
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "User Prompt"
+    }
+  },
+  "227": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "123:102",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "229": {
+    "inputs": {
+      "images": [
+        "227",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "230": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "images": [
+        "229",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "231": {
+    "inputs": {
+      "ckpt_name": "lustifyNSFWCheckpoint_v10Krea2.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint"
+    }
+  },
+  "233": {
+    "inputs": {
+      "seed": 2
+    },
+    "class_type": "SeedNode",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "123:29": {
+    "inputs": {
+      "conditioning": [
+        "123:8",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "123:189": {
+    "inputs": {
+      "shift": 4,
+      "model": [
+        "231",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "123:102": {
+    "inputs": {
+      "samples": [
+        "123:6",
+        0
+      ],
+      "vae": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "123:221": {
+    "inputs": {
+      "image": [
+        "123:102",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "123:6": {
+    "inputs": {
+      "seed": [
+        "233",
+        0
+      ],
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1,
+      "model": [
+        "123:189",
+        0
+      ],
+      "positive": [
+        "123:8",
+        0
+      ],
+      "negative": [
+        "123:29",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "123:8": {
+    "inputs": {
+      "text": [
+        "119",
+        0
+      ],
+      "clip": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  }
+}
