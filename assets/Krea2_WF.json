@@ -1,0 +1,285 @@
+{
+  "3": {
+    "inputs": {
+      "clip_name": "qwen3vl_4b_fp8_scaled.safetensors",
+      "type": "krea2",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "11": {
+    "inputs": {
+      "width": 1152,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "12": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "16": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "30": {
+    "inputs": {
+      "PowerLoraLoaderHeaderWidget": {
+        "type": "PowerLoraLoaderHeaderWidget"
+      },
+      "➕ Add Lora": "",
+      "model": [
+        "68",
+        0
+      ],
+      "clip": [
+        "3",
+        0
+      ]
+    },
+    "class_type": "Power Lora Loader (rgthree)",
+    "_meta": {
+      "title": "Power Lora Loader (rgthree)"
+    }
+  },
+  "68": {
+    "inputs": {
+      "unet_name": "lustifyNSFWCheckpoint_v10Krea2.gguf"
+    },
+    "class_type": "UnetLoaderGGUF",
+    "_meta": {
+      "title": "Unet Loader (GGUF)"
+    }
+  },
+  "119": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "User Prompt"
+    }
+  },
+  "212": {
+    "inputs": {
+      "filename": "",
+      "path": "",
+      "extension": "png",
+      "lossless_webp": true,
+      "quality_jpeg_or_webp": 100,
+      "optimize_png": false,
+      "embed_workflow": true,
+      "save_workflow_as_json": false,
+      "counter": 0,
+      "time_format": "%Y-%m-%d-%H%M%S",
+      "show_preview": false,
+      "images": [
+        "228",
+        0
+      ],
+      "metadata": [
+        "213",
+        0
+      ]
+    },
+    "class_type": "Image Saver Simple",
+    "_meta": {
+      "title": "Image Saver Simple"
+    }
+  },
+  "213": {
+    "inputs": {
+      "modelname": "",
+      "positive": [
+        "119",
+        0
+      ],
+      "negative": "",
+      "width": [
+        "123:221",
+        0
+      ],
+      "height": [
+        "123:221",
+        1
+      ],
+      "seed_value": [
+        "12",
+        0
+      ],
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "",
+      "scheduler_name": "normal",
+      "denoise": 1,
+      "clip_skip": 0,
+      "additional_hashes": "",
+      "download_civitai_data": true,
+      "easy_remix": true,
+      "custom": ""
+    },
+    "class_type": "Image Saver Metadata",
+    "_meta": {
+      "title": "Image Saver Metadata"
+    }
+  },
+  "227": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "123:102",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "228": {
+    "inputs": {
+      "auto_detect": "enable",
+      "compression_level": 100,
+      "image": [
+        "227",
+        0
+      ]
+    },
+    "class_type": "JPEG artifacts removal FBCNN",
+    "_meta": {
+      "title": "Compression Removal"
+    }
+  },
+  "229": {
+    "inputs": {
+      "images": [
+        "228",
+        0
+      ]
+    },
+    "class_type": "PreviewImage",
+    "_meta": {
+      "title": "Preview Image"
+    }
+  },
+  "123:29": {
+    "inputs": {
+      "conditioning": [
+        "123:8",
+        0
+      ]
+    },
+    "class_type": "ConditioningZeroOut",
+    "_meta": {
+      "title": "Conditioning Zero Out"
+    }
+  },
+  "123:189": {
+    "inputs": {
+      "shift": 4,
+      "model": [
+        "30",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "123:102": {
+    "inputs": {
+      "samples": [
+        "123:6",
+        0
+      ],
+      "vae": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "123:221": {
+    "inputs": {
+      "image": [
+        "123:102",
+        0
+      ]
+    },
+    "class_type": "GetImageSize",
+    "_meta": {
+      "title": "Get Image Size"
+    }
+  },
+  "123:6": {
+    "inputs": {
+      "seed": [
+        "12",
+        0
+      ],
+      "steps": 8,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "denoise": 1,
+      "model": [
+        "123:189",
+        0
+      ],
+      "positive": [
+        "123:8",
+        0
+      ],
+      "negative": [
+        "123:29",
+        0
+      ],
+      "latent_image": [
+        "11",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "123:8": {
+    "inputs": {
+      "text": [
+        "119",
+        0
+      ],
+      "clip": [
+        "30",
+        1
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  }
+}
