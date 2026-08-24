@@ -1,0 +1,216 @@
+{
+  "5": {
+    "inputs": {
+      "seed": [
+        "69",
+        0
+      ],
+      "steps": 30,
+      "cfg": [
+        "44",
+        0
+      ],
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.8,
+      "model": [
+        "78",
+        0
+      ],
+      "positive": [
+        "73",
+        0
+      ],
+      "negative": [
+        "74",
+        0
+      ],
+      "latent_image": [
+        "50",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler"
+    }
+  },
+  "13": {
+    "inputs": {
+      "filename_prefix": "Anima",
+      "images": [
+        "57",
+        0
+      ]
+    },
+    "class_type": "SaveImage",
+    "_meta": {
+      "title": "Save Image"
+    }
+  },
+  "19": {
+    "inputs": {
+      "clip_name": "mofko77__comfy__miaomiaoHarem_anima16_txt.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "24": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "44": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "49": {
+    "inputs": {
+      "width": 920,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "50": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "51": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "57": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "51",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "64": {
+    "inputs": {
+      "unet_name": "mofko77__comfy__miaomiaoHarem_anima16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "69": {
+    "inputs": {
+      "seed": 5
+    },
+    "class_type": "SeedNode",
+    "_meta": {
+      "title": "Seed"
+    }
+  },
+  "71": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "User Prompt"
+    }
+  },
+  "72": {
+    "inputs": {
+      "value": "Score_6, score_5, score_4, worst quality, low quality, jpeg artifacts, blurry, text, watermark, logo, signature, bad anatomy, bad hands, extra limbs, missing limbs, fused fingers, bad face, realistic, photorealistic, 3d, render, flat shading, unnatural shadows, aliasing, distortion, compression artifacts, corrupted, oversaturated, washed out colors"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "User Prompt"
+    }
+  },
+  "73": {
+    "inputs": {
+      "text": [
+        "71",
+        0
+      ],
+      "clip": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "74": {
+    "inputs": {
+      "text": [
+        "72",
+        0
+      ],
+      "clip": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Prompt)"
+    }
+  },
+  "78": {
+    "inputs": {
+      "model": [
+        "64",
+        0
+      ]
+    },
+    "class_type": "CFGZeroStar",
+    "_meta": {
+      "title": "CFGZeroStar"
+    }
+  }
+}
