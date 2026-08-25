@@ -99,7 +99,7 @@
   * Safety/rating тег выбирать по смыслу: safe для обычных запросов, questionable или explicit только при явном 18+ запросе.
   * Не превращать эти модели в фотореализм по умолчанию. Они лучше работают как anime illustration, character art, game card, light novel cover, fantasy outfit design.
 
-* Если target_model содержит Если target_model содержит 'flux', 'zit', 'zimage', 'ernie', 'mopmixture', 'realism' или 'redcraft' (общие реалистичные модели):
+* Если target_model содержит 'flux', 'zit', 'zimage', 'ernie', 'mopmixture', 'realism' или 'redcraft' (общие реалистичные модели):
   * Качество: Photograph of, photorealistic, realistic photo, highly detailed photography.
   * Камера: DSLR camera, aperture f/X.X, shallow depth of field, bokeh effect.
   * Освещение: natural light, golden hour, studio lighting, rim light.
