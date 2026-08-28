@@ -5,8 +5,8 @@
 # meta fhsdesc: forward, forwarding, messages, tool, пересылка, mofko
 # meta tags: forward, forwarding, messages, tool, пересылка, mofko
 
-__version__ = (2, 0, 0)
-# diff: Модуль полностью переписан, обнова под 2.1.0, убрана перессылка из чатов с запретом перессылки.
+__version__ = (2, 1, 0)
+# diff: Update strings en
 
 import asyncio
 import contextlib
@@ -48,17 +48,17 @@ _EMOJI = {
     "error": '<tg-emoji emoji-id="5121063440311386962">👎</tg-emoji>',
 }
 _FILTERS = {
-    "all": ("Всё", "📨"),
-    "text": ("Текст", "📝"),
-    "media": ("Медиа", "📎"),
-    "photo": ("Фото", "🖼"),
-    "video": ("Видео", "🎬"),
-    "audio": ("Музыка", "🎵"),
-    "voice": ("Голосовые", "🎙"),
-    "file": ("Файлы", "📁"),
-    "gif": ("GIF", "🎞"),
-    "sticker": ("Стикеры", "🧩"),
-    "inline": ("Инлайн", "🤖"),
+    "all": "📨",
+    "text": "📝",
+    "media": "📎",
+    "photo": "🖼",
+    "video": "🎬",
+    "audio": "🎵",
+    "voice": "🎙",
+    "file": "📁",
+    "gif": "🎞",
+    "sticker": "🧩",
+    "inline": "🤖",
 }
 
 
@@ -72,9 +72,273 @@ class _ForwardProtected(Exception):
 
 @loader.tds
 class MForwardMod(loader.Module):
-    """Простая перессылка сообщений с диапазоном."""
+    """Forward messages within a selected range."""
 
-    strings = {"name": "M:Forward"}
+    strings = {
+        "name": "M:Forward",
+        "_cls_doc": "Forward messages within a selected range.",
+        "_cmd_doc_mfw": "Open the forwarding menu.",
+        "source_missing": "Source is not specified",
+        "source_invalid": "Could not recognize the source",
+        "source_not_found": "Source chat was not found",
+        "target_missing": "Target is not specified",
+        "target_invalid": "Could not recognize the target",
+        "target_not_found": "Target chat was not found",
+        "target_unselected": "not selected",
+        "source_unselected": "not selected",
+        "topic": "topic",
+        "range_unset": "not set",
+        "range_latest": "latest",
+        "status_hidden": "hidden",
+        "status_shown": "shown",
+        "status_removed": "removed",
+        "status_kept": "kept",
+        "status_removing": "removed",
+        "status_keeping": "kept",
+        "messages_label": "Messages",
+        "menu_text": (
+            "{main} <b>M:Forward</b>\n\n<blockquote expandable>"
+            "{source_emoji} <b>Source (From):</b> {source}\n"
+            "{target_emoji} <b>Target:</b> {target}\n"
+            "{progress} <b>Range:</b> {range}\n"
+            "{type_emoji} <b>Type:</b> {filter}\n"
+            "<b>Author:</b> {author} · <b>Text:</b> {captions}{messages}</blockquote>{notice}"
+        ),
+        "menu_source": "📥 Source (From)",
+        "menu_source_input": "Enter a message or chat link:",
+        "menu_target": "🎯 Target",
+        "menu_range": "🔢 Range",
+        "menu_type": "📎 Type",
+        "menu_options": "⚙️ Options",
+        "menu_jobs": "📋 Jobs · {}",
+        "btn_start": "▶️ Start",
+        "btn_reset": "🔄 Reset",
+        "btn_close": "✖️ Close",
+        "btn_back": "⬅️ Back",
+        "menu_expired": "Menu has expired",
+        "protected_source": "Choose a channel where forwarding is allowed",
+        "target_title": "{emoji} <b>Forwarding target</b>",
+        "target_description": "Target is the chat or topic where messages will be forwarded.",
+        "target_topic_help": (
+            "<blockquote expandable><b>How to specify a topic:</b>\n"
+            "<code>@chat 123</code> or <code>@chat:123</code>\n"
+            "<code>https://t.me/chat/123</code>\n"
+            "<code>https://t.me/c/1234567890/123</code>\n\n"
+            "The link must contain the ID of the topic's first message.</blockquote>"
+        ),
+        "btn_edit": "✏️ Edit",
+        "target_input": "Enter chat_id, @username, or a chat/topic link:",
+        "btn_current_chat": "↩️ Current chat",
+        "source_required": "Choose a source first",
+        "range_title": "{emoji} <b>Range</b>",
+        "range_text": "<blockquote><b>Start:</b> <code>{start}</code>\n<b>End:</b> <code>{end}</code></blockquote>",
+        "btn_range_start": "🔢 Start",
+        "range_start_input": "Enter the ID or link of the first message:",
+        "btn_range_end": "🏁 End",
+        "range_end_input": "Enter the ID or link of the last message:",
+        "btn_range_single": "1️⃣ One message",
+        "btn_range_latest": "⏭ To latest",
+        "range_other_source": "The message must be from the selected source",
+        "range_id_positive": "ID must be greater than zero",
+        "range_end_before_start": "The final ID is less than the first one",
+        "type_title": "{emoji} <b>Forwarding type</b>",
+        "type_selected": "<blockquote>Selected: <b>{}</b></blockquote>",
+        "options_title": "{emoji} <b>Forwarding options</b>",
+        "options_text": "<blockquote><b>Author:</b> {author}\n<b>Text:</b> {captions}{extra}</blockquote>",
+        "options_messages": "\n<b>Text messages:</b> {}",
+        "btn_author": "👤 Author: {}",
+        "btn_captions": "💬 Text: {}",
+        "btn_messages": "📝 Messages: {}",
+        "jobs_title": "{emoji} <b>Jobs</b>",
+        "jobs_empty": "<blockquote>No jobs</blockquote>",
+        "job_queued": "queued",
+        "job_running": "running",
+        "job_stopping": "stopping",
+        "job_paused": "paused",
+        "btn_stop_number": "🛑 Stop {}",
+        "btn_refresh": "🔄 Refresh",
+        "source_required_start": "Choose a source",
+        "target_required_start": "Choose a target",
+        "queue_full": "Queue is full",
+        "range_empty": "There are no messages in the selected range",
+        "job_added": "Job added",
+        "duration_hours": "{}h {}m",
+        "duration_minutes": "{}m {}s",
+        "duration_seconds": "{}s",
+        "job_state_queued": "Queued · {}",
+        "job_state_flood": "FloodWait · {}",
+        "job_state_stopping": "Stopping",
+        "job_state_done": "Completed",
+        "job_state_stopped": "Stopped",
+        "job_state_error": "Error",
+        "job_state_paused": "Paused",
+        "job_state_running": "Running",
+        "job_pin_failed": "\n⚠️ Could not pin progress",
+        "job_text": (
+            "{main} <b>M:Forward</b>\n<b>{state}</b>\n\n"
+            "<blockquote expandable>{source_emoji} <b>Source (From):</b> {source}\n"
+            "{target_emoji} <b>Target:</b> {target}\n"
+            "{type_emoji} <b>Type:</b> {filter}\n"
+            "<b>Author:</b> {author} · <b>Text:</b> {captions}\n{messages}"
+            "<b>Range:</b> <code>{start} → {end}</code>\n\n{bar} <b>{percent}%</b>\n"
+            "Forwarded: <code>{forwarded}</code>\nSkipped: <code>{skipped}</code>\n"
+            "Speed: <code>{speed:.1f}/min</code>\nRemaining: <code>{eta}</code>\n"
+            "FloodWait: <code>{flood}</code>{extra}</blockquote>"
+        ),
+        "job_messages": "<b>Text messages:</b> {}\n",
+        "btn_resume": "▶️ Resume",
+        "btn_pause": "⏸ Pause",
+        "btn_stop": "🛑 Stop",
+        "job_finished": "Job has already finished",
+        "job_paused_notice": "Paused",
+        "job_resumed_notice": "Resumed",
+        "job_stopping_notice": "Stopping",
+        "job_protected": "Forwarding is prohibited in the source",
+        "filter_all": "All",
+        "filter_text": "Text",
+        "filter_media": "Media",
+        "filter_photo": "Photo",
+        "filter_video": "Video",
+        "filter_audio": "Music",
+        "filter_voice": "Voice messages",
+        "filter_file": "Files",
+        "filter_gif": "GIF",
+        "filter_sticker": "Stickers",
+        "filter_inline": "Inline",
+    }
+
+    strings_ru = {
+        "name": "M:Forward",
+        "_cls_doc": "Пересылает сообщения в выбранном диапазоне.",
+        "_cmd_doc_mfw": "Открыть меню пересылки.",
+        "source_missing": "Источник не указан",
+        "source_invalid": "Не удалось распознать источник",
+        "source_not_found": "Чат источника не найден",
+        "target_missing": "Цель не указана",
+        "target_invalid": "Не удалось распознать цель",
+        "target_not_found": "Целевой чат не найден",
+        "target_unselected": "не выбрана",
+        "source_unselected": "не выбран",
+        "topic": "топик",
+        "range_unset": "не задан",
+        "range_latest": "последнее",
+        "status_hidden": "скрыт",
+        "status_shown": "показан",
+        "status_removed": "убран",
+        "status_kept": "сохранён",
+        "status_removing": "убираются",
+        "status_keeping": "сохраняются",
+        "messages_label": "Сообщения",
+        "menu_text": (
+            "{main} <b>M:Forward</b>\n\n<blockquote expandable>"
+            "{source_emoji} <b>Источник (Откуда):</b> {source}\n"
+            "{target_emoji} <b>Цель:</b> {target}\n"
+            "{progress} <b>Диапазон:</b> {range}\n"
+            "{type_emoji} <b>Тип:</b> {filter}\n"
+            "<b>Автор:</b> {author} · <b>Текст:</b> {captions}{messages}</blockquote>{notice}"
+        ),
+        "menu_source": "📥 Источник (Откуда)",
+        "menu_source_input": "Введите ссылку на сообщение или чат:",
+        "menu_target": "🎯 Цель",
+        "menu_range": "🔢 Диапазон",
+        "menu_type": "📎 Тип",
+        "menu_options": "⚙️ Параметры",
+        "menu_jobs": "📋 Задачи · {}",
+        "btn_start": "▶️ Запустить",
+        "btn_reset": "🔄 Сбросить",
+        "btn_close": "✖️ Закрыть",
+        "btn_back": "⬅️ Назад",
+        "menu_expired": "Меню устарело",
+        "protected_source": "Выберите канал, где доступна пересылка",
+        "target_title": "{emoji} <b>Цель пересылки</b>",
+        "target_description": "Цель — чат или топик, куда будут пересылаться сообщения.",
+        "target_topic_help": (
+            "<blockquote expandable><b>Как указать топик:</b>\n"
+            "<code>@chat 123</code> или <code>@chat:123</code>\n"
+            "<code>https://t.me/chat/123</code>\n"
+            "<code>https://t.me/c/1234567890/123</code>\n\n"
+            "В ссылке должен быть ID первого сообщения топика.</blockquote>"
+        ),
+        "btn_edit": "✏️ Изменить",
+        "target_input": "Введите chat_id, @username или ссылку на чат/топик:",
+        "btn_current_chat": "↩️ Текущий чат",
+        "source_required": "Сначала выберите источник",
+        "range_title": "{emoji} <b>Диапазон</b>",
+        "range_text": "<blockquote><b>Начало:</b> <code>{start}</code>\n<b>Конец:</b> <code>{end}</code></blockquote>",
+        "btn_range_start": "🔢 Начало",
+        "range_start_input": "Введите ID или ссылку на начальное сообщение:",
+        "btn_range_end": "🏁 Конец",
+        "range_end_input": "Введите ID или ссылку на конечное сообщение:",
+        "btn_range_single": "1️⃣ Одно сообщение",
+        "btn_range_latest": "⏭ До последнего",
+        "range_other_source": "Сообщение должно быть из выбранного источника",
+        "range_id_positive": "ID должен быть больше нуля",
+        "range_end_before_start": "Конечный ID меньше начального",
+        "type_title": "{emoji} <b>Тип пересылки</b>",
+        "type_selected": "<blockquote>Выбрано: <b>{}</b></blockquote>",
+        "options_title": "{emoji} <b>Параметры пересылки</b>",
+        "options_text": "<blockquote><b>Автор:</b> {author}\n<b>Текст:</b> {captions}{extra}</blockquote>",
+        "options_messages": "\n<b>Текстовые сообщения:</b> {}",
+        "btn_author": "👤 Автор: {}",
+        "btn_captions": "💬 Текст: {}",
+        "btn_messages": "📝 Сообщения: {}",
+        "jobs_title": "{emoji} <b>Задачи</b>",
+        "jobs_empty": "<blockquote>Нет задач</blockquote>",
+        "job_queued": "ожидает",
+        "job_running": "выполняется",
+        "job_stopping": "останавливается",
+        "job_paused": "пауза",
+        "btn_stop_number": "🛑 Остановить {}",
+        "btn_refresh": "🔄 Обновить",
+        "source_required_start": "Выберите источник",
+        "target_required_start": "Выберите цель",
+        "queue_full": "Очередь заполнена",
+        "range_empty": "В диапазоне нет сообщений",
+        "job_added": "Задача добавлена",
+        "duration_hours": "{}ч {}м",
+        "duration_minutes": "{}м {}с",
+        "duration_seconds": "{}с",
+        "job_state_queued": "В очереди · {}",
+        "job_state_flood": "FloodWait · {}",
+        "job_state_stopping": "Останавливается",
+        "job_state_done": "Завершено",
+        "job_state_stopped": "Остановлено",
+        "job_state_error": "Ошибка",
+        "job_state_paused": "Пауза",
+        "job_state_running": "Выполняется",
+        "job_pin_failed": "\n⚠️ Не удалось закрепить прогресс",
+        "job_text": (
+            "{main} <b>M:Forward</b>\n<b>{state}</b>\n\n"
+            "<blockquote expandable>{source_emoji} <b>Источник (Откуда):</b> {source}\n"
+            "{target_emoji} <b>Цель:</b> {target}\n"
+            "{type_emoji} <b>Тип:</b> {filter}\n"
+            "<b>Автор:</b> {author} · <b>Текст:</b> {captions}\n{messages}"
+            "<b>Диапазон:</b> <code>{start} → {end}</code>\n\n{bar} <b>{percent}%</b>\n"
+            "Переслано: <code>{forwarded}</code>\nПропущено: <code>{skipped}</code>\n"
+            "Скорость: <code>{speed:.1f}/мин</code>\nОсталось: <code>{eta}</code>\n"
+            "FloodWait: <code>{flood}</code>{extra}</blockquote>"
+        ),
+        "job_messages": "<b>Текстовые сообщения:</b> {}\n",
+        "btn_resume": "▶️ Продолжить",
+        "btn_pause": "⏸ Пауза",
+        "btn_stop": "🛑 Остановить",
+        "job_finished": "Задача уже завершена",
+        "job_paused_notice": "Пауза",
+        "job_resumed_notice": "Продолжено",
+        "job_stopping_notice": "Останавливаю",
+        "job_protected": "У источника запрещена пересылка",
+        "filter_all": "Всё",
+        "filter_text": "Текст",
+        "filter_media": "Медиа",
+        "filter_photo": "Фото",
+        "filter_video": "Видео",
+        "filter_audio": "Музыка",
+        "filter_voice": "Голосовые",
+        "filter_file": "Файлы",
+        "filter_gif": "GIF",
+        "filter_sticker": "Стикеры",
+        "filter_inline": "Инлайн",
+    }
 
     def __init__(self):
         self._menus = {}
@@ -271,7 +535,7 @@ class MForwardMod(loader.Module):
     async def _parse_source(self, raw):
         raw = str(raw or "").strip()
         if not raw:
-            raise ValueError("Источник не указан")
+            raise ValueError(self.strings("source_missing"))
         match = _LINK_RE.match(raw)
         private = False
         identifier = None
@@ -285,7 +549,7 @@ class MForwardMod(loader.Module):
         else:
             parts = raw.split()
             if len(parts) > 3:
-                raise ValueError("Не удалось распознать источник")
+                raise ValueError(self.strings("source_invalid"))
             identifier = parts[0]
             numbers = [int(part) for part in parts[1:] if part.isdigit()]
             if len(numbers) == 1:
@@ -294,7 +558,7 @@ class MForwardMod(loader.Module):
                 first, second = numbers
         entity = await self._resolve_entity(identifier, private)
         if not entity:
-            raise ValueError("Чат источника не найден")
+            raise ValueError(self.strings("source_not_found"))
         channel_only = first is None and second is None
         topic_id = first if second is not None else None
         message_id = second or first or 1
@@ -318,7 +582,7 @@ class MForwardMod(loader.Module):
     async def _parse_target(self, raw):
         raw = str(raw or "").strip()
         if not raw:
-            raise ValueError("Цель не указана")
+            raise ValueError(self.strings("target_missing"))
         match = _LINK_RE.match(raw)
         private = False
         identifier = None
@@ -335,12 +599,12 @@ class MForwardMod(loader.Module):
         else:
             parts = raw.split()
             if len(parts) > 2:
-                raise ValueError("Не удалось распознать цель")
+                raise ValueError(self.strings("target_invalid"))
             identifier = parts[0]
             first = int(parts[1]) if len(parts) == 2 and parts[1].isdigit() else None
         entity = await self._resolve_entity(identifier, private)
         if not entity:
-            raise ValueError("Целевой чат не найден")
+            raise ValueError(self.strings("target_not_found"))
         topic_id = first if self._is_forum(entity) else None
         if second is not None:
             topic_id = first
@@ -367,43 +631,42 @@ class MForwardMod(loader.Module):
             message = result
         return int(getattr(message, "id", 0) or 0)
 
-    @staticmethod
-    def _display_target(data):
+    def _filter_label(self, filter_type):
+        return self.strings(f"filter_{filter_type}")
+
+    def _display_target(self, data):
         if not data:
-            return "не выбрана"
+            return self.strings("target_unselected")
         value = utils.escape_html(str(data["title"]))
         reference = data.get("reference")
         if reference:
             value += f" (<code>{utils.escape_html(str(reference))}</code>)"
         return value
 
-    @staticmethod
-    def _display_source(data):
+    def _display_source(self, data):
         if not data:
-            return "не выбран"
+            return self.strings("source_unselected")
         value = utils.escape_html(str(data["title"]))
         if data.get("topic"):
-            value += f" · топик <code>{data['topic']}</code>"
+            value += f" · {self.strings('topic')} <code>{data['topic']}</code>"
         return value
 
     def _menu_text(self, state):
         source = self._display_source(state.get("source"))
         target = self._display_target(state.get("target"))
         if not state.get("source"):
-            range_text = "не задан"
+            range_text = self.strings("range_unset")
         elif state["range_mode"] == "latest":
-            range_text = f"<code>{state['start']}</code> → последнее"
+            range_text = f"<code>{state['start']}</code> → {self.strings('range_latest')}"
         else:
             range_text = f"<code>{state['start']}</code> → <code>{state['end']}</code>"
-        filter_name = ", ".join(
-            _FILTERS[item][0] for item in state["filters"]
-        )
-        author = "скрыт" if state["hide_author"] else "показан"
-        captions = "убран" if state["remove_captions"] else "сохранён"
+        filter_name = ", ".join(self._filter_label(item) for item in state["filters"])
+        author = self.strings("status_hidden") if state["hide_author"] else self.strings("status_shown")
+        captions = self.strings("status_removed") if state["remove_captions"] else self.strings("status_kept")
         text_messages = (
-            "убираются"
+            self.strings("status_removing")
             if state["remove_text_messages"]
-            else "сохраняются"
+            else self.strings("status_keeping")
         )
         notice = ""
         if state.get("notice"):
@@ -411,29 +674,38 @@ class MForwardMod(loader.Module):
                 f"\n\n{_EMOJI['error']} "
                 f"<b>{utils.escape_html(state['notice'])}</b>"
             )
-        return (
-            f"{_EMOJI['main']} <b>M:Forward</b>\n\n"
-            "<blockquote expandable>"
-            f"{_EMOJI['source']} <b>Источник (Откуда):</b> {source}\n"
-            f"{_EMOJI['target']} <b>Цель:</b> {target}\n"
-            f"{_EMOJI['progress']} <b>Диапазон:</b> {range_text}\n"
-            f"{_EMOJI['type']} <b>Тип:</b> {utils.escape_html(filter_name)}\n"
-            f"<b>Автор:</b> {author} · <b>Текст:</b> {captions}"
-            f"{' · <b>Сообщения:</b> ' + text_messages if state['remove_captions'] else ''}"
-            f"</blockquote>{notice}"
+        messages = (
+            f" · <b>{self.strings('messages_label')}:</b> {text_messages}"
+            if state["remove_captions"]
+            else ""
+        )
+        return self.strings("menu_text").format(
+            main=_EMOJI["main"],
+            source_emoji=_EMOJI["source"],
+            target_emoji=_EMOJI["target"],
+            progress=_EMOJI["progress"],
+            type_emoji=_EMOJI["type"],
+            source=source,
+            target=target,
+            range=range_text,
+            filter=utils.escape_html(filter_name),
+            author=author,
+            captions=captions,
+            messages=messages,
+            notice=notice,
         )
 
     def _menu_markup(self, token):
         rows = [
             [
                 {
-                    "text": "📥 Источник (Откуда)",
-                    "input": "Введите ссылку на сообщение или чат:",
+                    "text": self.strings("menu_source"),
+                    "input": self.strings("menu_source_input"),
                     "handler": self._source_input,
                     "args": (token,),
                 },
                 {
-                    "text": "🎯 Цель",
+                    "text": self.strings("menu_target"),
                     "callback": self._target_menu,
                     "args": (token,),
                     "style": "primary",
@@ -441,19 +713,19 @@ class MForwardMod(loader.Module):
             ],
             [
                 {
-                    "text": "🔢 Диапазон",
+                    "text": self.strings("menu_range"),
                     "callback": self._range_menu,
                     "args": (token,),
                 },
                 {
-                    "text": "📎 Тип",
+                    "text": self.strings("menu_type"),
                     "callback": self._type_menu,
                     "args": (token,),
                 },
             ],
             [
                 {
-                    "text": "⚙️ Параметры",
+                    "text": self.strings("menu_options"),
                     "callback": self._options_menu,
                     "args": (token,),
                 }
@@ -463,7 +735,7 @@ class MForwardMod(loader.Module):
             rows.append(
                 [
                     {
-                        "text": f"📋 Задачи · {len(self._jobs)}",
+                        "text": self.strings("menu_jobs").format(len(self._jobs)),
                         "callback": self._jobs_menu,
                         "args": (token,),
                     }
@@ -473,7 +745,7 @@ class MForwardMod(loader.Module):
             [
                 [
                     {
-                        "text": "▶️ Запустить",
+                        "text": self.strings("btn_start"),
                         "callback": self._start,
                         "args": (token,),
                         "style": "success",
@@ -481,12 +753,12 @@ class MForwardMod(loader.Module):
                 ],
                 [
                     {
-                        "text": "🔄 Сбросить",
+                        "text": self.strings("btn_reset"),
                         "callback": self._reset,
                         "args": (token,),
                     },
                     {
-                        "text": "✖️ Закрыть",
+                        "text": self.strings("btn_close"),
                         "callback": self._close,
                         "args": (token,),
                         "style": "danger",
@@ -499,7 +771,7 @@ class MForwardMod(loader.Module):
     async def _render_main(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         call = self._call_source(call)
         await call.edit(
             self._menu_text(state),
@@ -525,7 +797,7 @@ class MForwardMod(loader.Module):
         call = self._call_source(call)
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not str(query or "").strip() and state.get("source"):
             state["notice"] = None
             return await self._render_main(call, token)
@@ -535,7 +807,7 @@ class MForwardMod(loader.Module):
             return await self._input_error(
                 call,
                 token,
-                "Выберите канал, где доступна пересылка",
+                self.strings("protected_source"),
             )
         except Exception as error:
             return await self._input_error(call, token, str(error))
@@ -551,45 +823,43 @@ class MForwardMod(loader.Module):
     async def _target_menu(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         call = self._call_source(call)
-        text = (
-            f"{_EMOJI['target']} <b>Цель пересылки</b>\n\n"
-            f"<blockquote>{self._display_target(state.get('target'))}</blockquote>\n\n"
-            "Цель — чат или топик, куда будут пересылаться сообщения.\n\n"
-            "<blockquote expandable><b>Как указать топик:</b>\n"
-            "<code>@chat 123</code> или <code>@chat:123</code>\n"
-            "<code>https://t.me/chat/123</code>\n"
-            "<code>https://t.me/c/1234567890/123</code>\n\n"
-            "В ссылке должен быть ID первого сообщения топика.</blockquote>"
+        text = "\n\n".join(
+            (
+                self.strings("target_title").format(emoji=_EMOJI["target"]),
+                f"<blockquote>{self._display_target(state.get('target'))}</blockquote>",
+                self.strings("target_description"),
+                self.strings("target_topic_help"),
+            )
         )
         await call.edit(
             text,
             reply_markup=[
                 [
                     {
-                        "text": "✏️ Изменить",
-                        "input": "Введите chat_id, @username или ссылку на чат/топик:",
+                        "text": self.strings("btn_edit"),
+                        "input": self.strings("target_input"),
                         "handler": self._target_input,
                         "args": (token,),
                     }
                 ],
                 [
                     {
-                        "text": "↩️ Текущий чат",
+                        "text": self.strings("btn_current_chat"),
                         "callback": self._target_current,
                         "args": (token,),
                     }
                 ],
                 [
                     {
-                        "text": "⬅️ Назад",
+                        "text": self.strings("btn_back"),
                         "callback": self._render_main,
                         "args": (token,),
                         "style": "primary",
                     },
                     {
-                        "text": "✖️ Закрыть",
+                        "text": self.strings("btn_close"),
                         "callback": self._close,
                         "args": (token,),
                         "style": "danger",
@@ -602,7 +872,7 @@ class MForwardMod(loader.Module):
         call = self._call_source(call)
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not str(query or "").strip() and state.get("target"):
             state["notice"] = None
             return await self._render_main(call, token)
@@ -616,7 +886,7 @@ class MForwardMod(loader.Module):
     async def _target_current(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         state["target"] = dict(state["default_target"])
         state["notice"] = None
         await self._render_main(call, token)
@@ -624,54 +894,55 @@ class MForwardMod(loader.Module):
     async def _range_menu(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not state.get("source"):
-            return await call.answer("Сначала выберите источник", show_alert=True)
+            return await call.answer(self.strings("source_required"), show_alert=True)
         call = self._call_source(call)
-        end = "последнее" if state["range_mode"] == "latest" else str(state["end"])
-        text = (
-            f"{_EMOJI['progress']} <b>Диапазон</b>\n\n"
-            f"<blockquote><b>Начало:</b> <code>{state['start']}</code>\n"
-            f"<b>Конец:</b> <code>{end}</code></blockquote>"
+        end = self.strings("range_latest") if state["range_mode"] == "latest" else str(state["end"])
+        text = "\n\n".join(
+            (
+                self.strings("range_title").format(emoji=_EMOJI["progress"]),
+                self.strings("range_text").format(start=state["start"], end=end),
+            )
         )
         await call.edit(
             text,
             reply_markup=[
                 [
                     {
-                        "text": "🔢 Начало",
-                        "input": "Введите ID или ссылку на начальное сообщение:",
+                        "text": self.strings("btn_range_start"),
+                        "input": self.strings("range_start_input"),
                         "handler": self._range_start_input,
                         "args": (token,),
                     },
                     {
-                        "text": "🏁 Конец",
-                        "input": "Введите ID или ссылку на конечное сообщение:",
+                        "text": self.strings("btn_range_end"),
+                        "input": self.strings("range_end_input"),
                         "handler": self._range_end_input,
                         "args": (token,),
                     },
                 ],
                 [
                     {
-                        "text": "1️⃣ Одно сообщение",
+                        "text": self.strings("btn_range_single"),
                         "callback": self._range_single,
                         "args": (token,),
                     },
                     {
-                        "text": "⏭ До последнего",
+                        "text": self.strings("btn_range_latest"),
                         "callback": self._range_latest,
                         "args": (token,),
                     },
                 ],
                 [
                     {
-                        "text": "⬅️ Назад",
+                        "text": self.strings("btn_back"),
                         "callback": self._render_main,
                         "args": (token,),
                         "style": "primary",
                     },
                     {
-                        "text": "✖️ Закрыть",
+                        "text": self.strings("btn_close"),
                         "callback": self._close,
                         "args": (token,),
                         "style": "danger",
@@ -689,26 +960,26 @@ class MForwardMod(loader.Module):
         if source["peer"] != current["peer"] or source.get("topic") != current.get(
             "topic"
         ):
-            raise ValueError("Сообщение должно быть из выбранного источника")
+            raise ValueError(self.strings("range_other_source"))
         return source["message"]
 
     async def _range_start_input(self, call, query, token):
         call = self._call_source(call)
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not str(query or "").strip():
             state["notice"] = None
             return await self._range_menu(call, token)
         try:
             value = await self._range_value(query, state)
             if value < 1:
-                raise ValueError("ID должен быть больше нуля")
+                raise ValueError(self.strings("range_id_positive"))
         except _ForwardProtected:
             return await self._input_error(
                 call,
                 token,
-                "Выберите канал, где доступна пересылка",
+                self.strings("protected_source"),
             )
         except Exception as error:
             return await self._input_error(call, token, str(error))
@@ -722,19 +993,19 @@ class MForwardMod(loader.Module):
         call = self._call_source(call)
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not str(query or "").strip():
             state["notice"] = None
             return await self._range_menu(call, token)
         try:
             value = await self._range_value(query, state)
             if value < state["start"]:
-                raise ValueError("Конечный ID меньше начального")
+                raise ValueError(self.strings("range_end_before_start"))
         except _ForwardProtected:
             return await self._input_error(
                 call,
                 token,
-                "Выберите канал, где доступна пересылка",
+                self.strings("protected_source"),
             )
         except Exception as error:
             return await self._input_error(call, token, str(error))
@@ -746,7 +1017,7 @@ class MForwardMod(loader.Module):
     async def _range_single(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         state["end"] = state["start"]
         state["range_mode"] = "fixed"
         await self._range_menu(call, token)
@@ -754,22 +1025,22 @@ class MForwardMod(loader.Module):
     async def _range_latest(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         state["range_mode"] = "latest"
         await self._range_menu(call, token)
 
     async def _type_menu(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         call = self._call_source(call)
         rows = []
         row = []
-        for key, (name, icon) in _FILTERS.items():
+        for key, icon in _FILTERS.items():
             selected = key in state["filters"]
             row.append(
                 {
-                    "text": f"{'✅' if selected else icon} {name}",
+                    "text": f"{'✅' if selected else icon} {self._filter_label(key)}",
                     "callback": self._set_type,
                     "args": (token, key),
                     "style": "success" if selected else None,
@@ -783,13 +1054,13 @@ class MForwardMod(loader.Module):
         rows.append(
             [
                 {
-                    "text": "⬅️ Назад",
+                    "text": self.strings("btn_back"),
                     "callback": self._render_main,
                     "args": (token,),
                     "style": "primary",
                 },
                 {
-                    "text": "✖️ Закрыть",
+                    "text": self.strings("btn_close"),
                     "callback": self._close,
                     "args": (token,),
                     "style": "danger",
@@ -797,15 +1068,23 @@ class MForwardMod(loader.Module):
             ]
         )
         await call.edit(
-            f"{_EMOJI['type']} <b>Тип пересылки</b>\n\n"
-            f"<blockquote>Выбрано: <b>{utils.escape_html(', '.join(_FILTERS[item][0] for item in state['filters']))}</b></blockquote>",
+            "\n\n".join(
+                (
+                    self.strings("type_title").format(emoji=_EMOJI["type"]),
+                    self.strings("type_selected").format(
+                        utils.escape_html(
+                            ", ".join(self._filter_label(item) for item in state["filters"])
+                        )
+                    ),
+                )
+            ),
             reply_markup=rows,
         )
 
     async def _set_type(self, call, token, filter_type):
         state = self._menus.get(token)
         if not state or filter_type not in _FILTERS:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         selected = list(state["filters"])
         if filter_type == "all":
             selected = ["all"]
@@ -823,31 +1102,31 @@ class MForwardMod(loader.Module):
     async def _options_menu(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         call = self._call_source(call)
-        author = "скрыт" if state["hide_author"] else "показан"
-        captions = "убран" if state["remove_captions"] else "сохранён"
+        author = self.strings("status_hidden") if state["hide_author"] else self.strings("status_shown")
+        captions = self.strings("status_removed") if state["remove_captions"] else self.strings("status_kept")
         text_messages = (
-            "убирать"
+            self.strings("status_removing")
             if state["remove_text_messages"]
-            else "оставлять"
+            else self.strings("status_keeping")
         )
         extra = (
-            f"\n<b>Текстовые сообщения:</b> {text_messages}"
+            self.strings("options_messages").format(text_messages)
             if state["remove_captions"]
             else ""
         )
         rows = [
             [
                 {
-                    "text": f"👤 Автор: {author}",
+                    "text": self.strings("btn_author").format(author),
                     "callback": self._toggle_author,
                     "args": (token,),
                 }
             ],
             [
                 {
-                    "text": f"💬 Текст: {captions}",
+                    "text": self.strings("btn_captions").format(captions),
                     "callback": self._toggle_captions,
                     "args": (token,),
                 }
@@ -857,7 +1136,7 @@ class MForwardMod(loader.Module):
             rows.append(
                 [
                     {
-                        "text": f"📝 Сообщения: {text_messages}",
+                        "text": self.strings("btn_messages").format(text_messages),
                         "callback": self._toggle_text_messages,
                         "args": (token,),
                     }
@@ -866,13 +1145,13 @@ class MForwardMod(loader.Module):
         rows.append(
             [
                 {
-                    "text": "⬅️ Назад",
+                    "text": self.strings("btn_back"),
                     "callback": self._render_main,
                     "args": (token,),
                     "style": "primary",
                 },
                 {
-                    "text": "✖️ Закрыть",
+                    "text": self.strings("btn_close"),
                     "callback": self._close,
                     "args": (token,),
                     "style": "danger",
@@ -880,16 +1159,23 @@ class MForwardMod(loader.Module):
             ]
         )
         await call.edit(
-            f"{_EMOJI['type']} <b>Параметры пересылки</b>\n\n"
-            f"<blockquote><b>Автор:</b> {author}\n"
-            f"<b>Текст:</b> {captions}{extra}</blockquote>",
+            "\n\n".join(
+                (
+                    self.strings("options_title").format(emoji=_EMOJI["type"]),
+                    self.strings("options_text").format(
+                        author=author,
+                        captions=captions,
+                        extra=extra,
+                    ),
+                )
+            ),
             reply_markup=rows,
         )
 
     async def _toggle_author(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         state["hide_author"] = not state["hide_author"]
         if not state["hide_author"]:
             state["remove_captions"] = False
@@ -899,7 +1185,7 @@ class MForwardMod(loader.Module):
     async def _toggle_captions(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         state["remove_captions"] = not state["remove_captions"]
         if state["remove_captions"]:
             state["hide_author"] = True
@@ -910,7 +1196,7 @@ class MForwardMod(loader.Module):
     async def _toggle_text_messages(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not state["remove_captions"]:
             state["remove_text_messages"] = False
         else:
@@ -922,7 +1208,7 @@ class MForwardMod(loader.Module):
     async def _reset(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         state.update(
             {
                 "source": None,
@@ -946,19 +1232,24 @@ class MForwardMod(loader.Module):
 
     def _jobs_text(self):
         if not self._jobs:
-            return f"{_EMOJI['progress']} <b>Задачи</b>\n\n<blockquote>Нет задач</blockquote>"
+            return "\n\n".join(
+                (
+                    self.strings("jobs_title").format(emoji=_EMOJI["progress"]),
+                    self.strings("jobs_empty"),
+                )
+            )
         lines = []
         labels = {
-            "queued": "ожидает",
-            "running": "выполняется",
+            "queued": self.strings("job_queued"),
+            "running": self.strings("job_running"),
             "flood": "FloodWait",
-            "stopping": "останавливается",
+            "stopping": self.strings("job_stopping"),
         }
         for index, job in enumerate(
             sorted(self._jobs.values(), key=lambda item: item.get("created", 0)),
             1,
         ):
-            status = "пауза" if job.get("paused") else labels.get(
+            status = self.strings("job_paused") if job.get("paused") else labels.get(
                 job.get("status"),
                 job.get("status", "—"),
             )
@@ -967,13 +1258,13 @@ class MForwardMod(loader.Module):
                 f"{utils.escape_html(job['target_title'])} · <code>{status}</code>"
             )
         return (
-            f"{_EMOJI['progress']} <b>Задачи</b>\n\n"
+            f"{self.strings('jobs_title').format(emoji=_EMOJI['progress'])}\n\n"
             f"<blockquote expandable>{chr(10).join(lines)}</blockquote>"
         )
 
     async def _jobs_menu(self, call, token):
         if token not in self._menus:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         call = self._call_source(call)
         rows = []
         for index, job in enumerate(
@@ -983,7 +1274,7 @@ class MForwardMod(loader.Module):
             rows.append(
                 [
                     {
-                        "text": f"🛑 Остановить {index}",
+                        "text": self.strings("btn_stop_number").format(index),
                         "callback": self._stop_from_menu,
                         "args": (token, job["id"]),
                         "style": "danger",
@@ -993,12 +1284,12 @@ class MForwardMod(loader.Module):
         rows.append(
             [
                 {
-                    "text": "🔄 Обновить",
+                    "text": self.strings("btn_refresh"),
                     "callback": self._jobs_menu,
                     "args": (token,),
                 },
                 {
-                    "text": "⬅️ Назад",
+                    "text": self.strings("btn_back"),
                     "callback": self._render_main,
                     "args": (token,),
                     "style": "primary",
@@ -1008,7 +1299,7 @@ class MForwardMod(loader.Module):
         rows.append(
             [
                 {
-                    "text": "✖️ Закрыть",
+                    "text": self.strings("btn_close"),
                     "callback": self._close,
                     "args": (token,),
                     "style": "danger",
@@ -1024,13 +1315,13 @@ class MForwardMod(loader.Module):
     async def _start(self, call, token):
         state = self._menus.get(token)
         if not state:
-            return await call.answer("Меню устарело", show_alert=True)
+            return await call.answer(self.strings("menu_expired"), show_alert=True)
         if not state.get("source"):
-            return await call.answer("Выберите источник", show_alert=True)
+            return await call.answer(self.strings("source_required_start"), show_alert=True)
         if not state.get("target"):
-            return await call.answer("Выберите цель", show_alert=True)
+            return await call.answer(self.strings("target_required_start"), show_alert=True)
         if len(self._jobs) >= 10:
-            return await call.answer("Очередь заполнена", show_alert=True)
+            return await call.answer(self.strings("queue_full"), show_alert=True)
         try:
             source_entity = await self.client.get_entity(state["source"]["peer"])
             start_message = await self._get_message(source_entity, state["start"])
@@ -1046,12 +1337,12 @@ class MForwardMod(loader.Module):
                     state["source"].get("topic"),
                 )
             if end_id < state["start"]:
-                raise ValueError("В диапазоне нет сообщений")
+                raise ValueError(self.strings("range_empty"))
         except _ForwardProtected:
             return await self._input_error(
                 call,
                 token,
-                "Выберите канал, где доступна пересылка",
+                self.strings("protected_source"),
             )
         except Exception as error:
             return await call.answer(str(error), show_alert=True)
@@ -1102,7 +1393,7 @@ class MForwardMod(loader.Module):
         self._pause_events[job_id] = event
         self._queue.put_nowait(job_id)
         self._save_jobs()
-        await call.answer("Задача добавлена")
+        await call.answer(self.strings("job_added"))
         await call.edit(
             self._job_text(job),
             reply_markup=self._job_markup(job),
@@ -1122,36 +1413,35 @@ class MForwardMod(loader.Module):
         except ValueError:
             return 0
 
-    @staticmethod
-    def _duration(seconds):
+    def _duration(self, seconds):
         seconds = max(0, int(seconds))
         hours, remainder = divmod(seconds, 3600)
         minutes, seconds = divmod(remainder, 60)
         if hours:
-            return f"{hours}ч {minutes}м"
+            return self.strings("duration_hours").format(hours, minutes)
         if minutes:
-            return f"{minutes}м {seconds}с"
-        return f"{seconds}с"
+            return self.strings("duration_minutes").format(minutes, seconds)
+        return self.strings("duration_seconds").format(seconds)
 
     def _job_text(self, job):
         status = job.get("status")
         if status == "queued":
-            state = f"В очереди · {self._queue_position(job['id'])}"
+            state = self.strings("job_state_queued").format(self._queue_position(job["id"]))
         elif status == "flood":
             left = max(0, int(job.get("flood_until", 0) - time.time()))
-            state = f"FloodWait · {self._duration(left)}"
+            state = self.strings("job_state_flood").format(self._duration(left))
         elif status == "stopping":
-            state = "Останавливается"
+            state = self.strings("job_state_stopping")
         elif status == "done":
-            state = "Завершено"
+            state = self.strings("job_state_done")
         elif status == "stopped":
-            state = "Остановлено"
+            state = self.strings("job_state_stopped")
         elif status == "error":
-            state = "Ошибка"
+            state = self.strings("job_state_error")
         elif job.get("paused"):
-            state = "Пауза"
+            state = self.strings("job_state_paused")
         else:
-            state = "Выполняется"
+            state = self.strings("job_state_running")
         span = max(1, job["end_id"] - job["start_id"] + 1)
         passed = max(0, min(span, job.get("last_id", 0) - job["start_id"] + 1))
         percent = 100 if status == "done" else round(passed * 100 / span, 1)
@@ -1171,38 +1461,44 @@ class MForwardMod(loader.Module):
         target += f" (<code>{utils.escape_html(str(target_ref))}</code>)"
         source = utils.escape_html(str(job["source_title"]))
         if job.get("source_topic"):
-            source += f" · топик <code>{job['source_topic']}</code>"
+            source += f" · {self.strings('topic')} <code>{job['source_topic']}</code>"
         filter_name = utils.escape_html(
-            ", ".join(_FILTERS[item][0] for item in job["filters"])
+            ", ".join(self._filter_label(item) for item in job["filters"])
         )
-        author = "скрыт" if job["hide_author"] else "показан"
-        captions = "убран" if job["remove_captions"] else "сохранён"
+        author = self.strings("status_hidden") if job["hide_author"] else self.strings("status_shown")
+        captions = self.strings("status_removed") if job["remove_captions"] else self.strings("status_kept")
         text_messages = (
-            "убираются"
+            self.strings("status_removing")
             if job["remove_text_messages"]
-            else "сохраняются"
+            else self.strings("status_keeping")
         )
         extra = ""
         if job.get("pin_failed"):
-            extra += "\n⚠️ Не удалось закрепить прогресс"
+            extra += self.strings("job_pin_failed")
         if job.get("error"):
             extra += f"\n<code>{utils.escape_html(str(job['error']))}</code>"
-        return (
-            f"{_EMOJI['main']} <b>M:Forward</b>\n"
-            f"<b>{state}</b>\n\n"
-            f"<blockquote expandable>{_EMOJI['source']} <b>Источник (Откуда):</b> {source}\n"
-            f"{_EMOJI['target']} <b>Цель:</b> {target}\n"
-            f"{_EMOJI['type']} <b>Тип:</b> {filter_name}\n"
-            f"<b>Автор:</b> {author} · <b>Текст:</b> {captions}\n"
-            f"{'<b>Текстовые сообщения:</b> ' + text_messages + chr(10) if job['remove_captions'] else ''}"
-            f"<b>Диапазон:</b> <code>{job['start_id']} → {job['end_id']}</code>\n\n"
-            f"{bar} <b>{percent}%</b>\n"
-            f"Переслано: <code>{job.get('forwarded', 0)}</code>\n"
-            f"Пропущено: <code>{job.get('skipped', 0)}</code>\n"
-            f"Скорость: <code>{speed:.1f}/мин</code>\n"
-            f"Осталось: <code>{eta}</code>\n"
-            f"FloodWait: <code>{job.get('flood_count', 0)}</code>"
-            f"{extra}</blockquote>"
+        return self.strings("job_text").format(
+            main=_EMOJI["main"],
+            state=state,
+            source_emoji=_EMOJI["source"],
+            target_emoji=_EMOJI["target"],
+            type_emoji=_EMOJI["type"],
+            source=source,
+            target=target,
+            filter=filter_name,
+            author=author,
+            captions=captions,
+            messages=self.strings("job_messages").format(text_messages) if job["remove_captions"] else "",
+            start=job["start_id"],
+            end=job["end_id"],
+            bar=bar,
+            percent=percent,
+            forwarded=job.get("forwarded", 0),
+            skipped=job.get("skipped", 0),
+            speed=speed,
+            eta=eta,
+            flood=job.get("flood_count", 0),
+            extra=extra,
         )
 
     def _job_markup(self, job):
@@ -1210,7 +1506,7 @@ class MForwardMod(loader.Module):
             return [
                 [
                     {
-                        "text": "✖️ Закрыть",
+                        "text": self.strings("btn_close"),
                         "callback": self._close_result,
                         "args": (
                             job.get("control_chat"),
@@ -1226,7 +1522,7 @@ class MForwardMod(loader.Module):
                 rows.append(
                     [
                         {
-                            "text": "▶️ Продолжить",
+                            "text": self.strings("btn_resume"),
                             "callback": self._resume_job,
                             "args": (job["id"],),
                             "style": "success",
@@ -1237,7 +1533,7 @@ class MForwardMod(loader.Module):
                 rows.append(
                     [
                         {
-                            "text": "⏸ Пауза",
+                            "text": self.strings("btn_pause"),
                             "callback": self._pause_job,
                             "args": (job["id"],),
                         }
@@ -1246,7 +1542,7 @@ class MForwardMod(loader.Module):
         rows.append(
             [
                 {
-                    "text": "🛑 Остановить",
+                    "text": self.strings("btn_stop"),
                     "callback": self._stop_job,
                     "args": (job["id"],),
                     "style": "danger",
@@ -1288,26 +1584,26 @@ class MForwardMod(loader.Module):
     async def _pause_job(self, call, job_id):
         job = self._jobs.get(job_id)
         if not job or job.get("status") in {"done", "error", "stopped"}:
-            return await call.answer("Задача уже завершена", show_alert=True)
+            return await call.answer(self.strings("job_finished"), show_alert=True)
         job["paused"] = True
         self._pause_events.setdefault(job_id, asyncio.Event()).clear()
         self._save_jobs()
-        await call.answer("Пауза")
+        await call.answer(self.strings("job_paused_notice"))
         await self._edit_job(job, True)
 
     async def _resume_job(self, call, job_id):
         job = self._jobs.get(job_id)
         if not job or job.get("status") in {"done", "error", "stopped"}:
-            return await call.answer("Задача уже завершена", show_alert=True)
+            return await call.answer(self.strings("job_finished"), show_alert=True)
         job["paused"] = False
         self._pause_events.setdefault(job_id, asyncio.Event()).set()
         self._save_jobs()
-        await call.answer("Продолжено")
+        await call.answer(self.strings("job_resumed_notice"))
         await self._edit_job(job, True)
 
     async def _stop_job(self, call, job_id):
         await self._request_stop(job_id)
-        await call.answer("Останавливаю")
+        await call.answer(self.strings("job_stopping_notice"))
 
     async def _request_stop(self, job_id):
         job = self._jobs.get(job_id)
@@ -1604,7 +1900,7 @@ class MForwardMod(loader.Module):
                     await self._finish_job(
                         job,
                         "error",
-                        "У источника запрещена пересылка",
+                        self.strings("job_protected"),
                     )
                 except asyncio.CancelledError:
                     self._save_jobs()
@@ -1620,7 +1916,7 @@ class MForwardMod(loader.Module):
 
     @loader.command()
     async def mfw(self, message: Message):
-        """Открыть меню перессылки."""
+        """Open the forwarding menu."""
         now = time.time()
         self._menus = {
             key: value
