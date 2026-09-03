@@ -1,4 +1,4 @@
-__version__ = (1, 1, 0)
+__version__ = (1, 1, 1)
 # meta developer: @mofkomodules, @pureoffic
 # Name: ComfyImageGen
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
@@ -34,7 +34,7 @@ from PIL import Image
 from herokutl.extensions import html
 from herokutl.errors.rpcerrorlist import ChannelPrivateError, ChatAdminRequiredError, UserNotParticipantError
 from herokutl.tl.functions.channels import GetFullChannelRequest
-from herokutl.tl.functions.messages import GetForumTopicsByIDRequest, SendMediaRequest, SendMessageRequest
+from herokutl.tl.functions.messages import GetForumTopicsByIDRequest
 
 try:
     from google import genai
@@ -44,24 +44,6 @@ except ImportError:
     GENAI_AVAILABLE = False
 
 from herokutl.tl.types import ForumTopicDeleted, Message, PeerChannel
-try:
-    from herokutl.tl.types import (
-        DocumentAttributeFilename,
-        InputMediaUploadedDocument,
-        InputMediaUploadedPhoto,
-        InputReplyToMessage,
-        InputReplyToMonoForum,
-    )
-except ImportError:
-    DocumentAttributeFilename = None
-    InputMediaUploadedDocument = None
-    InputMediaUploadedPhoto = None
-    InputReplyToMessage = None
-    InputReplyToMonoForum = None
-try:
-    from herokutl.tl.types import InputPeerSelf
-except ImportError:
-    InputPeerSelf = None
 from .. import loader, utils
 from ..inline.types import InlineCall
 
@@ -467,21 +449,6 @@ _GLOBAL_POSITIVE_DEFAULT = ""
 _BUILTIN_WORKFLOW_POSITIVE_DEFAULTS = {
     _ILL_WORKFLOW_NAME: "embedding:lazypos,",
 }
-_FORBIDDEN_UPLOAD_CONSTRUCTOR_BYTES = tuple(
-    value.to_bytes(4, "little")
-    for value in (
-        0xA2C0CF74,
-        0x449E0B51,
-        0x9308CE1B,
-        0x0D36BF79,
-        0xA59B102F,
-        0x9A5C33E5,
-        0x9FAB0D1A,
-        0xA929597A,
-        0xE320C158,
-        0xF8654027,
-    )
-)
 _GLOBAL_NEGATIVE_DEFAULT = "worst quality, low quality, lowres, blurry, jpeg artifacts, sepia, bad anatomy, watermark, artist name,"
 _REALISTIC_NEGATIVE_DEFAULT = "text, motion lines, effects, border, frame. (worst quality, low quality, normal quality, lowres, low details, oversaturated, undersaturated, overexposed, underexposed, grayscale, bad photo, bad photography, bad art:1.4)"
 _BUILTIN_WORKFLOW_NEGATIVE_DEFAULTS = {
@@ -16075,44 +16042,12 @@ class ComfyImageGenMod(loader.Module):
         return True
 
     async def _cshare_send_file_standard(self, peer, file_obj, **kwargs):
-        safe_file = await self._prepare_safe_upload_file(file_obj)
-        upload_file = safe_file or file_obj
-        try:
-            if hasattr(upload_file, "seek"):
-                upload_file.seek(0)
-            return await self.client.send_file(peer, upload_file, **kwargs)
-        finally:
-            if safe_file:
-                safe_file.close()
+        if hasattr(file_obj, "seek"):
+            file_obj.seek(0)
+        return await self.client.send_file(peer, file_obj, **kwargs)
 
     async def _cshare_send_file(self, target, file_obj, **kwargs):
-        reply_to = self._cshare_reply_to(target)
-        if reply_to is not None:
-            try:
-                return await self._cshare_send_file_raw(target, file_obj, reply_to, **kwargs)
-            except Exception as e:
-                if self._is_monoforum_reply_error(e) and await self._cshare_try_init_direct(target):
-                    if hasattr(file_obj, "seek"):
-                        file_obj.seek(0)
-                    try:
-                        return await self._cshare_send_file_raw(target, file_obj, reply_to, **kwargs)
-                    except Exception as retry_error:
-                        if not self._can_retry_cshare_fallback(retry_error):
-                            raise
-                fallback = self._cshare_fallback_target(target)
-                if not fallback or not self._can_retry_cshare_fallback(e):
-                    raise
-                kwargs.pop("reply_to", None)
-                if hasattr(file_obj, "seek"):
-                    file_obj.seek(0)
-                try:
-                    return await self._cshare_send_file_standard(
-                        fallback, file_obj, **kwargs
-                    )
-                except Exception as fallback_error:
-                    if self._is_monoforum_reply_error(fallback_error):
-                        raise e
-                    raise
+        kwargs.pop("reply_to", None)
         try:
             return await self._cshare_send_file_standard(
                 self._cshare_peer(target), file_obj, **kwargs
@@ -16134,27 +16069,7 @@ class ComfyImageGenMod(loader.Module):
                 raise
 
     async def _cshare_send_message(self, target, text, **kwargs):
-        reply_to = self._cshare_reply_to(target)
-        if reply_to is not None:
-            try:
-                return await self._cshare_send_message_raw(target, text, reply_to, **kwargs)
-            except Exception as e:
-                if self._is_monoforum_reply_error(e) and await self._cshare_try_init_direct(target):
-                    try:
-                        return await self._cshare_send_message_raw(target, text, reply_to, **kwargs)
-                    except Exception as retry_error:
-                        if not self._can_retry_cshare_fallback(retry_error):
-                            raise
-                fallback = self._cshare_fallback_target(target)
-                if not fallback or not self._can_retry_cshare_fallback(e):
-                    raise
-                kwargs.pop("reply_to", None)
-                try:
-                    return await self.client.send_message(fallback, text, **kwargs)
-                except Exception as fallback_error:
-                    if self._is_monoforum_reply_error(fallback_error):
-                        raise e
-                    raise
+        kwargs.pop("reply_to", None)
         try:
             return await self.client.send_message(self._cshare_peer(target), text, **kwargs)
         except Exception as e:
@@ -16168,75 +16083,6 @@ class ComfyImageGenMod(loader.Module):
                 if self._is_monoforum_reply_error(fallback_error):
                     raise e
                 raise
-
-    async def _response_message_from_updates(self, result, peer):
-        candidates = [result, *(getattr(result, "updates", None) or [])]
-        for candidate in candidates:
-            message = getattr(candidate, "message", None)
-            if message is not None:
-                return message
-            message_id = getattr(candidate, "id", None)
-            if message_id is None:
-                continue
-            try:
-                message = await self.client.get_messages(peer, ids=message_id)
-                if message:
-                    return message
-            except Exception as e:
-                logger.debug("Could not resolve sent message %s: %s", message_id, e)
-        return None
-
-    async def _cshare_send_file_raw(self, target, file_obj, reply_to, **kwargs):
-        if not (InputMediaUploadedDocument and DocumentAttributeFilename):
-            raise UserFacingError("cshare_direct_unavailable", self._plain_text(self.strings("cshare_direct_unavailable")))
-        safe_file = await self._prepare_safe_upload_file(file_obj)
-        upload_file = safe_file or file_obj
-        try:
-            if hasattr(upload_file, "seek"):
-                upload_file.seek(0)
-            filename = getattr(upload_file, "name", None) or "file.bin"
-            uploaded = await self.client.upload_file(upload_file, file_name=filename)
-        finally:
-            if safe_file:
-                safe_file.close()
-        caption = kwargs.get("caption") or ""
-        try:
-            text, entities = self.client.parse_mode.parse(caption)
-        except Exception:
-            text, entities = caption, []
-        media = InputMediaUploadedDocument(
-            file=uploaded,
-            mime_type=mimetypes.guess_type(filename)[0] or "application/octet-stream",
-            attributes=[DocumentAttributeFilename(filename)],
-        )
-        peer = await self.client.get_input_entity(self._cshare_peer(target))
-        request = SendMediaRequest(
-            peer=peer,
-            media=media,
-            message=text,
-            random_id=random.getrandbits(63),
-            reply_to=reply_to,
-            entities=entities or [],
-        )
-        result = await self.client(request)
-        return await self._response_message_from_updates(result, peer)
-
-    async def _cshare_send_message_raw(self, target, text, reply_to, **kwargs):
-        try:
-            parsed_text, entities = self.client.parse_mode.parse(text)
-        except Exception:
-            parsed_text, entities = text, []
-        peer = await self.client.get_input_entity(self._cshare_peer(target))
-        request = SendMessageRequest(
-            peer=peer,
-            message=parsed_text,
-            random_id=random.getrandbits(63),
-            no_webpage=not kwargs.get("link_preview", False),
-            reply_to=reply_to,
-            entities=entities or [],
-        )
-        result = await self.client(request)
-        return await self._response_message_from_updates(result, peer)
 
     async def _resolve_cshare_direct_target(self):
         channel = await self.client.get_entity("comfyideas")
@@ -16294,20 +16140,6 @@ class ComfyImageGenMod(loader.Module):
 
         if not monoforum:
             raise UserFacingError("cshare_direct_unavailable", self._plain_text(self.strings("cshare_direct_unavailable")))
-
-        if InputReplyToMonoForum:
-            try:
-                try:
-                    self_peer = await self.client.get_input_entity(self.tg_id)
-                except Exception:
-                    self_peer = await self.client.get_input_entity("me")
-                return {
-                    "peer": monoforum,
-                    "reply_to": InputReplyToMonoForum(monoforum_peer_id=self_peer),
-                    "fallback": monoforum,
-                }
-            except Exception as e:
-                logger.debug("Failed to resolve self input peer for ComfyIdeas monoforum: %s", e)
 
         return {"peer": monoforum}
 
@@ -17961,109 +17793,9 @@ class ComfyImageGenMod(loader.Module):
                 img.close()
             self._restore_image_source(source, restore_target)
 
-    @staticmethod
-    def _upload_contains_forbidden_constructor(file_obj):
-        try:
-            position = file_obj.tell()
-            file_obj.seek(0)
-        except Exception:
-            return False
-        tail = b""
-        offset_base = 0
-        try:
-            while True:
-                chunk = file_obj.read(1024 * 1024)
-                if not chunk:
-                    return False
-                payload = tail + chunk
-                payload_offset = offset_base - len(tail)
-                for pattern in _FORBIDDEN_UPLOAD_CONSTRUCTOR_BYTES:
-                    offset = payload.find(pattern)
-                    while offset >= 0:
-                        if (payload_offset + offset) % 4 == 0:
-                            return True
-                        offset = payload.find(pattern, offset + 1)
-                tail = payload[-3:]
-                offset_base += len(chunk)
-        finally:
-            try:
-                file_obj.seek(position)
-            except Exception:
-                pass
-
-    def _prepare_upload_retry_image(self, image_source, quality):
-        img_buf, restore_target = self._image_source_stream(image_source)
-        source = None
-        converted = None
-        out = tempfile.NamedTemporaryFile(
-            mode="w+b",
-            prefix="comfyimagegen_result_",
-            suffix=".jpg",
-        )
-        try:
-            source = Image.open(img_buf)
-            self._ensure_safe_photo_pixels(source)
-            source.load()
-            if source.mode == "RGBA":
-                canvas = Image.new("RGBA", source.size, (255, 255, 255, 255))
-                try:
-                    canvas.alpha_composite(source)
-                    converted = canvas.convert("RGB")
-                finally:
-                    canvas.close()
-            else:
-                converted = source.convert("RGB")
-            converted.save(out, format="JPEG", quality=quality)
-            out.seek(0)
-            return out
-        except Exception:
-            out.close()
-            raise
-        finally:
-            if converted:
-                converted.close()
-            if source:
-                source.close()
-            self._restore_image_source(img_buf, restore_target)
-
-    async def _prepare_safe_upload_retry_image(self, image_source):
-        last_output = None
-        for quality in (94, 90, 86, 82, 78):
-            output = await utils.run_sync(
-                self._prepare_upload_retry_image,
-                image_source,
-                quality,
-            )
-            if not self._upload_contains_forbidden_constructor(output):
-                if last_output:
-                    last_output.close()
-                return output
-            if last_output:
-                last_output.close()
-            last_output = output
-        return last_output
-
-    async def _prepare_safe_upload_file(self, file_obj):
-        if not self._upload_contains_forbidden_constructor(file_obj):
-            return None
-        try:
-            return await self._prepare_safe_upload_retry_image(file_obj)
-        except Exception as e:
-            logger.debug("Safe upload conversion is unavailable for this file: %s", e)
-            return None
-
-    async def _prepare_image_upload_file(self, image_source, as_document=False, force_safe_retry=False):
+    async def _prepare_image_upload_file(self, image_source, as_document=False):
         async with self._image_processing_semaphore:
-            if force_safe_retry:
-                return await self._prepare_safe_upload_retry_image(image_source), True
-            output = await utils.run_sync(self._prepare_output_image, image_source, as_document)
-            if not self._upload_contains_forbidden_constructor(output):
-                return output, False
-            output.close()
-            return await self._prepare_safe_upload_retry_image(image_source), True
-
-    def _is_forbidden_upload_error(self, error):
-        return "forbidden raw tl constructor" in self._exception_chain_text(error).lower()
+            return await utils.run_sync(self._prepare_output_image, image_source, as_document)
 
     async def _send_prepared_result_file(self, chat_id, file_obj, send_kwargs, send_as_self):
         file_obj.seek(0)
@@ -18074,60 +17806,6 @@ class ComfyImageGenMod(loader.Module):
             file_obj,
             **send_kwargs,
         )
-
-    async def _send_spoiler_photo_result(self, chat_id, image_source, caption, reply_to=None, send_as_self=False):
-        if not InputMediaUploadedPhoto:
-            raise RuntimeError("InputMediaUploadedPhoto is unavailable")
-        caption = self._apply_emoji_theme(caption)
-
-        try:
-            out, _ = await self._prepare_image_upload_file(image_source, False)
-        except UserFacingError:
-            raise
-        except Exception as e:
-            logger.error("Failed to process image: %s: %s", type(e).__name__, e)
-            logger.exception(e)
-            raise ValueError("Failed to process image") from e
-
-        try:
-            out.seek(0)
-            uploaded = await self.client.upload_file(out, file_name=getattr(out, "name", "comfyui_result.jpg"))
-            try:
-                text, entities = self.client.parse_mode.parse(caption or "")
-            except Exception:
-                text, entities = caption or "", []
-            request_reply_to = reply_to
-            if (
-                reply_to is not None
-                and InputReplyToMessage
-                and isinstance(reply_to, int)
-            ):
-                request_reply_to = InputReplyToMessage(reply_to_msg_id=reply_to)
-            peer = await self.client.get_input_entity(chat_id)
-            request_kwargs = {
-                "peer": peer,
-                "media": InputMediaUploadedPhoto(file=uploaded, spoiler=True),
-                "message": text,
-                "random_id": random.getrandbits(63),
-                "reply_to": request_reply_to,
-                "entities": entities or [],
-            }
-            if send_as_self and InputPeerSelf:
-                request_kwargs["send_as"] = InputPeerSelf()
-            try:
-                request = SendMediaRequest(**request_kwargs)
-            except TypeError:
-                request_kwargs.pop("send_as", None)
-                request = SendMediaRequest(**request_kwargs)
-            result = await self.client(request)
-            return await self._response_message_from_updates(result, peer)
-        except Exception as e:
-            logger.error("Failed to send spoiler photo: %s: %s", type(e).__name__, e)
-            logger.exception(e)
-            raise ValueError("Telegram send failed") from e
-        finally:
-            out.close()
-            del out
 
     @staticmethod
     def _exception_chain_text(exc):
@@ -18151,11 +17829,8 @@ class ComfyImageGenMod(loader.Module):
         output_format = self.config["output_format"]
         as_document = force_document or output_format == "document_png"
 
-        if spoiler and not as_document:
-            return await self._send_spoiler_photo_result(chat_id, image_source, caption, reply_to=reply_to, send_as_self=send_as_self)
-
         try:
-            out, used_safe_upload_retry = await self._prepare_image_upload_file(image_source, as_document)
+            out = await self._prepare_image_upload_file(image_source, as_document)
         except UserFacingError:
             raise
         except Exception as e:
@@ -18169,28 +17844,14 @@ class ComfyImageGenMod(loader.Module):
                 "reply_to": reply_to,
                 "force_document": as_document,
             }
-            try:
-                sent_message = await self._send_prepared_result_file(
-                    chat_id,
-                    out,
-                    send_kwargs,
-                    send_as_self,
-                )
-            except Exception as e:
-                if not self._is_forbidden_upload_error(e) or used_safe_upload_retry:
-                    raise
-                out.close()
-                out, used_safe_upload_retry = await self._prepare_image_upload_file(
-                    image_source,
-                    as_document,
-                    force_safe_retry=True,
-                )
-                sent_message = await self._send_prepared_result_file(
-                    chat_id,
-                    out,
-                    send_kwargs,
-                    send_as_self,
-                )
+            if spoiler and not as_document:
+                send_kwargs["spoiler"] = True
+            sent_message = await self._send_prepared_result_file(
+                chat_id,
+                out,
+                send_kwargs,
+                send_as_self,
+            )
         except Exception as e:
             if log_errors:
                 logger.error("Failed to send image: %s: %s", type(e).__name__, e)
@@ -18203,11 +17864,7 @@ class ComfyImageGenMod(loader.Module):
 
     async def _send_file_result(self, chat_id, file_obj, caption, reply_to=None, force_document=True, log_errors=True, send_as_self=False):
         caption = self._apply_emoji_theme(caption)
-        safe_file = None
         try:
-            safe_file = await self._prepare_safe_upload_file(file_obj)
-            if safe_file:
-                file_obj = safe_file
             if hasattr(file_obj, "seek"):
                 file_obj.seek(0)
             send_kwargs = {
@@ -18223,9 +17880,6 @@ class ComfyImageGenMod(loader.Module):
                 logger.error("Failed to send media: %s: %s", type(e).__name__, e)
                 logger.exception(e)
             raise ValueError(f"Telegram send failed: {self._exception_chain_text(e)}") from e
-        finally:
-            if safe_file:
-                safe_file.close()
 
     async def _send_file_group_result(self, chat_id, file_objs, caption, reply_to=None, force_document=True, log_errors=True, send_as_self=False):
         caption = self._apply_emoji_theme(caption)
@@ -18242,17 +17896,7 @@ class ComfyImageGenMod(loader.Module):
         if not files:
             raise ValueError("No media files to send")
         original_files = list(files)
-        safe_files = []
         try:
-            prepared_files = []
-            for file_obj in files:
-                safe_file = await self._prepare_safe_upload_file(file_obj)
-                if safe_file:
-                    safe_files.append(safe_file)
-                    prepared_files.append(safe_file)
-                else:
-                    prepared_files.append(file_obj)
-            files = prepared_files
             for file_obj in files:
                 file_obj.seek(0)
             send_kwargs = {
@@ -18283,11 +17927,6 @@ class ComfyImageGenMod(loader.Module):
                         file_obj.close()
                     except Exception:
                         pass
-            for file_obj in safe_files:
-                try:
-                    file_obj.close()
-                except Exception:
-                    pass
 
     async def _schedule_delete_message(self, message_to_delete: Message, delay: int):
         try:
@@ -20983,18 +20622,6 @@ class ComfyImageGenMod(loader.Module):
         )
 
     async def _send_message_as_self_if_possible(self, chat_id, text, **kwargs):
-        if InputPeerSelf:
-            try:
-                return await self.client.send_message(
-                    chat_id,
-                    text,
-                    send_as=InputPeerSelf(),
-                    **kwargs,
-                )
-            except Exception as e:
-                if not self._send_as_fallback_allowed(e):
-                    raise
-                logger.debug("send_as self is unavailable, retrying message normally: %s", e)
         return await self.client.send_message(chat_id, text, **kwargs)
 
     @staticmethod
@@ -21008,19 +20635,6 @@ class ComfyImageGenMod(loader.Module):
                     pass
 
     async def _send_file_as_self_if_possible(self, chat_id, file_obj, **kwargs):
-        if InputPeerSelf:
-            try:
-                return await self.client.send_file(
-                    self._send_peer_candidate(chat_id),
-                    file_obj,
-                    send_as=InputPeerSelf(),
-                    **kwargs,
-                )
-            except Exception as e:
-                if not self._send_as_fallback_allowed(e):
-                    raise
-                logger.debug("send_as self is unavailable, retrying file normally: %s", e)
-                self._rewind_send_file_obj(file_obj)
         self._rewind_send_file_obj(file_obj)
         return await self.client.send_file(self._send_peer_candidate(chat_id), file_obj, **kwargs)
 
