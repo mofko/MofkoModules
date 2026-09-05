@@ -1,4 +1,4 @@
-__version__ = (1, 1, 1)
+__version__ = (1, 1, 2)
 # meta developer: @mofkomodules, @pureoffic
 # Name: ComfyImageGen
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/comfy_imagegen_banner.png
@@ -175,6 +175,7 @@ _CSHARE_TOP_CHAT = "comfyideas"
 _CSHARE_TOP_MESSAGE_ID = 5
 _ENHANCE_PROMPT_URL = f"{_ASSETS_BASE_URL}/enhance_system_prompt.txt"
 _QWEN_DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+_TRANSLATE_URL = "https://translate.googleapis.com/translate_a/single"
 _COMFY_TEXT_PROVIDER = "comfy_text"
 _COMFY_TEXT_CLIP_NAME = "qwen3vl_4b_fp8_scaled.safetensors"
 _COMFY_TEXT_WORKFLOW_URL = f"{_ASSETS_BASE_URL}/Text_gen.json"
@@ -427,6 +428,7 @@ _COMFY_TIMEOUTS = {
     "object_info_all": 30,
     "retrieve_media": 60,
     "upload_image": 60,
+    "translation": 15,
 }
 _ANIME_V2_WORKFLOW_NAME = "Anima"
 _ANIME_V3_WORKFLOW_NAME = "Anima2"
@@ -728,6 +730,11 @@ class ComfyImageGenMod(loader.Module):
         "output_too_large": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Output media is too large (max. {} MB).",
         "image_too_many_pixels": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Image is too large to send as a photo (max. {} MP). Send it as document PNG or reduce its size.",
         "no_reply_photo": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Reply to a photo for img2img.",
+        "album_picker_title": "<b>Select an image from the album</b>",
+        "album_picker_desc": "The album contains <code>{}</code> images.",
+        "album_picker_button": "Photo {}",
+        "album_picker_expired": "Image selection has expired. Run the command again.",
+        "album_picker_unavailable": "Could not load the selected album image.",
         "wf_not_found": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Workflow '{}' not found. Available: {}",
         "add_wf_no_reply": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Reply to a JSON file or put a Comfy Cloud share link after the workflow name.",
         "add_wf_bad_json": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Invalid JSON workflow file.",
@@ -1162,6 +1169,7 @@ class ComfyImageGenMod(loader.Module):
         "ult_trigger_workflow_default": "Module default: {}",
         "ult_trigger_active": "Active now: {}",
         "ult_trigger_russian_guard": "Reject Russian prompt without -ai: {}",
+        "ult_trigger_auto_translate": "Automatically translate prompt to English: {}",
         "ult_trigger_cloud_skip_confirm": "Cloud trigger without confirmation: {}",
         "ult_trigger_blacklist": "Blacklist: <code>{}</code>",
         "ult_trigger_word_input": "Enter trigger word:",
@@ -1173,6 +1181,7 @@ class ComfyImageGenMod(loader.Module):
         "ult_trigger_workflow_default_set": "This chat's trigger will use the module default workflow.",
         "ult_trigger_workflow_title": '<tg-emoji emoji-id="5444965220663458467">📁</tg-emoji> Select trigger workflow',
         "ult_trigger_reject_russian": "Block Russian prompt",
+        "ult_trigger_translate": "Translate to English",
         "ult_trigger_blacklist_empty": "Trigger blacklist is empty.",
         "ult_trigger_blacklist_title": "<b>Trigger blacklist</b>",
         "ult_trigger_blacklist_added": "User added to trigger blacklist.",
@@ -1180,6 +1189,7 @@ class ComfyImageGenMod(loader.Module):
         "ult_trigger_blacklist_no_user": "Reply to a user or specify @username/user id.",
         "ult_btn_trigger_blacklist": "🚫 Blacklist",
         "trigger_russian_requires_ai": "<emoji document_id=5121063440311386962>👎</emoji> Trigger generation with Russian prompt is allowed only with -ai.",
+        "translation_failed": "<emoji document_id=5121063440311386962>👎</emoji> Could not translate the prompt. Try again later.",
         "trigger_too_often": "<emoji document_id=5121063440311386962>\U0001f44e</emoji> Too often.",
         "ult_status_on": '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji> Enabled',
         "ult_status_off": '<tg-emoji emoji-id="5121063440311386962">\u274c</tg-emoji> Disabled',
@@ -1986,6 +1996,7 @@ class ComfyImageGenMod(loader.Module):
         "ult_trigger_workflow_default": "По умолчанию модуля: {}",
         "ult_trigger_active": "Активно сейчас: {}",
         "ult_trigger_russian_guard": "Запрет русского промпта без -ai: {}",
+        "ult_trigger_auto_translate": "Автоматически переводить промпт на английский: {}",
         "ult_trigger_cloud_skip_confirm": "Триггер Cloud без подтверждения: {}",
         "ult_trigger_blacklist": "Блэклист: <code>{}</code>",
         "ult_trigger_word_input": "Введите триггер-слово:",
@@ -1997,6 +2008,7 @@ class ComfyImageGenMod(loader.Module):
         "ult_trigger_workflow_default_set": "Триггер этого чата будет использовать воркфлоу модуля по умолчанию.",
         "ult_trigger_workflow_title": '<tg-emoji emoji-id="5444965220663458467">📁</tg-emoji> Выбор воркфлоу триггера',
         "ult_trigger_reject_russian": "Блокировать русский промпт",
+        "ult_trigger_translate": "Переводить на английский",
         "ult_trigger_blacklist_empty": "Блэклист триггеров пуст.",
         "ult_trigger_blacklist_title": "<b>Блэклист триггеров</b>",
         "ult_trigger_blacklist_added": "Пользователь добавлен в блэклист триггеров.",
@@ -2004,6 +2016,7 @@ class ComfyImageGenMod(loader.Module):
         "ult_trigger_blacklist_no_user": "Ответьте на пользователя или укажите @username/id.",
         "ult_btn_trigger_blacklist": "🚫 Блэклист",
         "trigger_russian_requires_ai": "<emoji document_id=5121063440311386962>👎</emoji> Для генерации по триггеру русский промпт разрешён только с -ai.",
+        "translation_failed": "<emoji document_id=5121063440311386962>👎</emoji> Не удалось перевести промпт. Попробуйте позже.",
         "ult_status_on": '<tg-emoji emoji-id="5206607081334906820">\u2705</tg-emoji> Включено',
         "ult_status_off": '<tg-emoji emoji-id="5121063440311386962">\u274c</tg-emoji> Выключено',
         "ult_btn_prompt": "\U0001f916 Подтверждение промпта",
@@ -2165,6 +2178,11 @@ class ComfyImageGenMod(loader.Module):
         "wf_check_input_kind": "Input kind: {}",
         "wf_check_frames": "Frames",
         "wf_check_fps": "FPS",
+        "album_picker_title": "<b>Выберите изображение из коллажа</b>",
+        "album_picker_desc": "В коллаже <code>{}</code> изображений.",
+        "album_picker_button": "Фото {}",
+        "album_picker_expired": "Выбор изображения устарел. Запустите команду ещё раз.",
+        "album_picker_unavailable": "Не удалось загрузить выбранное изображение из коллажа.",
     }
     def __init__(self):
         self.config = loader.ModuleConfig(
@@ -2316,6 +2334,7 @@ class ComfyImageGenMod(loader.Module):
         self._argset_lora_states = TTLCache(maxsize=20, ttl=1800)
         self._cshare_preview_states = TTLCache(maxsize=30, ttl=900)
         self._ctools_states = TTLCache(maxsize=30, ttl=600)
+        self._album_picker_states = TTLCache(maxsize=50, ttl=600)
         self._cdown_states = TTLCache(maxsize=30, ttl=1800)
         self._clib_states = TTLCache(maxsize=20, ttl=1800)
         self._emoji_theme_pending = TTLCache(maxsize=30, ttl=300)
@@ -2331,6 +2350,7 @@ class ComfyImageGenMod(loader.Module):
         self._trigger_generation_cooldowns = TTLCache(maxsize=1000, ttl=10)
         self._trigger_rate_limit_cooldowns = TTLCache(maxsize=1000, ttl=10)
         self._trigger_unavailable_cooldowns = TTLCache(maxsize=1000, ttl=180)
+        self._translation_cache = TTLCache(maxsize=500, ttl=3600)
         self._genai_client = None
         self._genai_api_key = None
         self._active_generations = 0
@@ -4041,6 +4061,7 @@ class ComfyImageGenMod(loader.Module):
             "max_steps_user_set": False,
             "workflow": "",
             "reject_russian_prompt": False,
+            "translate_prompt": False,
             "cloud_skip_confirm": True,
             "blacklist": [],
         }
@@ -4074,6 +4095,7 @@ class ComfyImageGenMod(loader.Module):
             "max_steps_user_set": max_steps_user_set,
             "workflow": workflow,
             "reject_russian_prompt": bool(settings.get("reject_russian_prompt", False)),
+            "translate_prompt": bool(settings.get("translate_prompt", False)),
             "cloud_skip_confirm": bool(settings.get("cloud_skip_confirm", True)),
             "blacklist": [
                 int(user_id)
@@ -6054,10 +6076,16 @@ class ComfyImageGenMod(loader.Module):
             else self.strings("ult_status_off")
         )
         russian_guard = settings.get("reject_russian_prompt", False)
+        auto_translate = settings.get("translate_prompt", False)
         cloud_skip_confirm = bool(settings.get("cloud_skip_confirm", True))
         russian_guard_status = (
             self.strings("ult_status_on")
             if russian_guard
+            else self.strings("ult_status_off")
+        )
+        auto_translate_status = (
+            self.strings("ult_status_on")
+            if auto_translate
             else self.strings("ult_status_off")
         )
         toggle_text = self._state_toggle_text(enabled)
@@ -6093,6 +6121,9 @@ class ComfyImageGenMod(loader.Module):
                 self.strings("ult_trigger_active").format(active),
                 self.strings("ult_trigger_russian_guard").format(
                     russian_guard_status
+                ),
+                self.strings("ult_trigger_auto_translate").format(
+                    auto_translate_status
                 ),
             self.strings("ult_trigger_blacklist").format(
                 len(settings.get("blacklist", []))
@@ -6187,6 +6218,15 @@ class ComfyImageGenMod(loader.Module):
                     "args": (chat_id,),
                     "style": self._state_toggle_style(russian_guard),
                     "emoji_id": self._state_toggle_emoji(russian_guard),
+                }
+            ],
+            [
+                {
+                    "text": f"{self._state_toggle_text(auto_translate)} {self.strings('ult_trigger_translate')}",
+                    "callback": self._ult_toggle_trigger_translate,
+                    "args": (chat_id,),
+                    "style": self._state_toggle_style(auto_translate),
+                    "emoji_id": self._state_toggle_emoji(auto_translate),
                 }
             ],
             [
@@ -6503,6 +6543,16 @@ class ComfyImageGenMod(loader.Module):
     async def _ult_toggle_trigger_reject_russian(self, call: InlineCall, chat_id):
         settings = self._get_trigger_settings_for_chat(chat_id)
         settings["reject_russian_prompt"] = not settings.get("reject_russian_prompt", False)
+        self._set_trigger_settings_for_chat(chat_id, settings)
+        try:
+            await call.answer(self.strings("ult_trigger_saved"))
+        except Exception:
+            pass
+        await self._ult_render_trigger_generation(call, chat_id)
+
+    async def _ult_toggle_trigger_translate(self, call: InlineCall, chat_id):
+        settings = self._get_trigger_settings_for_chat(chat_id)
+        settings["translate_prompt"] = not settings.get("translate_prompt", False)
         self._set_trigger_settings_for_chat(chat_id, settings)
         try:
             await call.answer(self.strings("ult_trigger_saved"))
@@ -19821,6 +19871,7 @@ class ComfyImageGenMod(loader.Module):
             "chat_ai": False,
             "disable_auto_ai": False,
             "inspire": False,
+            "translate_prompt": False,
         }
 
         if self._ai_enhance_enabled():
@@ -19903,6 +19954,10 @@ class ComfyImageGenMod(loader.Module):
         if re.search(r'-ai\b', args_raw, re.IGNORECASE):
             parsed["enhance_prompt"] = True
             args_raw = re.sub(r'-ai\b', '', args_raw, flags=re.IGNORECASE).strip()
+
+        if re.search(r'-t\b', args_raw, re.IGNORECASE):
+            parsed["translate_prompt"] = True
+            args_raw = re.sub(r'-t\b', '', args_raw, flags=re.IGNORECASE).strip()
 
         if re.search(r'-i\b', args_raw, re.IGNORECASE):
             parsed["inspire"] = True
@@ -20793,7 +20848,7 @@ class ComfyImageGenMod(loader.Module):
         )
 
     async def _reply_media_kind_for_message(self, message, reply, context="generation"):
-        if await self._reply_media_is_source_post(message, reply):
+        if context == "trigger" and await self._reply_media_is_source_post(message, reply):
             logger.debug(
                 "Ignoring %s reply media from source post: message_id=%s reply_id=%s",
                 context,
@@ -20802,6 +20857,107 @@ class ComfyImageGenMod(loader.Module):
             )
             return None
         return self._reply_media_kind(reply)
+
+    async def _generation_input_media(self, message, reply=None):
+        reply = reply if reply is not None else await message.get_reply_message()
+        reply_kind = await self._reply_media_kind_for_message(
+            message,
+            reply,
+            context="generation",
+        )
+        if reply_kind:
+            return reply, reply_kind
+        attached_kind = self._reply_media_kind(message)
+        if attached_kind:
+            return message, attached_kind
+        return reply, None
+
+    async def _album_images_from_reply(self, message, reply):
+        grouped_id = getattr(reply, "grouped_id", None)
+        reply_id = getattr(reply, "id", None)
+        if not grouped_id or not reply_id:
+            return []
+        try:
+            reply_id = int(reply_id)
+            chat_id = utils.get_chat_id(message)
+            messages = await self.client.get_messages(
+                chat_id,
+                ids=list(range(max(1, reply_id - 12), reply_id + 13)),
+            )
+        except Exception as error:
+            logger.debug("Could not load album messages: %s", error)
+            return []
+        if isinstance(messages, Message):
+            messages = [messages]
+        candidates = {int(reply_id): reply}
+        for item in messages or []:
+            item_id = getattr(item, "id", None)
+            if item_id is not None:
+                candidates[int(item_id)] = item
+        images = [
+            item
+            for item in candidates.values()
+            if str(getattr(item, "grouped_id", "")) == str(grouped_id)
+            and self._reply_media_kind(item) == "image"
+        ]
+        return sorted(images, key=lambda item: int(getattr(item, "id", 0) or 0))
+
+    async def _open_album_picker(self, message):
+        reply = await message.get_reply_message()
+        images = await self._album_images_from_reply(message, reply)
+        if len(images) < 2:
+            return False
+        state_id = str(uuid.uuid4())
+        self._album_picker_states[state_id] = {
+            "message": message,
+            "chat_id": utils.get_chat_id(message),
+            "image_ids": [int(item.id) for item in images],
+        }
+        buttons = []
+        row = []
+        for index in range(len(images)):
+            row.append({
+                "text": self.strings("album_picker_button").format(index + 1),
+                "callback": self._album_picker_select,
+                "args": (state_id, index),
+            })
+            if len(row) == 2:
+                buttons.append(row)
+                row = []
+        if row:
+            buttons.append(row)
+        buttons.append([{"text": self.strings("btn_cancel"), "action": "close", "style": "danger"}])
+        text = "\n\n".join([
+            self.strings("album_picker_title"),
+            self.strings("album_picker_desc").format(len(images)),
+        ])
+        rendered = await self._render_inline(message, text, buttons)
+        if not rendered:
+            self._album_picker_states.pop(state_id, None)
+            return False
+        return True
+
+    async def _album_picker_select(self, call: InlineCall, state_id, index):
+        state = self._album_picker_states.pop(state_id, None)
+        if not state:
+            return await self._safe_call_answer(
+                call,
+                self.strings("album_picker_expired"),
+                show_alert=True,
+            )
+        try:
+            image_id = state["image_ids"][int(index)]
+            image = await self.client.get_messages(state["chat_id"], ids=image_id)
+        except Exception as error:
+            logger.debug("Could not get selected album image: %s", error)
+            return await self._render_inline(call, self.strings("album_picker_unavailable"))
+        if self._reply_media_kind(image) != "image":
+            return await self._render_inline(call, self.strings("album_picker_unavailable"))
+        await self.comfy(
+            state["message"],
+            _input_media=image,
+            _resume_target=call,
+        )
 
     async def _trigger_reply_media_is_source_post(self, message, reply):
         return await self._reply_media_is_source_post(message, reply)
@@ -20826,6 +20982,43 @@ class ComfyImageGenMod(loader.Module):
 
     def _contains_cyrillic(self, text):
         return bool(re.search(r"[\u0400-\u04FF]", str(text or "")))
+
+    async def _translate_prompt_to_english(self, prompt):
+        prompt = str(prompt or "").strip()
+        if not prompt or not self._contains_cyrillic(prompt):
+            return prompt, None
+        cached = self._translation_cache.get(prompt)
+        if cached:
+            return cached, None
+        try:
+            async with self._session_get(
+                _TRANSLATE_URL,
+                params={
+                    "client": "gtx",
+                    "sl": "auto",
+                    "tl": "en",
+                    "dt": "t",
+                    "q": prompt[:4500],
+                },
+                timeout=aiohttp.ClientTimeout(total=_COMFY_TIMEOUTS["translation"]),
+            ) as response:
+                if response.status != 200:
+                    logger.warning("Prompt translation failed with HTTP %s", response.status)
+                    return None, f"HTTP {response.status}"
+                payload = await response.json(content_type=None)
+            parts = payload[0] if isinstance(payload, list) and payload else []
+            translated = "".join(
+                str(item[0])
+                for item in parts
+                if isinstance(item, list) and item and isinstance(item[0], str)
+            ).strip()
+            if not translated:
+                return None, "empty response"
+        except (aiohttp.ClientError, asyncio.TimeoutError, ValueError) as error:
+            logger.warning("Prompt translation failed: %s", error)
+            return None, type(error).__name__
+        self._translation_cache[prompt] = translated
+        return translated, None
 
     def _apply_trigger_steps_limit(self, parsed_steps, max_steps, wf_name):
         max_steps = self._coerce_int(max_steps, 40, 1, 100)
@@ -20929,6 +21122,20 @@ class ComfyImageGenMod(loader.Module):
         if limited_mode:
             parsed = self._apply_limited_generation_mode(parsed)
         positive = parsed["positive"]
+
+        if (
+            (parsed.get("translate_prompt") or settings.get("translate_prompt"))
+            and self._contains_cyrillic(positive)
+        ):
+            translated, translation_error = await self._translate_prompt_to_english(positive)
+            if translation_error:
+                if parsed.get("translate_prompt"):
+                    await _answer_trigger_preflight(self.strings("translation_failed"))
+                    return
+                logger.warning("Automatic trigger translation failed: %s", translation_error)
+            else:
+                positive = translated
+                parsed["positive"] = positive
 
         if (
             settings.get("reject_russian_prompt")
@@ -21586,12 +21793,14 @@ class ComfyImageGenMod(loader.Module):
         await self._render_cshare_preview(message, state)
 
     @loader.command(
-        ru_doc=" [промпт] - Генерация изображения. -r, -neg, -w, -h, -steps, -cfg, -seed, -denoise, -lora, -ai, -noai, -i",
+        ru_doc=" [промпт] - Генерация изображения. -r, -neg, -w, -h, -steps, -cfg, -seed, -denoise, -lora, -ai, -noai, -i, -t",
         aliases=["img"],
     )
-    async def comfy(self, message: Message):
-        """ [prompt] - Generate image. -r, -neg, -w, -h, -steps, -cfg, -seed, -denoise, -lora, -ai, -noai, -i"""
+    async def comfy(self, message: Message, _input_media=None, _resume_target=None):
+        """ [prompt] - Generate image. -r, -neg, -w, -h, -steps, -cfg, -seed, -denoise, -lora, -ai, -noai, -i, -t"""
         raw_args = utils.get_args_raw(message)
+        if _input_media is None and await self._open_album_picker(message):
+            return
         limited_mode = self._workflow_limited_mode()
         repeat_requested = bool(raw_args and re.search(r'-r\b|-repeat\b', raw_args, re.IGNORECASE))
         repeat_selected_loras = {}
@@ -21629,7 +21838,18 @@ class ComfyImageGenMod(loader.Module):
         async def _ensure_preflight(string_key="preflight_preparing"):
             nonlocal preflight_target
             if preflight_target is None:
-                preflight_target = await self._create_generation_preflight(message, string_key)
+                if _resume_target is not None:
+                    preflight_target = (
+                        await self._render_inline(
+                            _resume_target,
+                            self._format_generation_preflight_inline(
+                                self.strings(string_key)
+                            ),
+                        )
+                        or _resume_target
+                    )
+                else:
+                    preflight_target = await self._create_generation_preflight(message, string_key)
             else:
                 preflight_target = await self._update_generation_preflight(preflight_target, string_key) or preflight_target
             return preflight_target
@@ -21646,12 +21866,15 @@ class ComfyImageGenMod(loader.Module):
         image_only_workflow = False
 
         if not raw_args:
-            preloaded_reply = await message.get_reply_message()
-            preloaded_reply_kind = await self._reply_media_kind_for_message(
-                message,
-                preloaded_reply,
-                context="generation",
-            )
+            if _input_media is not None:
+                preloaded_reply = _input_media
+                preloaded_reply_kind = self._reply_media_kind(_input_media)
+            else:
+                preloaded_reply = await message.get_reply_message()
+                preloaded_reply, preloaded_reply_kind = await self._generation_input_media(
+                    message,
+                    preloaded_reply,
+                )
             if not preloaded_reply_kind:
                 return await self._safe_answer(message, self.strings("no_prompt"))
             await _ensure_preflight("preflight_workflow")
@@ -21705,6 +21928,13 @@ class ComfyImageGenMod(loader.Module):
             if parsed["negative"] is None and inspired_prompt.get("negative"):
                 parsed["negative"] = inspired_prompt["negative"]
 
+        if parsed.get("translate_prompt") and positive:
+            translated, translation_error = await self._translate_prompt_to_english(positive)
+            if translation_error:
+                return await _finish_preflight(self.strings("translation_failed"))
+            positive = translated
+            parsed["positive"] = positive
+
         if not positive and not image_only_workflow:
             return await _finish_preflight(self.strings("no_prompt"))
         if positive and positive.strip().lower() == "ничего":
@@ -21720,12 +21950,14 @@ class ComfyImageGenMod(loader.Module):
         parsed_steps = parsed["steps"]
         parsed_cfg = parsed["cfg"]
 
-        reply = preloaded_reply or await message.get_reply_message()
-        reply_kind = preloaded_reply_kind or await self._reply_media_kind_for_message(
-            message,
-            reply,
-            context="generation",
-        )
+        if _input_media is not None:
+            reply = _input_media
+            reply_kind = self._reply_media_kind(_input_media)
+        elif preloaded_reply_kind:
+            reply = preloaded_reply
+            reply_kind = preloaded_reply_kind
+        else:
+            reply, reply_kind = await self._generation_input_media(message)
         has_photo = reply_kind == "image"
         has_video = reply_kind == "video"
         input_filename = None
