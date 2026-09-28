@@ -17,8 +17,8 @@
   },
   "4": {
     "inputs": {
-      "wildcard_text": "",
-      "populated_text": "",
+      "wildcard_text": "Score_6, score_5, score_4, worst quality, low quality, jpeg artifacts, blurry, text, watermark, logo, signature, bad anatomy, bad hands, extra limbs, missing limbs, fused fingers, bad face, realistic, photorealistic, 3d, render, flat shading, unnatural shadows, aliasing, distortion, compression artifacts, corrupted, oversaturated, washed out colors",
+      "populated_text": "Score_6, score_5, score_4, worst quality, low quality, jpeg artifacts, blurry, text, watermark, logo, signature, bad anatomy, bad hands, extra limbs, missing limbs, fused fingers, bad face, realistic, photorealistic, 3d, render, flat shading, unnatural shadows, aliasing, distortion, compression artifacts, corrupted, oversaturated, washed out colors",
       "mode": "populate",
       "seed": [
         "40",
@@ -132,11 +132,11 @@
   },
   "40": {
     "inputs": {
-      "seed": 5
+      "seed": -1
     },
     "class_type": "Seed (rgthree)",
     "_meta": {
-      "title": "Seed"
+      "title": "Seed (rgthree)"
     }
   },
   "42": {
@@ -257,7 +257,7 @@
       "rescale_after_model": true,
       "rescale_method": "lanczos",
       "rescale": "by percentage",
-      "percent": 0,
+      "percent": 50,
       "width": 1024,
       "height": 1024,
       "longer_side": 1024,
