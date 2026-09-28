@@ -1,13 +1,4 @@
 {
-  "1": {
-    "inputs": {
-      "value": 1024
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "Width"
-    }
-  },
   "3": {
     "inputs": {
       "wildcard_text": "",
@@ -26,8 +17,8 @@
   },
   "4": {
     "inputs": {
-      "wildcard_text": "bad quality, worst quality, displeasing, worst detail, sketch, bad hands, bad anatomy, extra fingers, deformed, artist name, watermark, signature, patreon, twitter username",
-      "populated_text": "bad quality, worst quality, worst detail, sketch, bad hands, bad anatomy, extra fingers, deformed, artist name, watermark, signature, patreon, twitter username",
+      "wildcard_text": "Score_6, score_5, score_4, worst quality, low quality, jpeg artifacts, blurry, text, watermark, logo, signature, bad anatomy, bad hands, extra limbs, missing limbs, fused fingers, bad face, realistic, photorealistic, 3d, render, flat shading, unnatural shadows, aliasing, distortion, compression artifacts, corrupted, oversaturated, washed out colors",
+      "populated_text": "Score_6, score_5, score_4, worst quality, low quality, jpeg artifacts, blurry, text, watermark, logo, signature, bad anatomy, bad hands, extra limbs, missing limbs, fused fingers, bad face, realistic, photorealistic, 3d, render, flat shading, unnatural shadows, aliasing, distortion, compression artifacts, corrupted, oversaturated, washed out colors",
       "mode": "populate",
       "seed": [
         "40",
@@ -40,228 +31,37 @@
       "title": "NEGATIVE"
     }
   },
-  "11": {
-    "inputs": {
-      "value": 1536
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "Height"
-    }
-  },
-  "17": {
-    "inputs": {
-      "value": 28
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "Steps"
-    }
-  },
-  "18": {
-    "inputs": {
-      "value": 5
-    },
-    "class_type": "PrimitiveFloat",
-    "_meta": {
-      "title": "CFG"
-    }
-  },
-  "23": {
-    "inputs": {
-      "value": 1
-    },
-    "class_type": "easy int",
-    "_meta": {
-      "title": "Batch Size"
-    }
-  },
-  "25": {
-    "inputs": {
-      "width": [
-        "1",
-        0
-      ],
-      "height": [
-        "11",
-        0
-      ],
-      "batch_size": [
-        "23",
-        0
-      ]
-    },
-    "class_type": "EmptyLatentImage",
-    "_meta": {
-      "title": "Empty Latent Image"
-    }
-  },
-  "26": {
-    "inputs": {
-      "select": 1,
-      "sel_mode": false,
-      "input1": [
-        "25",
-        0
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
-  "27": {
-    "inputs": {
-      "PowerLoraLoaderHeaderWidget": {
-        "type": "PowerLoraLoaderHeaderWidget"
-      },
-      "➕ Add Lora": "",
-      "model": [
-        "45",
-        0
-      ],
-      "clip": [
-        "51",
-        0
-      ]
-    },
-    "class_type": "Power Lora Loader (rgthree)",
-    "_meta": {
-      "title": "Power Lora Loader (rgthree)"
-    }
-  },
-  "33": {
-    "inputs": {
-      "samples": [
-        "41",
-        0
-      ],
-      "vae": [
-        "34",
-        0
-      ]
-    },
-    "class_type": "VAEDecode",
-    "_meta": {
-      "title": "VAE Decode"
-    }
-  },
-  "34": {
-    "inputs": {
-      "select": 1,
-      "sel_mode": false,
-      "input1": [
-        "45",
-        2
-      ]
-    },
-    "class_type": "ImpactSwitch",
-    "_meta": {
-      "title": "Switch (Any)"
-    }
-  },
-  "35": {
-    "inputs": {
-      "value": 0.8
-    },
-    "class_type": "easy float",
-    "_meta": {
-      "title": "Denoise"
-    }
-  },
-  "36": {
-    "inputs": {
-      "text": [
-        "39",
-        0
-      ],
-      "clip": [
-        "27",
-        1
-      ]
-    },
-    "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "CLIP Text Encode (Positive)"
-    }
-  },
-  "38": {
-    "inputs": {
-      "text": [
-        "4",
-        0
-      ],
-      "clip": [
-        "27",
-        1
-      ]
-    },
-    "class_type": "CLIPTextEncode",
-    "_meta": {
-      "title": "CLIP Text Encode (Negative)"
-    }
-  },
-  "39": {
-    "inputs": {
-      "string": [
-        "3",
-        0
-      ],
-      "regex_pattern": "^,|,$",
-      "replace": "",
-      "case_insensitive": true,
-      "multiline": false,
-      "dotall": false,
-      "count": 0
-    },
-    "class_type": "RegexReplace",
-    "_meta": {
-      "title": "Replace Text (Regex)"
-    }
-  },
-  "40": {
-    "inputs": {
-      "seed": 2
-    },
-    "class_type": "SeedNode",
-    "_meta": {
-      "title": "Seed"
-    }
-  },
-  "41": {
+  "5": {
     "inputs": {
       "seed": [
         "40",
         0
       ],
       "steps": [
-        "17",
+        "42",
         0
       ],
       "cfg": [
-        "18",
+        "44",
         0
       ],
       "sampler_name": "euler_ancestral",
       "scheduler": "normal",
-      "denoise": [
-        "35",
-        0
-      ],
+      "denoise": 1,
       "model": [
-        "61",
+        "64",
         0
       ],
       "positive": [
-        "36",
+        "45",
         0
       ],
       "negative": [
-        "38",
+        "66",
         0
       ],
       "latent_image": [
-        "26",
+        "50",
         0
       ]
     },
@@ -270,20 +70,11 @@
       "title": "KSampler"
     }
   },
-  "45": {
+  "13": {
     "inputs": {
-      "ckpt_name": "novaAnimeXL_ilV190.safetensors"
-    },
-    "class_type": "CheckpointLoaderSimple",
-    "_meta": {
-      "title": "Load Checkpoint"
-    }
-  },
-  "50": {
-    "inputs": {
-      "filename_prefix": "ComfyUI",
+      "filename_prefix": "Anima",
       "images": [
-        "76",
+        "58",
         0
       ]
     },
@@ -292,45 +83,147 @@
       "title": "Save Image"
     }
   },
-  "51": {
+  "19": {
     "inputs": {
-      "stop_at_clip_layer": -2,
+      "clip_name": "miaomiaoHarem_anima16_txt.safetensors",
+      "type": "stable_diffusion",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "24": {
+    "inputs": {
+      "vae_name": "qwen_image_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "25": {
+    "inputs": {
+      "value": 920
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Width"
+    }
+  },
+  "34": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Height"
+    }
+  },
+  "38": {
+    "inputs": {
+      "value": 1
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Batch Size"
+    }
+  },
+  "40": {
+    "inputs": {
+      "seed": -1
+    },
+    "class_type": "Seed (rgthree)",
+    "_meta": {
+      "title": "Seed (rgthree)"
+    }
+  },
+  "42": {
+    "inputs": {
+      "value": 30
+    },
+    "class_type": "easy int",
+    "_meta": {
+      "title": "Steps"
+    }
+  },
+  "44": {
+    "inputs": {
+      "value": 4
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "CFG"
+    }
+  },
+  "45": {
+    "inputs": {
+      "text": [
+        "3",
+        0
+      ],
       "clip": [
-        "45",
-        1
+        "19",
+        0
       ]
     },
-    "class_type": "CLIPSetLastLayer",
+    "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "CLIP Set Last Layer"
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "49": {
+    "inputs": {
+      "width": [
+        "25",
+        0
+      ],
+      "height": [
+        "34",
+        0
+      ],
+      "batch_size": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image"
+    }
+  },
+  "50": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "49",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)"
+    }
+  },
+  "51": {
+    "inputs": {
+      "samples": [
+        "5",
+        0
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
     }
   },
   "54": {
-    "inputs": {
-      "scaling_factor": 1.005,
-      "model": [
-        "27",
-        0
-      ]
-    },
-    "class_type": "Epsilon Scaling",
-    "_meta": {
-      "title": "Epsilon Scaling"
-    }
-  },
-  "61": {
-    "inputs": {
-      "model": [
-        "54",
-        0
-      ]
-    },
-    "class_type": "CFGZeroStar",
-    "_meta": {
-      "title": "CFGZeroStar"
-    }
-  },
-  "71": {
     "inputs": {
       "model_name": "RealESRGAN_x2.pth",
       "rescale_after_model": true,
@@ -345,11 +238,11 @@
       "link_id": 0,
       "save_prefix": "ComfyUI",
       "image": [
-        "33",
+        "51",
         0
       ],
       "vae": [
-        "34",
+        "24",
         0
       ]
     },
@@ -358,13 +251,55 @@
       "title": "HiresFix"
     }
   },
-  "75": {
+  "55": {
+    "inputs": {
+      "model_name": "RealESRGAN_x2.pth",
+      "rescale_after_model": true,
+      "rescale_method": "lanczos",
+      "rescale": "by percentage",
+      "percent": 50,
+      "width": 1024,
+      "height": 1024,
+      "longer_side": 1024,
+      "crop": "disabled",
+      "image_output": "Hide",
+      "link_id": 0,
+      "save_prefix": "ComfyUI",
+      "image": [
+        "54",
+        1
+      ],
+      "vae": [
+        "24",
+        0
+      ]
+    },
+    "class_type": "easy hiresFix",
+    "_meta": {
+      "title": "HiresFix"
+    }
+  },
+  "57": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 1.5,
+      "image": [
+        "55",
+        1
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Upscale Image By"
+    }
+  },
+  "58": {
     "inputs": {
       "auto_detect": "enable",
       "compression_level": 100,
       "image": [
-        "71",
-        1
+        "57",
+        0
       ]
     },
     "class_type": "JPEG artifacts removal FBCNN",
@@ -372,18 +307,30 @@
       "title": "Compression Removal"
     }
   },
-  "76": {
+  "64": {
     "inputs": {
-      "upscale_method": "lanczos",
-      "scale_by": 2,
-      "image": [
-        "75",
+      "unet_name": "miaomiaoHarem_anima16.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "66": {
+    "inputs": {
+      "text": [
+        "4",
+        0
+      ],
+      "clip": [
+        "19",
         0
       ]
     },
-    "class_type": "ImageScaleBy",
+    "class_type": "CLIPTextEncode",
     "_meta": {
-      "title": "Upscale Image By"
+      "title": "CLIP Text Encode (Prompt)"
     }
   }
 }
