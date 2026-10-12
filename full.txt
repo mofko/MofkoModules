@@ -7,3 +7,4 @@ SelfDestruct
 РАТКОВiрусиЭпштеiнHeta
 ComfyImageGen
 CompareModules
+GodChat
