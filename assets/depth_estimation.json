@@ -1,0 +1,219 @@
+{
+  "12": {
+    "inputs": {
+      "image": "dd8d0d877f2d4c8f8b90e56296280ad363fd316f9675a4609176ea3ae71943c1.jpg"
+    },
+    "class_type": "LoadImage",
+    "_meta": {
+      "title": "Load Image"
+    }
+  },
+  "21": {
+    "inputs": {
+      "compare_view": {
+        "__value__": [
+          "",
+          ""
+        ]
+      },
+      "image_a": [
+        "12",
+        0
+      ],
+      "image_b": [
+        "23",
+        0
+      ]
+    },
+    "class_type": "ImageCompare",
+    "_meta": {
+      "title": "Compare Images"
+    }
+  },
+  "23": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB",
+      "images": [
+        "24:17",
+        0
+      ]
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "Save Image (Advanced)"
+    }
+  },
+  "24:1": {
+    "inputs": {
+      "unet_name": "qwen_image_edit_2509_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    },
+    "class_type": "UNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model"
+    }
+  },
+  "24:7": {
+    "inputs": {
+      "lora_name": "marigold_v2_depth_log_stage2.safetensors",
+      "strength_model": 1,
+      "model": [
+        "24:1",
+        0
+      ]
+    },
+    "class_type": "LoraLoaderModelOnly",
+    "_meta": {
+      "title": "Load LoRA"
+    }
+  },
+  "24:8": {
+    "inputs": {
+      "shift": 1.73,
+      "sampling": "img_to_img_velocity",
+      "model": [
+        "24:7",
+        0
+      ]
+    },
+    "class_type": "ModelSamplingAuraFlow",
+    "_meta": {
+      "title": "ModelSamplingAuraFlow"
+    }
+  },
+  "24:9": {
+    "inputs": {
+      "conditioning_name": "marigold_v2_depth_conditioning.safetensors"
+    },
+    "class_type": "ConditioningLoader",
+    "_meta": {
+      "title": "Load Conditioning"
+    }
+  },
+  "24:14": {
+    "inputs": {
+      "vae_name": "marigold_v2_depth_log_stage2_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "24:19": {
+    "inputs": {},
+    "class_type": "DisableNoise",
+    "_meta": {
+      "title": "DisableNoise"
+    }
+  },
+  "24:18": {
+    "inputs": {
+      "sampler_name": "euler"
+    },
+    "class_type": "KSamplerSelect",
+    "_meta": {
+      "title": "KSamplerSelect"
+    }
+  },
+  "24:10": {
+    "inputs": {
+      "model": [
+        "24:8",
+        0
+      ],
+      "conditioning": [
+        "24:9",
+        0
+      ]
+    },
+    "class_type": "BasicGuider",
+    "_meta": {
+      "title": "Basic Guider"
+    }
+  },
+  "24:20": {
+    "inputs": {
+      "sigmas": "0.5, 0"
+    },
+    "class_type": "ManualSigmas",
+    "_meta": {
+      "title": "ManualSigmas"
+    }
+  },
+  "24:3": {
+    "inputs": {
+      "noise": [
+        "24:19",
+        0
+      ],
+      "guider": [
+        "24:10",
+        0
+      ],
+      "sampler": [
+        "24:18",
+        0
+      ],
+      "sigmas": [
+        "24:20",
+        0
+      ],
+      "latent_image": [
+        "24:13",
+        0
+      ]
+    },
+    "class_type": "SamplerCustomAdvanced",
+    "_meta": {
+      "title": "SamplerCustomAdvanced"
+    }
+  },
+  "24:13": {
+    "inputs": {
+      "pixels": [
+        "12",
+        0
+      ],
+      "vae": [
+        "24:14",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "24:17": {
+    "inputs": {
+      "prediction": "depth",
+      "image": [
+        "24:15",
+        0
+      ]
+    },
+    "class_type": "MarigoldV2PostProcess",
+    "_meta": {
+      "title": "Marigold V2 Post-Process"
+    }
+  },
+  "24:15": {
+    "inputs": {
+      "samples": [
+        "24:3",
+        0
+      ],
+      "vae": [
+        "24:14",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  }
+}
