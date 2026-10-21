@@ -1,0 +1,778 @@
+{
+  "6": {
+    "inputs": {
+      "wildcard": "",
+      "Select to add LoRA": "Select the LoRA to add to the text",
+      "Select to add Wildcard": "Select the Wildcard to add to the text",
+      "model": [
+        "40",
+        0
+      ],
+      "clip": [
+        "54",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "43",
+        0
+      ],
+      "bbox_detector": [
+        "32",
+        0
+      ],
+      "sam_model_opt": [
+        "7",
+        0
+      ]
+    },
+    "class_type": "ToDetailerPipe",
+    "_meta": {
+      "title": "ToDetailerPipe",
+      "cnr_id": "comfyui-impact-pack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Pack",
+      "ver": "b3a815b43d987022542715b351ce3c2c02c902db"
+    }
+  },
+  "7": {
+    "inputs": {
+      "model_name": "sam_vit_b_01ec64.pth",
+      "device_mode": "AUTO"
+    },
+    "class_type": "SAMLoader",
+    "_meta": {
+      "title": "SAMLoader (Impact)",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "8.25.1"
+    }
+  },
+  "8": {
+    "inputs": {
+      "model_name": "bbox/hand_yolov8s.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Subpack",
+      "ver": "f5c9e24148d5c3b80a12a0edcaa6c4fb7327fff2"
+    }
+  },
+  "10": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "UltralyticsDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Subpack",
+      "ver": "74db20c95eca152a6d686c914edc0ef4e4762cb8"
+    }
+  },
+  "13": {
+    "inputs": {
+      "wildcard": "[CONCAT] hand, perfect hands",
+      "Select to add LoRA": "Select the LoRA to add to the text",
+      "Select to add Wildcard": "Select the Wildcard to add to the text",
+      "detailer_pipe": [
+        "6",
+        0
+      ],
+      "model": [
+        "40",
+        0
+      ],
+      "clip": [
+        "54",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "43",
+        0
+      ],
+      "bbox_detector": [
+        "8",
+        0
+      ]
+    },
+    "class_type": "EditDetailerPipe",
+    "_meta": {
+      "title": "Edit DetailerPipe",
+      "cnr_id": "comfyui-impact-pack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Pack",
+      "ver": "df330c1b06c094b2b7c4c606fb6f6dac48d39864"
+    }
+  },
+  "15": {
+    "inputs": {
+      "wildcard": "[CONCAT] {face|face,detailed face}",
+      "Select to add LoRA": "Select the LoRA to add to the text",
+      "Select to add Wildcard": "Select the Wildcard to add to the text",
+      "detailer_pipe": [
+        "6",
+        0
+      ],
+      "model": [
+        "40",
+        0
+      ],
+      "clip": [
+        "54",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "43",
+        0
+      ],
+      "bbox_detector": [
+        "10",
+        0
+      ]
+    },
+    "class_type": "EditDetailerPipe",
+    "_meta": {
+      "title": "Edit DetailerPipe",
+      "cnr_id": "comfyui-impact-pack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Pack",
+      "ver": "df330c1b06c094b2b7c4c606fb6f6dac48d39864"
+    }
+  },
+  "19": {
+    "inputs": {
+      "value": 1536
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "Max Size",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.57"
+    }
+  },
+  "23": {
+    "inputs": {
+      "value": false
+    },
+    "class_type": "PrimitiveBoolean",
+    "_meta": {
+      "title": "Tiled Detailer",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.59"
+    }
+  },
+  "25": {
+    "inputs": {
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": [
+        "19",
+        0
+      ],
+      "seed": 949618416105771,
+      "steps": 14,
+      "cfg": 6,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.4,
+      "feather": 16,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.5,
+      "bbox_dilation": 8,
+      "bbox_crop_factor": [
+        "31",
+        0
+      ],
+      "sam_detection_hint": "none",
+      "sam_dilation": 4,
+      "sam_threshold": 0.9,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 16,
+      "refiner_ratio": 0.2,
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 64,
+      "tiled_encode": [
+        "23",
+        0
+      ],
+      "tiled_decode": [
+        "23",
+        0
+      ],
+      "image": [
+        "428402394092797",
+        0
+      ],
+      "detailer_pipe": [
+        "13",
+        0
+      ]
+    },
+    "class_type": "FaceDetailerPipe",
+    "_meta": {
+      "title": "HandDetailer (pipe)",
+      "cnr_id": "comfyui-impact-pack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Pack",
+      "ver": "df330c1b06c094b2b7c4c606fb6f6dac48d39864"
+    }
+  },
+  "27": {
+    "inputs": {
+      "guide_size": 512,
+      "guide_size_for": true,
+      "max_size": [
+        "19",
+        0
+      ],
+      "seed": 1019158333865838,
+      "steps": 14,
+      "cfg": 6,
+      "sampler_name": "euler_ancestral",
+      "scheduler": "normal",
+      "denoise": 0.26,
+      "feather": 16,
+      "noise_mask": true,
+      "force_inpaint": true,
+      "bbox_threshold": 0.4,
+      "bbox_dilation": 8,
+      "bbox_crop_factor": [
+        "31",
+        0
+      ],
+      "sam_detection_hint": "none",
+      "sam_dilation": 4,
+      "sam_threshold": 0.9,
+      "sam_bbox_expansion": 0,
+      "sam_mask_hint_threshold": 0.7,
+      "sam_mask_hint_use_negative": "False",
+      "drop_size": 16,
+      "refiner_ratio": 0.2,
+      "cycle": 1,
+      "inpaint_model": false,
+      "noise_mask_feather": 64,
+      "tiled_encode": [
+        "23",
+        0
+      ],
+      "tiled_decode": [
+        "23",
+        0
+      ],
+      "image": [
+        "25",
+        0
+      ],
+      "detailer_pipe": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "FaceDetailerPipe",
+    "_meta": {
+      "title": "FaceDetailer (pipe)",
+      "cnr_id": "comfyui-impact-pack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Pack",
+      "ver": "df330c1b06c094b2b7c4c606fb6f6dac48d39864"
+    }
+  },
+  "30": {
+    "inputs": {
+      "ckpt_name": "miaomiaoRealskin_epsV14.safetensors"
+    },
+    "class_type": "CheckpointLoaderSimple",
+    "_meta": {
+      "title": "Load Checkpoint",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.39"
+    }
+  },
+  "31": {
+    "inputs": {
+      "value": 2.5
+    },
+    "class_type": "PrimitiveFloat",
+    "_meta": {
+      "title": "BBOX Crop Factor",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.57"
+    }
+  },
+  "32": {
+    "inputs": {
+      "model_name": "bbox/face_yolov8m.pt"
+    },
+    "class_type": "UltralyticsDetectorProvider",
+    "_meta": {
+      "title": "DefaultDetectorProvider",
+      "cnr_id": "comfyui-impact-subpack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Subpack",
+      "ver": "f5c9e24148d5c3b80a12a0edcaa6c4fb7327fff2"
+    }
+  },
+  "36": {
+    "inputs": {
+      "width": 1024,
+      "height": 1536,
+      "batch_size": 1
+    },
+    "class_type": "EmptyLatentImage",
+    "_meta": {
+      "title": "Empty Latent Image",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.26"
+    }
+  },
+  "37": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "36",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "8.28.2"
+    }
+  },
+  "38": {
+    "inputs": {
+      "samples": [
+        "45",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.26"
+    }
+  },
+  "39": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "30",
+        2
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)",
+      "cnr_id": "comfyui-impact-pack",
+      "aux_id": "ltdrdata/ComfyUI-Impact-Pack",
+      "ver": "e22f68fb97115b24ddf35d3d8801cc99fdb8af8d"
+    }
+  },
+  "40": {
+    "inputs": {
+      "strength": 1,
+      "model": [
+        "68",
+        0
+      ]
+    },
+    "class_type": "DifferentialDiffusion",
+    "_meta": {
+      "title": "Differential Diffusion",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.63"
+    }
+  },
+  "42": {
+    "inputs": {
+      "text": [
+        "46",
+        0
+      ],
+      "clip": [
+        "54",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive)",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.75"
+    }
+  },
+  "43": {
+    "inputs": {
+      "text": [
+        "101",
+        0
+      ],
+      "clip": [
+        "54",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Negative)",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.75"
+    }
+  },
+  "44": {
+    "inputs": {
+      "string_a": [
+        "100",
+        0
+      ],
+      "string_b": "",
+      "delimiter": ","
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.61"
+    }
+  },
+  "45": {
+    "inputs": {
+      "seed": 9,
+      "steps": 30,
+      "cfg": 5,
+      "sampler_name": "dpmpp_2m_sde",
+      "scheduler": "karras",
+      "denoise": 1,
+      "model": [
+        "68",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "43",
+        0
+      ],
+      "latent_image": [
+        "37",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "KSampler",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.46"
+    }
+  },
+  "46": {
+    "inputs": {
+      "string": [
+        "44",
+        0
+      ],
+      "regex_pattern": "^,|,$",
+      "replace": "",
+      "case_insensitive": true,
+      "multiline": false,
+      "dotall": false,
+      "count": 0
+    },
+    "class_type": "RegexReplace",
+    "_meta": {
+      "title": "Replace Text (Regex)",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.61"
+    }
+  },
+  "47": {
+    "inputs": {
+      "string_a": [
+        "46",
+        0
+      ],
+      "string_b": "",
+      "delimiter": " "
+    },
+    "class_type": "StringConcatenate",
+    "_meta": {
+      "title": "Concatenate Text",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.61"
+    }
+  },
+  "48": {
+    "inputs": {
+      "id": 30,
+      "widget_name": "ckpt_name",
+      "return_all": false,
+      "node_title": "",
+      "allowed_float_decimals": 2
+    },
+    "class_type": "WidgetToString",
+    "_meta": {
+      "title": "Widget To String",
+      "cnr_id": "comfyui-kjnodes",
+      "ver": "876b6b11643c2fb81c1840659ee8bf00c00c6baf"
+    }
+  },
+  "54": {
+    "inputs": {
+      "stop_at_clip_layer": -2,
+      "clip": [
+        "30",
+        1
+      ]
+    },
+    "class_type": "CLIPSetLastLayer",
+    "_meta": {
+      "title": "CLIP Set Last Layer",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.26"
+    }
+  },
+  "59": {
+    "inputs": {
+      "scaling_factor": 1.005,
+      "model": [
+        "30",
+        0
+      ]
+    },
+    "class_type": "Epsilon Scaling",
+    "_meta": {
+      "title": "Epsilon Scaling",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.66"
+    }
+  },
+  "68": {
+    "inputs": {
+      "model": [
+        "59",
+        0
+      ]
+    },
+    "class_type": "CFGZeroStar",
+    "_meta": {
+      "title": "CFGZeroStar",
+      "cnr_id": "comfy-core",
+      "ver": "0.3.75"
+    }
+  },
+  "70": {
+    "inputs": {
+      "method": "mkl",
+      "strength": 1,
+      "multithread": true,
+      "image_target": [
+        "27",
+        0
+      ],
+      "image_ref": [
+        "428402394092797",
+        0
+      ]
+    },
+    "class_type": "ColorMatchV2",
+    "_meta": {
+      "title": "ColorMatchV2",
+      "cnr_id": "comfyui-kjnodes",
+      "ver": "3f20054214fec9f9234fd3841ae6f1e4287948f6"
+    }
+  },
+  "74": {
+    "inputs": {
+      "select": 1,
+      "sel_mode": false,
+      "input1": [
+        "70",
+        0
+      ],
+      "input2": [
+        "70",
+        0
+      ]
+    },
+    "class_type": "ImpactSwitch",
+    "_meta": {
+      "title": "Switch (Any)",
+      "cnr_id": "comfyui-impact-pack",
+      "ver": "429d0159ad429e64d2b3916e6e7be9c22d025c3c"
+    }
+  },
+  "98": {
+    "inputs": {
+      "filename_prefix": "ComfyUI",
+      "format": "png",
+      "format.bit_depth": "8-bit",
+      "format.input_color_space": "sRGB",
+      "images": [
+        "74",
+        0
+      ]
+    },
+    "class_type": "SaveImageAdvanced",
+    "_meta": {
+      "title": "Save Image (Advanced)"
+    }
+  },
+  "99": {
+    "inputs": {
+      "upscale_method": "lanczos",
+      "scale_by": 0.38,
+      "image": [
+        "3128543227779451",
+        0
+      ]
+    },
+    "class_type": "ImageScaleBy",
+    "_meta": {
+      "title": "Hires: downscale to 1.5x",
+      "cnr_id": "comfy-core",
+      "ver": "0.22.0"
+    }
+  },
+  "100": {
+    "inputs": {
+      "value": ""
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "User Prompt",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "101": {
+    "inputs": {
+      "value": "worst quality, low quality, normal quality, lowres, watermark, monochrome, grayscale, ugly, blurry, Tan skin, dark skin, black skin, skin spots, skin blemishes, age spot, glans, disabled, distorted, bad anatomy, morbid, malformation, amputation, bad proportions, twins, missing body, fused body, extra head, poorly drawn face, bad eyes, deformed eye, unclear eyes, cross-eyed, long neck, malformed limbs, extra limbs, extra arms, missing arms, bad tongue, strange fingers, mutated hands, missing hands, poorly drawn hands, extra hands, fused hands, connected hand, bad hands, wrong fingers, missing fingers, extra fingers, 4 fingers, 3 fingers, deformed hands, extra legs, bad legs, many legs, more than two legs, bad feet, wrong feet, extra feets, pale skin, big forehead, shiny skin, (pale skin:1.3), (white skin:1.4)\n"
+    },
+    "class_type": "PrimitiveStringMultiline",
+    "_meta": {
+      "title": "User Prompt",
+      "cnr_id": "comfy-core",
+      "ver": "0.25.0"
+    }
+  },
+  "85616864820441": {
+    "inputs": {
+      "model_name": "RealESRGAN_x4plus_anime_6B.pth"
+    },
+    "class_type": "UpscaleModelLoader",
+    "_meta": {
+      "title": "Load Upscale Model"
+    }
+  },
+  "3128543227779451": {
+    "inputs": {
+      "upscale_model": [
+        "85616864820441",
+        0
+      ],
+      "image": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "ImageUpscaleWithModel",
+    "_meta": {
+      "title": "Upscale Image (using Model)"
+    }
+  },
+  "371616799559875": {
+    "inputs": {
+      "pixels": [
+        "99",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "VAEEncode",
+    "_meta": {
+      "title": "VAE Encode"
+    }
+  },
+  "600024332807831": {
+    "inputs": {
+      "seed": 9,
+      "steps": 20,
+      "cfg": 5,
+      "sampler_name": "euler",
+      "scheduler": "normal",
+      "denoise": 0.38,
+      "model": [
+        "68",
+        0
+      ],
+      "positive": [
+        "42",
+        0
+      ],
+      "negative": [
+        "43",
+        0
+      ],
+      "latent_image": [
+        "371616799559875",
+        0
+      ]
+    },
+    "class_type": "KSampler",
+    "_meta": {
+      "title": "Hires KSampler"
+    }
+  },
+  "428402394092797": {
+    "inputs": {
+      "samples": [
+        "600024332807831",
+        0
+      ],
+      "vae": [
+        "39",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "Hires VAE Decode"
+    }
+  }
+}
