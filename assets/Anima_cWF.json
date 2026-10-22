@@ -13,7 +13,7 @@
   },
   "3": {
     "inputs": {
-      "wildcard_text": "@nyanyastyle, @goosing, @goosestyle, r1ac4r, masterpiece,best quality,score_9,score_8,score_7, absurdres, newest, very aesthetic, amazing quality,highres,sensitive, 1girl, adult, foxgirl, animal ears, fox ears, fox tail, long pink hair, pink eyes, solo, working curved dildo, thighs open, camisole off, breasts, focused expression, Camisole gone, she works the curved toy with thighs open, focused more than frantic. Breasts shift with each press. The glass and the knot still unused, waiting nearer her knee. <lora:Riacarhcu_Anima:0.75> <lora:Goosestyle:0.25> <lora:Goosing:0.6> <lora:nyanyastyle_v1.5-step00000800:1.2>",
+      "wildcard_text": "",
       "populated_text": "newest, masterpiece, best quality, score_7,\n1girl, solo, looking at viewer,",
       "mode": "populate",
       "seed": [
