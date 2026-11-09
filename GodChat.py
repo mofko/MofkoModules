@@ -1,4 +1,4 @@
-__version__ = (1, 0, 0)
+__version__ = (1, 1, 0)
 # meta developer: @mofkomodules
 # Name: GodChat
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/godchat_banner.png?v=20261012
@@ -8,7 +8,7 @@ __version__ = (1, 0, 0)
 # meta link: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/GodChat.py
 # scope: heroku_min 2.1.0
 # scope:inline
-# requires: pygments regex rlottie-python==1.3.8 opencv-python-headless imageio-ffmpeg
+# requires: pygments regex rlottie-python==1.3.8 opencv-python-headless
 
 import asyncio
 import base64
@@ -24,6 +24,7 @@ import os
 import random
 import re
 import secrets
+import sqlite3
 import time
 import tempfile
 import traceback
@@ -119,6 +120,11 @@ _PANIC_DEFAULTS = {
 }
 _BULK_KICK_TTL = 5 * 60
 _MAX_BULK_KICK_JOBS = 16
+_TKICK_TTL = 15 * 60
+_TKICK_FORM_TTL = 2 * 60 * 60
+_TKICK_PAGE_SIZE = 10
+_TKICK_SCAN_LIMIT = 10000
+_MAX_TKICK_JOBS = 16
 _JOIN_REQUEST_CONFIRM_TTL = 5 * 60
 _BROKEN_STATE_NAMESPACE = "MofkoGodChat"
 _PERSISTENT_STATE_KEYS = (
@@ -127,6 +133,8 @@ _PERSISTENT_STATE_KEYS = (
     "join_request_jobs",
     "delete_mutes",
     "guest_bot_blocks",
+    "channel_blocks",
+    "private_inline_blocks",
     "guest_bot_member_blocks",
     "sticker_bans",
     "media_bans",
@@ -180,6 +188,10 @@ _RANDOM_EMOJI = {
 }
 
 
+class _GetMsgStopped(Exception):
+    pass
+
+
 class _GQuoteError(Exception):
     pass
 
@@ -193,7 +205,7 @@ LIMITS_UNAVAILABLE = False
 if sys.platform.startswith('linux') and __name__ == '__main__':
     try:
         import resource
-        for limit, budget in ((resource.RLIMIT_AS, 512*1024*1024), (resource.RLIMIT_CPU, 140)):
+        for limit, budget in ((resource.RLIMIT_AS, 512*1024*1024), (resource.RLIMIT_CPU, 140), (resource.RLIMIT_CORE, 0)):
             soft, hard = resource.getrlimit(limit)
             ceiling = budget if hard == resource.RLIM_INFINITY else min(budget, hard)
             resource.setrlimit(limit, (min(soft,ceiling) if soft != resource.RLIM_INFINITY else ceiling, hard))
@@ -201,6 +213,22 @@ if sys.platform.startswith('linux') and __name__ == '__main__':
         LIMITS_UNAVAILABLE = True
 import regex
 from PIL import Image, ImageDraw, ImageFont, ImageColor, ImageOps, features
+
+_TGS_DECODER = r"""
+import sys
+from pathlib import Path
+from rlottie_python import LottieAnimation
+side=int(sys.argv[2])
+with LottieAnimation.from_data(Path(sys.argv[1]).read_text(encoding='utf8')) as animation:
+    total=int(animation.lottie_animation_get_totalframe())
+    image=None
+    for frame in dict.fromkeys((min(12,max(0,total-1)),0,max(0,total//2))):
+        image=animation.render_pillow_frame(frame,width=side,height=side)
+        if image.getchannel('A').getbbox(): break
+    if image is None or not image.getchannel('A').getbbox():
+        raise ValueError('empty_animation_frame')
+    image.save(sys.argv[3],format='PNG')
+"""
 
 class Node:
     def __init__(self, tag='root', attrs=()):
@@ -260,6 +288,7 @@ class Painter:
         self.muted = '#9b9fa3' if self.dark else '#607180'
         self.code = '#272b2f' if self.dark else '#f0f3f5'
         self.warnings, self.fonts, self.images, self.glyphs = [], {}, {}, {}
+        self.failed_animations = set()
         self.image_bytes = 0
         self.message_id, self.document_id = None, None
         self.raqm = features.check_feature('raqm')
@@ -271,9 +300,9 @@ class Painter:
                     exception=type(error).__name__ if error else None)
         if item not in self.warnings:
             self.warnings.append(item)
-    def checkpoint(self, stage):
+    def checkpoint(self, stage, **details):
         self.stage = stage
-        self.progress.write_text(json.dumps(dict(stage=stage, message=self.message_id, document=self.document_id)), encoding='utf8')
+        self.progress.write_text(json.dumps(dict(stage=stage, message=self.message_id, document=self.document_id, **details)), encoding='utf8')
     def path(self, uri):
         parsed = urlsplit(uri)
         if parsed.scheme != 'file' or parsed.netloc:
@@ -327,6 +356,17 @@ class Painter:
         else: found=self.glyphs[key]
         if found=='missing': self.warn('text_glyph_missing')
         return dict(style,family=found) if found and found!='missing' else style
+    @staticmethod
+    def mono_columns(text):
+        columns=0
+        for cluster in regex.findall(r'\X',text):
+            if cluster=='\n': continue
+            if cluster=='\t': columns+=4; continue
+            base=next((char for char in cluster if not unicodedata.combining(char)),cluster[0])
+            columns+=2 if (unicodedata.east_asian_width(base) in ('W','F')
+                           or '\ufe0f' in cluster
+                           or 0x1f000 <= ord(base) <= 0x1ffff) else 1
+        return columns
     def cached_image(self, key, producer):
         if key not in self.images:
             image = producer().convert('RGBA')
@@ -340,6 +380,32 @@ class Painter:
             self.images[key] = Raster(path,image.size)
             image.close()
         return self.images[key]
+    def tgs_frame(self, path, size):
+        key=str(path)
+        if key in self.failed_animations:
+            raise ValueError('tgs_decoder_failed')
+        side=min(1600,max(1,round(size*self.scale)))
+        output=Path(self.p['output'])/('tgs-'+hashlib.sha256((key+':'+str(side)).encode()).hexdigest()+'.png')
+        self.checkpoint('decode_tgs',asset=path.name,decoder='rlottie')
+        try:
+            process=subprocess.run([sys.executable,'-c',_TGS_DECODER,str(path),str(side),str(output)],
+                                   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=12)
+            if process.returncode:
+                code='tgs_decoder_native_abort' if process.returncode in (-6,134) else 'tgs_decoder_failed'
+                self.warn(code)
+                raise ValueError(code)
+            with Image.open(output) as source:
+                if source.size!=(side,side): raise ValueError('tgs_frame_size_invalid')
+                return source.convert('RGBA')
+        except subprocess.TimeoutExpired:
+            self.failed_animations.add(key)
+            self.warn('tgs_decoder_timeout')
+            raise
+        except Exception:
+            self.failed_animations.add(key)
+            raise
+        finally:
+            output.unlink(missing_ok=True)
     def asset(self, node, size, color):
         self.document_id = node.a.get('data-document')
         uri = node.a.get('data-tgs') or node.a.get('src')
@@ -347,22 +413,14 @@ class Painter:
         key = (uri, round(size*self.scale), color if node.a.get('data-tint') else '')
         def produce():
             path = self.path(uri)
-            self.checkpoint('decode_asset')
+            self.checkpoint('decode_asset',asset=path.name)
             if path.suffix == '.json':
-                from rlottie_python import LottieAnimation
                 data = json.loads(path.read_text(encoding='utf8'))
                 if any(a.get('p') or a.get('u') for a in data.get('assets', [])):
                     raise ValueError('tgs_external_asset')
-                animation = LottieAnimation.from_data(json.dumps(data))
-                total = int(animation.lottie_animation_get_totalframe())
-                image = None
-                for frame in dict.fromkeys((min(12,max(0,total-1)), 0, max(0,total//2))):
-                    image = animation.render_pillow_frame(frame, width=round(size*self.scale), height=round(size*self.scale))
-                    if image.getchannel('A').getbbox(): break
-                if image is None or not image.getchannel('A').getbbox():
-                    raise ValueError('empty_animation_frame')
+                image = self.tgs_frame(path,size)
             elif path.suffix in ('.webm','.mp4'):
-                ffmpeg = shutil.which('ffmpeg')
+                ffmpeg = self.p.get('ffmpeg') or shutil.which('ffmpeg')
                 if not ffmpeg: raise ValueError('ffmpeg_missing')
                 output = self.root / 'video-frame.png'
                 command = [ffmpeg,'-v','error','-nostdin','-threads','1']
@@ -385,6 +443,7 @@ class Painter:
                 solid = Image.new('RGBA', image.size, color)
                 solid.putalpha(image.getchannel('A'))
                 image = solid
+            self.checkpoint('decode_asset_done')
             return image
         try:
             return self.cached_image(key, produce)
@@ -419,6 +478,8 @@ class Painter:
                 for part in regex.findall(r'\X',node):
                     if part == '\n': result.append(('newline',None,style)); continue
                     if part == '\t': part = '    '
+                    if style.get('mono_advance') and part in '─│┌┐└┘╭╮╰╯├┤┬┴┼━┃█▉▊▋▌▍▎▏▐':
+                        result.append(('code-glyph',part,style)); continue
                     if part == '╰':
                         result.append(('corner',part,style)); continue
                     emoji = None
@@ -486,6 +547,12 @@ class Painter:
             else: merged.append((kind,value,st))
         return merged
     def atom_width(self,kind,value,style):
+        advance=style.get('mono_advance')
+        if advance:
+            if kind=='text': return advance*self.mono_columns(value)
+            if kind=='image': return advance*2
+            if kind=='corner': return advance
+            if kind=='code-glyph': return advance
         if kind=='image': return style['image_size']
         if kind=='corner': return style.get('size',16)*.75
         if kind in ('star','file-icon','forward-icon','views-icon','pin-icon'): return style.get('size',16)
@@ -550,6 +617,8 @@ class Painter:
                     box.ops.append(('star',x,y,(extent,st['color'])))
                 elif kind=='corner':
                     box.ops.append(('corner',x,y,(extent,st['color'])))
+                elif kind=='code-glyph':
+                    box.ops.append(('code-glyph',x,box.h,(value,extent,height,st['color'])))
                 elif kind in ('file-icon','forward-icon','views-icon','pin-icon'):
                     box.ops.append((kind,x,y,(extent,st['color'])))
                 elif kind=='badge':
@@ -581,6 +650,7 @@ class Painter:
     def block(self,node,width,style):
         if node.tag in ('style','script','meta'): return Box(width)
         style=dict(style)
+        if node.tag=='details': return self.details_card(node,width,style)
         if node.tag.startswith('h') and node.tag[1:].isdigit(): style.update(size={1:26,2:23,3:20}.get(int(node.tag[1:]),18),bold=True)
         if node.has('meta') or node.has('caption') or node.has('via') or node.has('forward') or node.has('day') or node.has('service'):
             style.update(size=12,color=self.muted)
@@ -748,37 +818,65 @@ class Painter:
             return box
         if node.tag=='pre':
             code_style=dict(style,mono=True,size=13)
+            flat_code=node.has('rich-code') or node.has('message-code')
+            if flat_code:
+                code_style['mono_advance']=self.measure('0',dict(code_style,family='mono'))
             language=next((c for c in node.children if isinstance(c,Node) and c.has('language')),None)
             source=[c for c in node.children if c is not language]
+            show_language=bool(language and language.text() and not flat_code)
             content_width=min(width,max(80,self.inline_width(source,code_style)+16))
-            if language and language.text():
+            if show_language:
                 content_width=min(width,max(content_width,self.inline_width(language.children,dict(code_style,size=11))+16))
+            if flat_code: content_width=width
             body=self.inline(source,max(24,content_width-16),code_style)
-            header=self.inline(language.children,max(24,content_width-16),dict(code_style,size=11,color=self.fg)) if language and language.text() else Box(content_width)
+            header=self.inline(language.children,max(24,content_width-16),dict(code_style,size=11,color=self.fg)) if show_language else Box(content_width)
             hh=header.h+4 if header.h else 0
             box=Box(width,hh+body.h+10)
-            box.ops.append(('rect',0,2,(content_width,hh+body.h+6,'#0e1012' if self.dark else '#f0f2f4',4)))
+            background=(self.tint(style.get('bubble_color',self.bubble),'#000000',.12)
+                        if flat_code and self.dark else
+                        self.tint(style.get('bubble_color',self.bubble),'#ffffff',.12)
+                        if flat_code else '#0e1012' if self.dark else '#f0f2f4')
+            bleed=style.get('rich_code_bleed',0) if flat_code else 0
+            box.ops.append(('rect',-bleed,2,(content_width+2*bleed,hh+body.h+6,
+                                              background,0 if bleed else 4)))
             if hh:
                 box.ops.append(('rect',0,2,(content_width,hh,self.tint(self.bubble,style['accent'],.35),3)))
                 box.add(header,8,4)
             box.add(body,8,hh+5)
-            box.ops.append(('rect',0,2,(3,hh+body.h+6,style['accent'],1)))
+            if not flat_code: box.ops.append(('rect',0,2,(3,hh+body.h+6,style['accent'],1)))
             return box
         if node.has('buttons') or node.has('reactions'):
             rich=node.has('rich-buttons')
+            items=[child for child in node.children if isinstance(child,Node)]
+            if not items: return Box(width)
+            gap=5
+            align=node.a.get('data-align','left') if rich else 'left'
+            fill_row=node.has('buttons') and align=='left'
+            cell=max(1,(width-gap*(len(items)-1))/len(items)) if fill_row else None
             box=Box(width); x=0; y=5 if rich else 0; lineh=0
-            for child in node.children:
-                if not isinstance(child,Node): continue
+            for child in items:
                 button_color={'primary':'#3567a0','danger':'#a84545','success':'#327a50'}.get(child.a.get('data-button-style')) if node.has('buttons') else None
                 if rich:
-                    button_color,foreground={'primary':('#334754','#72bdff'),'danger':('#51414b','#ff727e'),'success':('#3a5146','#73e483')}.get(child.a.get('data-button-style'),('#303d46','#ffffff'))
+                    button_color,foreground={
+                        'primary':(style['accent'],'#ffffff'),
+                        'danger':(self.tint(style.get('bubble_color',self.bubble),'#ff727e',.13),'#ff727e'),
+                        'success':(self.tint(style.get('bubble_color',self.bubble),'#73e483',.13),'#73e483'),
+                    }.get(child.a.get('data-button-style'),
+                          (self.tint(style.get('bubble_color',self.bubble),style['accent'],.08),style['accent']))
                 else: foreground='#ffffff' if button_color else style['color']
                 button_style=dict(style,size=13,color=foreground)
-                w=min(width,max(55,self.inline_width(child.children,button_style)+24))
+                w=cell if fill_row else min(width,max(55,self.inline_width(child.children,button_style)+24))
                 b=self.inline(child.children,w-14,button_style,align='center')
                 if x and x+w>width: x=0; y+=lineh+5; lineh=0
                 box.ops.append(('rect',x,y,(w,b.h+8,button_color or self.code,8)))
-                box.add(b,x+7,y+4); x+=w+5; lineh=max(lineh,b.h+8)
+                box.add(b,x+7,y+4)
+                if rich and child.a.get('data-button-type') in ('switch','url'):
+                    box.ops.append(('button-arrow',x+w-19,y+(b.h-6)/2,
+                                    (14,'#ffffff' if child.a.get('data-button-style')=='primary' else style['accent'])))
+                x+=w+gap; lineh=max(lineh,b.h+8)
+            if rich and y==5 and x<=width+5 and align in ('center','right'):
+                shift=(width-x+5)/2 if align=='center' else width-x+5
+                box.ops=[(kind,px+shift,py,value) for kind,px,py,value in box.ops]
             box.h=y+lineh+(5 if rich else 6 if lineh else 0); return box
         padded=node.tag in ('blockquote','details','pre') or node.has('reply') or node.has('gift') or node.has('notice') or node.has('poll-option')
         pad=10 if padded else 0
@@ -885,6 +983,10 @@ class Painter:
         return box
     def table(self,node,width,style):
         rows=[c for c in node.children if isinstance(c,Node) and c.tag=='tr']
+        bordered='bordered' in node.a
+        striped='striped' in node.a
+        compact='compact' in node.a
+        padding=4 if compact else 6
         occupied={}; grid=[]; columns=1
         for ri,row in enumerate(rows):
             ci=0
@@ -900,20 +1002,42 @@ class Painter:
                 ci+=span; columns=max(columns,ci)
         unit=width/columns
         if unit<36: self.warn('table_narrow_columns')
-        heights=[24 for _ in rows]; measured=[]
+        heights=[20 if compact else 24 for _ in rows]; measured=[]
         for ri,ci,rowspan,span,cell in grid:
                 w=unit*span
                 st=dict(style,size=13,bold=cell.tag=='th')
                 align='center' if 'center' in cell.a.get('style','') else 'right' if 'right' in cell.a.get('style','') else 'left'
-                content=self.inline(cell.children,max(8,w-12),st,align)
-                needed=content.h+12-sum(heights[ri:ri+rowspan])
+                content=self.inline(cell.children,max(8,w-2*padding),st,align)
+                needed=content.h+2*padding-sum(heights[ri:ri+rowspan])
                 if needed>0: heights[ri+rowspan-1]+=needed
                 measured.append((ri,ci,rowspan,span,content))
         box=Box(width,sum(heights))
+        if striped:
+            for ri in range(1,len(rows),2):
+                box.ops.append(('rect',0,sum(heights[:ri]),(width,heights[ri],self.tint(style.get('bubble_color',self.bubble),style['accent'],.08),0)))
         for ri,ci,rowspan,span,b in measured:
             y=sum(heights[:ri]); h=sum(heights[ri:ri+rowspan])
-            box.ops.append(('border',ci*unit,y,(span*unit,h,self.muted,0)))
-            box.add(b,ci*unit+6,y+6)
+            if bordered: box.ops.append(('border',ci*unit,y,(span*unit,h,self.muted,0)))
+            box.add(b,ci*unit+padding,y+padding)
+        return box
+    def details_card(self,node,width,style):
+        summary=next((c for c in node.children if isinstance(c,Node) and c.tag=='summary'),None)
+        content=summary.children if summary else [self.p.get('details_label','Details')]
+        expanded='open' in node.a
+        label_style=dict(style,size=16)
+        if hasattr(self,'classic') and not self.classic:
+            label=self.inline(content,max(1,width-30),label_style,max_lines=2)
+        else:
+            label=self.inline(content,max(1,width-30),label_style)
+        header=max(18,label.h)+10
+        box=Box(width,header+1,[('rect',0,header,(width,1,self.muted,0))])
+        box.ops.append(('chevron',2,(header-15)/2,(15,self.muted,expanded)))
+        box.add(label,27,(header-label.h)/2)
+        if expanded:
+            children=[c for c in node.children if c is not summary]
+            inner=self.flow(children,max(1,width-27),style)
+            box.add(inner,27,header+8)
+            box.h=header+8+inner.h
         return box
     def inline_width(self,nodes,style):
         current=maximum=0
@@ -1085,6 +1209,18 @@ class Painter:
             points=[(0,0),(10,0)]+[(10+8*(i/12)**2,5+11*i/12) for i in range(13)]+[(0,16)]
             if not outgoing: points=[(w-px,py) for px,py in points]
             draw.polygon([(x+px*s,y+py*s) for px,py in points],fill=color)
+        elif kind=='chevron':
+            size,color,expanded=value
+            points=([(0,.65),(.5,.35),(1,.65)] if expanded
+                    else [(0,.35),(.5,.65),(1,.35)])
+            draw.line([(x+px*size*s,y+py*size*s) for px,py in points],
+                      fill=color,width=max(1,round(1.5*s)),joint='curve')
+        elif kind=='button-arrow':
+            size,color=value
+            draw.line([(x+px*size*s,y+py*size*s) for px,py in ((.1,.78),(.65,.22))],
+                      fill=color,width=max(1,round(1.7*s)),joint='curve')
+            draw.line([(x+px*size*s,y+py*size*s) for px,py in ((.35,.22),(.65,.22),(.65,.52))],
+                      fill=color,width=max(1,round(1.7*s)),joint='curve')
         elif kind=='forward-icon':
             size,color=value
             points=[(0,12),(1,7),(3,4),(6,3),(8,3),(8,0),(14,6),(8,12),(8,8),(5,8),(2,10)]
@@ -1120,6 +1256,28 @@ class Painter:
                     (x+size*.20,y+size*.70),(x+size*.34,y+size*.82),
                     (x+size*.53,y+size*.85),(x+size*.96,y+size*.85)]
             draw.line(points,fill=color,width=max(1,round(s*1.2)),joint='curve')
+        elif kind=='code-glyph':
+            glyph,width,height,color=value
+            width*=s; height*=s
+            if glyph in '█▉▊▋▌▍▎▏▐':
+                fractions={'█':(0,1),'▉':(0,7/8),'▊':(0,3/4),'▋':(0,5/8),
+                           '▌':(0,1/2),'▍':(0,3/8),'▎':(0,1/4),'▏':(0,1/8),'▐':(7/8,1)}
+                left,right=fractions[glyph]
+                draw.rectangle((round(x+width*left),round(y+height*.12),
+                                round(x+width*right),round(y+height*.88)),fill=color)
+            else:
+                line=max(1,round((2 if glyph in '━┃' else 1.2)*s))
+                cx=x+width*.5; cy=y+height*.5
+                horizontal='─━┌┐└┘╭╮╰╯├┤┬┴┼'
+                vertical='│┃┌┐└┘╭╮╰╯├┤┬┴┼'
+                if glyph in horizontal:
+                    left=x-.5*s if glyph in '─━┤┐┘╮╯┬┴┼' else cx
+                    right=x+width+.5*s if glyph in '─━├┌└╭╰┬┴┼' else cx
+                    draw.line((left,cy,right,cy),fill=color,width=line)
+                if glyph in vertical:
+                    top=y-.5*s if glyph in '│┃┘└╯╰├┤┴┼' else cy
+                    bottom=y+height+.5*s if glyph in '│┃┌┐╭╮├┤┬┼' else cy
+                    draw.line((cx,top,cx,bottom),fill=color,width=line)
         elif kind=='todo-mark':
             size,color,done=value; size*=s
             if done:
@@ -1170,6 +1328,17 @@ class Painter:
             extent=round(self.measure(text,style)*s); height=round(style.get('size',16)*s)
             top=y-font.getmetrics()[0] if anchor=='ls' else y
             if style.get('background'): draw.rectangle((x,top,x+extent,top+height+2),fill=style['background'])
+            if style.get('mono_advance') and not style.get('gradient'):
+                allocated=round(style['mono_advance']*self.mono_columns(text)*s)
+                if allocated>0 and extent>allocated+1:
+                    left,upper,right,lower=font.getbbox(text,anchor=anchor)
+                    mask=Image.new('L',(max(1,right-left),max(1,lower-upper)))
+                    ImageDraw.Draw(mask).text((-left,-upper),text,font=font,fill=255,anchor=anchor)
+                    mask=mask.resize((max(1,allocated),mask.height),Image.Resampling.LANCZOS)
+                    colored=Image.new('RGBA',mask.size,style['color'])
+                    colored.putalpha(mask)
+                    canvas.alpha_composite(colored,(x+left,y+upper))
+                    return
             if style.get('gradient') and extent>0:
                 left,upper,right,lower=font.getbbox(text,anchor=anchor)
                 mask=Image.new('L',(max(1,right-left),max(1,lower-upper)))
@@ -1423,6 +1592,7 @@ class BalancedPainter(Painter):
                 if st.get('hidden'):
                     result.ops.append(('rect',x,y-asc,(w,asc+desc,self.muted,3)))
                 elif k=='text': result.ops.append(('text',x,y,(v,dict(st,text_anchor='ls'))))
+                elif k=='code-glyph': result.ops.append(('code-glyph',x,y-asc,(v,w,line_step,st['color'])))
                 elif k=='image': result.ops.append(('image',x,y-asc+(height-w)/2,(v,w,w,False)))
                 elif k=='badge':
                     result.ops.append(('rect',x,y-st['size'],(w,st['size']+5,self.code,6)))
@@ -1535,6 +1705,7 @@ class BalancedPainter(Painter):
 
     def block(self,node,width,style):
         if self.classic: return super().block(node,width,style)
+        if node.tag=='details': return self.details_card(node,width,dict(style,rich_code_bleed=0))
         if node.has('author'): return self.header(node,width,style)
         if node.has('reply'): return self.reply_card(node,width,style)
         if node.has('forward'):
@@ -1566,10 +1737,23 @@ class BalancedPainter(Painter):
             items=[c for c in node.children if isinstance(c,Node)]
             if not items: return Box(width)
             rich=node.has('rich-buttons')
-            gap=4; cell=max(1,(width-gap*(len(items)-1))/len(items)); rendered=[]
-            for child in items:
+            gap=4
+            align=node.a.get('data-align','left') if rich else 'left'
+            widths=([min(width,max(55,self.inline_width(child.children,dict(style,size=13))+20))
+                     for child in items] if rich and align in ('center','right') else [])
+            if not widths or sum(widths)+gap*(len(items)-1)>width:
+                widths=[max(1,(width-gap*(len(items)-1))/len(items))]*len(items)
+            total=sum(widths)+gap*(len(items)-1)
+            offset=max(0,(width-total)/2) if align=='center' else max(0,width-total) if align=='right' else 0
+            rendered=[]
+            for child,cell in zip(items,widths):
                 if rich:
-                    color,foreground={'primary':('#334754','#72bdff'),'danger':('#51414b','#ff727e'),'success':('#3a5146','#73e483')}.get(child.a.get('data-button-style'),('#303d46','#ffffff'))
+                    color,foreground={
+                        'primary':(style['accent'],'#ffffff'),
+                        'danger':(self.tint(style.get('bubble_color',self.bubble),'#ff727e',.13),'#ff727e'),
+                        'success':(self.tint(style.get('bubble_color',self.bubble),'#73e483',.13),'#73e483'),
+                    }.get(child.a.get('data-button-style'),
+                          (self.tint(style.get('bubble_color',self.bubble),style['accent'],.08),style['accent']))
                 else:
                     color={'primary':'#3567a0','danger':'#a84545','success':'#327a50'}.get(child.a.get('data-button-style'),self.code)
                     foreground='#ffffff' if color!=self.code else self.fg
@@ -1578,24 +1762,34 @@ class BalancedPainter(Painter):
             height=max(b.h for b,c in rendered)+8
             top=5 if rich else 0
             result=Box(width,height+2*top)
+            x=offset
             for i,(label,color) in enumerate(rendered):
-                x=i*(cell+gap); result.ops.append(('rect',x,top,(cell,height,color,8 if rich else 6)))
+                cell=widths[i]
+                result.ops.append(('rect',x,top,(cell,height,color,8 if rich else 6)))
                 actual=min(cell-12,self.inline_width(items[i].children,dict(style,size=13)))
                 result.add(label,x+max(6,(cell-actual)/2),top+(height-label.h)/2)
+                if rich and items[i].a.get('data-button-type') in ('switch','url'):
+                    result.ops.append(('button-arrow',x+cell-19,top+(height-14)/2,
+                                       (14,'#ffffff' if items[i].a.get('data-button-style')=='primary' else style['accent'])))
+                x+=cell+gap
             return result
         if node.tag in ('blockquote','details'):
             if node.tag=='details' and 'open' not in node.a:
                 summary=next((c for c in node.children if isinstance(c,Node) and c.tag=='summary'),None)
                 text=self.inline(summary.children,max(1,width-20),style,max_lines=2) if summary else Box(width)
             else:
-                text=self.flow(node.children,max(1,width-20),style)
+                text=self.flow(node.children,max(1,width-20),dict(style,rich_code_bleed=0))
             if not text.h: return Box(width)
             result=Box(width,text.h+10,[('rect',0,0,(width,text.h+10,self.tint(style.get('bubble_color',self.bubble),style.get('quote_accent',style['accent']),.14),6)),
                                       ('quote-bar',0,0,(3,text.h+10,self.quote_colors(node,style)))])
             result.add(text,10,5); return result
         if node.has('body'):
-            return self.flow(node.children,width,dict(style,line_spacing=1.15))
-        if node.has('rich') or node.tag=='p':
+            return self.flow(node.children,width,dict(style,line_spacing=1.15,
+                                                      rich_code_bleed=style.get('rich_code_bleed',self.SP['inner_x'])))
+        if node.has('rich'):
+            return self.flow(node.children,width,dict(style,
+                                                      rich_code_bleed=style.get('rich_code_bleed',self.SP['inner_x'])))
+        if node.tag=='p':
             return self.flow(node.children,width,style)
         return super().block(node,width,style)
 
@@ -2140,7 +2334,11 @@ class _GQuoteRenderer:
             return ''
         return f'<div class="pattern-overlay" data-pattern-color="{color}">' + await self.image(document, "pattern-source") + '</div>'
 
-    async def code(self, text, language=""):
+    async def code(self, text, language="", rich=False, message=False):
+        if message:
+            return f'<pre class="message-code">{self.esc(text)}</pre>'
+        if rich:
+            return f'<pre class="rich-code">{self.esc(text)}</pre>'
         from pygments import highlight
         from pygments.formatters import HtmlFormatter
         from pygments.lexers import get_lexer_by_name, TextLexer
@@ -2154,7 +2352,9 @@ class _GQuoteRenderer:
         painted = await utils.run_sync(highlight, text, lexer, formatter)
         if painted.endswith('\n') and not text.endswith('\n'):
             painted = painted[:-1]
-        return f'<pre><div class="language">{self.esc(language)}</div>{painted}</pre>'
+        label = "" if rich and str(language).casefold() in ("stdout", "stderr", "output") else language
+        pre_class = ' class="rich-code"' if rich else ''
+        return f'<pre{pre_class}><div class="language">{self.esc(label)}</div>{painted}</pre>'
 
     async def entities(self, text, entities):
         text = text or ""
@@ -2178,7 +2378,7 @@ class _GQuoteRenderer:
                 start, end, entity = special
                 value = raw[max(a, start)*2:end*2].decode("utf-16-le", "replace")
                 if self.kind(entity) == "MessageEntityPre":
-                    value = await self.code(value, getattr(entity, "language", ""))
+                    value = await self.code(value, getattr(entity, "language", ""), message=True)
                 elif self.kind(entity) == "MessageEntityCustomEmoji":
                     value = await self.emoji(entity.document_id, value)
                 else:
@@ -2307,7 +2507,7 @@ class _GQuoteRenderer:
                 level = kind[-1] if kind[-1:].isdigit() else "2"
                 result.append(f'<h{level}>{text}</h{level}>')
             elif kind == "Preformatted":
-                result.append(await self.code(self.plain(block.text), getattr(block, "language", "")))
+                result.append(await self.code(self.plain(block.text), getattr(block, "language", ""), rich=True))
             elif kind == "Divider":
                 result.append('<hr>')
             elif kind == "ButtonRow":
@@ -2320,9 +2520,14 @@ class _GQuoteRenderer:
                     color = next((name for name in ("primary", "danger", "success") if getattr(style, "bg_" + name, False)), "")
                     icon_id = getattr(style, "icon", None)
                     icon = (await self.emoji(icon_id) + " ") if icon_id else ""
-                    buttons.append('<span class="button" data-button-style="' + color + '">' + icon + label + '</span>')
+                    button_kind = self.kind(getattr(button, "type", None))
+                    button_type = "switch" if button_kind == "InlineButtonTypeSwitchInline" else "url" if button_kind in ("InlineButtonTypeUrl", "InlineButtonTypeWebView") else ""
+                    buttons.append('<span class="button" data-button-style="' + color + '" data-button-type="' + button_type + '">' + icon + label + '</span>')
                 if buttons:
-                    result.append('<div class="buttons rich-buttons">' + ''.join(buttons) + '</div>')
+                    align = next((name for name in ("left", "center", "right")
+                                  if getattr(block, "align_" + name, False)), "left")
+                    result.append(f'<div class="buttons rich-buttons" data-align="{align}">'
+                                  + ''.join(buttons) + '</div>')
             elif kind == "Anchor":
                 continue
             elif kind in ("Blockquote", "Pullquote"):
@@ -2335,7 +2540,8 @@ class _GQuoteRenderer:
                 if kind == "BlockquoteBlocks":
                     result.append('<blockquote>' + inner + '</blockquote>')
                 else:
-                    result.append(f'<details {"open" if self.options["expanded"] else ""}><summary>{title or self.label("Подробности", "Details")}</summary>{inner}</details>')
+                    expanded = bool(self.options["expanded"] or getattr(block, "open", False))
+                    result.append(f'<details{" open" if expanded else ""}><summary>{title or self.label("Подробности", "Details")}</summary>{inner}</details>')
             elif kind in ("List", "OrderedList"):
                 tag = "ol" if kind == "OrderedList" else "ul"
                 items = []
@@ -2354,15 +2560,44 @@ class _GQuoteRenderer:
                         align = "center" if getattr(cell, "align_center", False) else "right" if getattr(cell, "align_right", False) else "left"
                         cells.append(f'<{tag} colspan="{max(1, min(100, getattr(cell, "colspan", 1) or 1))}" rowspan="{max(1, min(100, getattr(cell, "rowspan", 1) or 1))}" style="text-align:{align}">' + await self.rich_text(getattr(cell, "text", None)) + f'</{tag}>')
                     rows.append('<tr>' + ''.join(cells) + '</tr>')
-                result.append(text + '<table>' + ''.join(rows) + '</table>')
+                title = await self.rich_text(getattr(block, "title", None))
+                flags = ' '.join(name for name in ("bordered", "striped", "compact")
+                                 if getattr(block, name, False))
+                result.append((f'<h4>{title}</h4>' if title else '')
+                              + f'<table{(" " + flags) if flags else ""}>'
+                              + ''.join(rows) + '</table>')
             elif kind in ("Photo", "Video", "Audio", "Document"):
                 identity = next((getattr(block, key) for key in ("photo_id", "video_id", "audio_id", "document_id") if getattr(block, key, None)), None)
                 media = self.documents.get(identity) or self.photos.get(identity)
-                result.append((await self.document(media) if self.kind(media) == "Document" else await self.image(media)) + '<div class="caption">' + cap + '</div>')
-            elif kind in ("Collage", "Slideshow"):
+                visual = await self.document(media) if self.kind(media) == "Document" else await self.image(media)
+                if getattr(block, "spoiler", False):
+                    reveal = ' revealed' if self.options["spoilers"] else ''
+                    visual = f'<div class="media-spoiler{reveal}">{visual}</div>'
+                result.append(visual + '<div class="caption">' + cap + '</div>')
+            elif kind == "Collage":
                 result.append('<div class="grid">' + await self.blocks(getattr(block, "items", []), depth + 1) + '</div>' + cap)
+            elif kind == "Slideshow":
+                items = getattr(block, "items", []) or []
+                if items:
+                    result.append(await self.blocks(items[:1], depth + 1)
+                                  + f'<small>1 / {len(items)}</small>' + cap)
             elif kind == "Cover":
                 result.append(await self.blocks([block.cover], depth + 1))
+            elif kind == "Channel":
+                channel = getattr(block, "channel", None)
+                name = self.esc(getattr(channel, "title", None) or getattr(channel, "username", None) or self.label("Канал", "Channel"))
+                username = getattr(channel, "username", None)
+                handle = f' <span class="link">@{self.esc(username)}</span>' if username else ''
+                result.append(f'<blockquote><b>{name}</b>{handle}</blockquote>')
+            elif kind == "RelatedArticles":
+                title = await self.rich_text(getattr(block, "title", None))
+                articles = []
+                for article in getattr(block, "articles", []) or []:
+                    name = self.esc(getattr(article, "title", None) or getattr(article, "url", None) or self.label("Статья", "Article"))
+                    description = self.esc(getattr(article, "description", None) or "")
+                    articles.append('<li><span class="link">' + name + '</span>'
+                                    + (f' — {description}' if description else '') + '</li>')
+                result.append((f'<h4>{title}</h4>' if title else '') + '<ul>' + ''.join(articles) + '</ul>')
             elif kind == "Math":
                 result.append(self.formula(getattr(block, "source", ""), True))
             elif kind == "Map":
@@ -2770,12 +3005,12 @@ class _GQuoteRenderer:
         fallback = self.PEER_COLORS
         accent = fallback[abs(getattr(sender, "id", 0)) % len(fallback)]
         if getattr(palette, "color", None) is not None:
-            identity = palette.color
-            if identity in self.palettes:
-                colors = self.palettes[identity]
+            palette_id = palette.color
+            if palette_id in self.palettes:
+                colors = self.palettes[palette_id]
                 accent = self.color(colors[0]) if colors else accent
-            elif 0 <= identity < len(fallback):
-                accent = fallback[identity]
+            elif 0 <= palette_id < len(fallback):
+                accent = fallback[palette_id]
             else:
                 self.warn("peer_palette_missing", palette)
         avatar = ''
@@ -3247,6 +3482,13 @@ class _GQuoteRenderer:
                         path.unlink()
                     del self.cache[key]
         markup = await self.build(state)
+        ffmpeg = None
+        if re.search(r'\.(?:webm|mp4)(?:["?])', markup, re.IGNORECASE):
+            import shutil
+            resolver = getattr(self.module, '_media_ffmpeg_executable', None)
+            ffmpeg = resolver() if callable(resolver) else shutil.which('ffmpeg')
+            if not ffmpeg:
+                raise _GQuoteError('ffmpeg_required')
         if len(markup.encode("utf8")) > 8 * 1024 * 1024:
             raise _GQuoteError("markup_bytes_limit")
         state["stage"] = "fonts"
@@ -3262,7 +3504,7 @@ class _GQuoteRenderer:
                 render_options['scale'] = 4
             payload = dict(root=self.root.name, output=folder, response=str(response),
                            progress=str(progress), html=markup, fonts=fonts,
-                           options=render_options)
+                           options=render_options, ffmpeg=ffmpeg)
             mode=state['options'].get('background_mode','transparent')
             if mode in ('dark','light'):
                 payload['options']['background_color']='#181b1e' if mode=='dark' else '#dce5e9'
@@ -3278,6 +3520,7 @@ class _GQuoteRenderer:
             await utils.run_sync(request.write_text, json.dumps(payload, ensure_ascii=True), encoding="utf8")
             state["stage"] = "pillow_worker"
             environment = dict(os.environ)
+            environment["PYTHONFAULTHANDLER"] = "1"
             for key in ("OMP_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS"):
                 environment[key] = "1"
             process = await asyncio.create_subprocess_exec(
@@ -3301,6 +3544,33 @@ class _GQuoteRenderer:
                 await asyncio.wait_for(asyncio.shield(reader), 5)
                 if result:
                     detail = bytes(stderr).decode("utf8", "replace")
+                    checkpoint = {}
+                    if progress.is_file() and progress.stat().st_size < 4096:
+                        try:
+                            checkpoint = json.loads(await utils.run_sync(progress.read_text, encoding="utf8"))
+                        except (OSError, ValueError):
+                            pass
+                    if checkpoint.get("stage"):
+                        state["stage"] = checkpoint["stage"]
+                        state["message_id"] = checkpoint.get("message")
+                        if checkpoint.get("document") is not None:
+                            state["element"] = "document:" + str(checkpoint["document"])
+                    lowered = detail.casefold()
+                    diagnostic = (
+                        "native_memory_allocation" if any(word in lowered for word in (
+                            "std::bad_alloc", "cannot allocate memory", "out of memory"
+                        )) else "native_resource_unavailable" if "resource temporarily unavailable" in lowered
+                        else "native_assertion" if "assertion" in lowered and "failed" in lowered
+                        else "native_abort" if result in (-6, 134)
+                        else "native_crash" if result < 0 else "worker_error"
+                    )
+                    frames = re.findall(r'File "([^"\r\n]+)", line (\d+)(?:, in ([\w<>]+))?', detail)
+                    logger.error(
+                        "gquote op=%s stage=%s message=%s document=%s worker_exit=%s diagnostic=%s decoder=%s trace=%s",
+                        state["id"], state["stage"], state.get("message_id"), checkpoint.get("document"),
+                        result, diagnostic, checkpoint.get("decoder", "unknown"),
+                        " > ".join(f"{Path(file).name}:{line}:{name}" for file, line, name in frames[-8:]),
+                    )
                     missing = re.search(r"ModuleNotFoundError: No module named '([\w.]+)'", detail)
                     if missing:
                         raise _GQuoteError("worker_dependency_missing_" + missing[1])
@@ -3378,13 +3648,14 @@ class _HelpCommandName(str):
 
 @loader.tds
 class GodChatMod(loader.Module):
+    """[Heroku] Moderation tools for chats"""
 
     _HELP_COMMAND_ORDER = (
-        "gcfg", "ban", "unban", "gban", "gunban", "mute", "dmute", "unmute", "kick",
+        "gcfg", "ban", "unban", "gban", "gunban", "mute", "dmute", "unmute", "kick", "tkick",
         "del", "purge", "req", "panic", "banchat",
         "banmedia", "unbanmedia",
-        "id", "member", "rmember", "prefix", "aclear",
-        "gq", "fq", "mfq", "guest", "inline",
+        "id", "member", "rmember", "pref", "aclear",
+        "q", "fq", "mfq", "getmsg", "guest", "nochan", "inline",
     )
 
     @property
@@ -3403,10 +3674,14 @@ class GodChatMod(loader.Module):
 
     strings = {
         "name": "GodChat",
+        "_cls_doc": "[Heroku] Moderation tools for chats",
+        "cfg_rich_mode": "Use rich messages for GodChat screens",
         "reason": "Reason",
         "duration": "Duration",
         "messages_deleted": "Messages: deleted",
         "messages_delete_failed": "Messages: could not be deleted",
+        "messages_deleted_value": "deleted",
+        "messages_delete_failed_value": "could not be deleted",
         "status": "Status",
         "groups_only": "This command only works in groups.",
         "reply_or_user": "Reply to a message or specify @username or ID.",
@@ -3426,11 +3701,13 @@ class GodChatMod(loader.Module):
         "aclear_rights": "Administrator and tag-management rights are required.",
         "aclear_list_failed": "Could not get the administrator list.",
         "aclear_result": "Admin rights removed: {removed}. Failed: {failed}. Tags not preserved: {tag_failed}.",
+        "aclear_removed": "Admin rights removed", "aclear_failed": "Errors", "aclear_tag_failed": "Tags not preserved",
         "role_creator": "Creator",
         "role_admin": "Admin",
         "role_member": "Member",
         "media": "Media or attachment",
         "activity_unchecked": "Activity has not been checked yet.",
+        "activity_pending": "Not checked", "activity_label": "Activity",
         "activity": "Activity for {months} mo.",
         "messages_short": "msgs.",
         "inline_forbidden": "Inline: forbidden",
@@ -3559,11 +3836,15 @@ class GodChatMod(loader.Module):
     }
 
     strings_ru = {
+        "_cls_doc": "[Heroku] Инструменты модерации чатов",
         "name": "GodChat",
+        "cfg_rich_mode": "Использовать rich-сообщения в GodChat",
         "reason": "Причина",
         "duration": "Срок",
         "messages_deleted": "Сообщения: удалены",
         "messages_delete_failed": "Сообщения: не удалось удалить",
+        "messages_deleted_value": "удалены",
+        "messages_delete_failed_value": "не удалось удалить",
         "status": "Статус",
         "groups_only": "Команда работает только в группах.",
         "reply_or_user": "Ответь на сообщение или укажи @username либо ID.",
@@ -3583,11 +3864,13 @@ class GodChatMod(loader.Module):
         "aclear_rights": "Нужны права назначать администраторов и менять префиксы.",
         "aclear_list_failed": "Не удалось получить список администраторов.",
         "aclear_result": "Снята админка: {removed}. Ошибок: {failed}. Не удалось сохранить префикс: {tag_failed}.",
+        "aclear_removed": "Снята админка", "aclear_failed": "Ошибки", "aclear_tag_failed": "Префиксы не сохранены",
         "role_creator": "Создатель",
         "role_admin": "Админ",
         "role_member": "Участник",
         "media": "Медиа или вложение",
         "activity_unchecked": "Активность ещё не проверялась.",
+        "activity_pending": "Не проверена", "activity_label": "Активность",
         "activity": "Активность за {months} мес.",
         "messages_short": "сообщ.",
         "inline_forbidden": "Инлайн: запрещён",
@@ -3730,7 +4013,7 @@ class GodChatMod(loader.Module):
         "dmute_removed": "Delete-mute removed",
         "dmute_none": "Delete-mute is not enabled.",
         "dmute_usage": "Reply to a user or specify @username or ID, then an optional duration.",
-        "dmute_delete_rights": "Need rights to delete messages and restrict members in this chat.",
+        "dmute_delete_rights": "Need permission to delete messages in this chat.",
         "dmute_private_self": "Delete-mute cannot be applied to Saved Messages.",
         "member_select_empty": "No suitable members were found.",
         "guest_title": "Guest bots",
@@ -3770,7 +4053,7 @@ class GodChatMod(loader.Module):
         "dmute_removed": "Делит-мут снят",
         "dmute_none": "Делит-мут не включён.",
         "dmute_usage": "Ответь на пользователя или укажи @username либо ID, затем при необходимости срок.",
-        "dmute_delete_rights": "Нужны права на удаление сообщений и ограничение участников в этом чате.",
+        "dmute_delete_rights": "Нужны права на удаление сообщений в этом чате.",
         "dmute_private_self": "Нельзя поставить делит-мут в Избранном.",
         "member_select_empty": "Подходящих участников не найдено.",
         "guest_title": "Гостевые боты",
@@ -4408,7 +4691,7 @@ class GodChatMod(loader.Module):
         return type(item).__name__
 
     @loader.command(ru_doc="[n] [-u] - цитата из n сообщений до реплая; [-u] - только сообщения автора реплая", en_doc="[n] [-u] - quote n messages up to the replied one; -u selects only that author's messages")
-    async def gq(self, message: Message):
+    async def q(self, message: Message):
         args = utils.get_args_raw(message).split()
         user_only = '-u' in args
         count_args = [arg for arg in args if arg != '-u']
@@ -4423,7 +4706,7 @@ class GodChatMod(loader.Module):
         else:
             await self._gq_start(message, count)
 
-    @loader.command(ru_doc=" - создать фейк-цитату", en_doc=' - create a fake quote')
+    @loader.command(ru_doc='создать фейк-цитату', en_doc='create a fake quote')
     async def mfq(self, message: Message):
         if utils.get_args_raw(message).strip():
             return await self._answer_temporary(message, self._s('no_arguments'), 12)
@@ -4454,7 +4737,7 @@ class GodChatMod(loader.Module):
             self._gquote_sessions.pop(token, None)
             raise
 
-    @loader.command(ru_doc=" [-r] [-s] [-m] [@|ID] [Текст] - Быстрая фейк-цитата. [-r] - ответ на исходное сообщение; [-s] - сохранить реплай исходного сообщения; [-m] - сохранить медиа.", en_doc='[-r] [-s] [-m] [@|ID] [Text] - Quick fake quote. -r replies to the source message; -s keeps its original reply; -m keeps media.')
+    @loader.command(ru_doc='[-r] [-s] [-m] [@|ID] [Текст] - Быстрая фейк-цитата. [-r] - ответ на исходное сообщение; [-s] - сохранить реплай исходного сообщения; [-m] - сохранить медиа.', en_doc='[-r] [-s] [-m] [@|ID] [Text] - Quick fake quote. -r replies to the source message; -s keeps its original reply; -m keeps media.')
     async def fq(self, message: Message):
         args = utils.get_args_raw(message).strip()
         ru = self._s('gq_theme') == 'Тема'
@@ -5097,7 +5380,7 @@ class GodChatMod(loader.Module):
             await self._mfq_refresh(state)
             return
 
-    @loader.command(ru_doc=" - настройки GodChat", en_doc=' - GodChat settings')
+    @loader.command(ru_doc='настройки GodChat', en_doc='GodChat settings')
     async def gcfg(self, message: Message):
         if utils.get_args_raw(message).strip():
             return await self._answer_temporary(message, self._s("no_arguments"), 12)
@@ -5116,6 +5399,7 @@ class GodChatMod(loader.Module):
         quotes = section('gcfg_quotes_short', 'quotes', '5253590213917158323')
         names = section('gcfg_names', 'names', '5188678912883827293')
         timezone = section('timezone_title', 'timezone', '5870921681735781843')
+        panic = section('gcfg_panic_short', 'panic', '4904936030232117798')
         close = {'text': self._s('gq_close'), 'callback': self._gq_callback,
                  'args': (token, 'close'), 'style': 'danger',
                  'emoji_id': '5121063440311386962'}
@@ -5126,12 +5410,19 @@ class GodChatMod(loader.Module):
             rows.append([chat, quotes])
             if is_channel:
                 rows.append([names, timezone])
-                rows.append([close])
+                rows.append([panic, close])
             else:
-                rows.append([section('gcfg_panic_short', 'panic', '4904936030232117798'), names])
+                rows.append([panic, names])
                 rows.append([timezone, close])
         else:
-            rows.extend(([quotes, names], [timezone, close]))
+            rows.extend(([quotes, names], [timezone, panic], [close]))
+        enabled = self._rich_enabled()
+        rows.insert(max(0, len(rows) - 1), [{
+            'text': self._s('gcfg_rich_on' if enabled else 'gcfg_rich_off'),
+            'callback': self._gcfg_open, 'args': (token, 'rich_mode'),
+            'style': 'success' if enabled else 'danger',
+            'emoji_id': '5206607081334906820' if enabled else '5985346521103604145',
+        }])
         return rows
 
     def _names_saved(self):
@@ -5256,19 +5547,49 @@ class GodChatMod(loader.Module):
     def _gcfg_text(self, token=None):
         return f"{_EMOJI['reason']} <b>{self._s('gcfg_title')}</b>"
 
+    async def _gcfg_toggle_rich(self, call, token):
+        if getattr(getattr(call, 'from_user', None), 'id', None) != self._me_id:
+            return await call.answer(self._s('gcfg_rich_owner'), show_alert=True)
+        previous = self._rich_enabled()
+        try:
+            self.config['rich_mode'] = not previous
+            text = self._gcfg_text(token)
+            if previous:
+                text = self._inline_plain_emoji(text)
+            markup = self._gcfg_markup(token)
+            result = await self._rich_edit_form(call, text, reply_markup=markup)
+            if result is False:
+                raise RuntimeError('rich_mode_redraw_failed')
+        except Exception:
+            self.config['rich_mode'] = previous
+            logger.debug('Could not toggle GodChat rich mode', exc_info=True)
+            return await call.answer(self._s('gcfg_rich_failed'), show_alert=True)
+        if previous:
+            units = getattr(self.inline, '_units', {})
+            unit = units.get(getattr(call, 'unit_id', None), {})
+            custom_map = getattr(self.inline, '_custom_map', {})
+            for button in unit.get('rich_buttons', []):
+                custom_map.pop(button.get('_callback_data'), None)
+            for key in ('rich_message', 'rich_html', 'rich_source', 'rich_buttons', 'rich_failed'):
+                unit.pop(key, None)
+            unit.update(text=text, buttons=markup)
+        await call.answer()
+
     async def _gcfg_open(self, call, token, section):
         state = self._gq_get(token)
         if not state:
             return await call.answer(self._s("gq_expired"), show_alert=True)
         if state.get("task"):
             return await call.answer(self._s("gq_busy"), show_alert=True)
+        if section == 'rich_mode':
+            return await self._gcfg_toggle_rich(call, token)
         if section != 'panic':
             await call.answer()
         if section == "timezone":
-            await call.edit(self._timezone_text(), reply_markup=self._timezone_markup(token))
+            await self._rich_edit_form(call, self._timezone_text(), reply_markup=self._timezone_markup(token))
         elif section == "quotes":
             state['gq_view']='main'
-            await call.edit(self._gq_text(state), reply_markup=self._gq_markup(state))
+            await self._rich_edit_form(call, self._gq_text(state), reply_markup=self._gq_markup(state))
         elif section == 'names':
             state['names_view'] = 'main'
             await self._names_refresh(state)
@@ -5282,7 +5603,7 @@ class GodChatMod(loader.Module):
                     permissions = await asyncio.wait_for(self.client.get_permissions(entity, self._me_id), 20)
                 except Exception:
                     logger.warning('gcfg chat permissions unavailable', exc_info=True)
-                await call.edit(self._gcfg_chat_text(entity, permissions, state['ru']), reply_markup=[
+                await self._rich_edit_form(call, self._gcfg_chat_text(entity, permissions, state['ru']), reply_markup=[
                     [{'text': self._s('gcfg_refresh'), 'callback': self._gcfg_open, 'args': (token, 'chat')}],
                     [{'text': self._s('gq_back'), 'callback': self._gcfg_open, 'args': (token, 'main'), 'style': 'danger'},
                      {'text': self._s('gq_close'), 'callback': self._gq_callback, 'args': (token, 'close'), 'style': 'danger'}]])
@@ -5292,7 +5613,7 @@ class GodChatMod(loader.Module):
         elif section == "panic":
             await self._panic_menu(call, state)
         else:
-            await call.edit(self._gcfg_text(token), reply_markup=self._gcfg_markup(token))
+            await self._rich_edit_form(call, self._gcfg_text(token), reply_markup=self._gcfg_markup(token))
 
     def _panic_config(self, chat_id):
         saved = self._panic_settings.get(str(chat_id), {})
@@ -5362,7 +5683,7 @@ class GodChatMod(loader.Module):
         rows.append(action_buttons[2:])
         rows.append([{"text": self._s("gq_back"), "callback": self._gcfg_open,
                       "args": (token, "main"), "style": "primary"}])
-        await call.edit(text, reply_markup=rows)
+        await self._rich_edit_form(call, text, reply_markup=rows)
 
     async def _panic_menu_toggle(self, call, token, key):
         state = self._gq_get(token)
@@ -5502,6 +5823,8 @@ class GodChatMod(loader.Module):
         if state.get("closed"):
             return
         code = str(error) if isinstance(error, _GQuoteError) else type(error).__name__
+        if code == 'ffmpeg_required':
+            return await self._ffmpeg_menu(state.get('status') or state['source'])
         if self._gquote_renderer:
             self._gquote_renderer.log("error", code, error=error, state=state)
         else:
@@ -5738,7 +6061,19 @@ class GodChatMod(loader.Module):
         await self._inline_answer(state["status"], self._gq_text(state), self._gq_markup(state))
 
     def __init__(self):
+        self.config = loader.ModuleConfig(
+            loader.ConfigValue(
+                "rich_mode",
+                True,
+                lambda: self.strings("cfg_rich_mode"),
+                validator=loader.validators.Boolean(),
+            ),
+        )
         self._gquote_renderer = None
+        self._getmsg_jobs = {}
+        self._getmsg_tasks = set()
+        self._getmsg_export_lock = asyncio.Lock()
+        self._getmsg_closing = False
         self._offer_timezone_on_ready = False
         self._gquote_sessions = {}
         self._gquote_tasks = set()
@@ -5751,10 +6086,13 @@ class GodChatMod(loader.Module):
         self._member_cache = {}
         self._chat_controls = {}
         self._chat_control_locks = {}
+        self._inline_toggle_tasks = set()
         self._banchat_tasks = {}
         self._panic_settings = {}
         self._panic_joins = {}
         self._bulk_kick_jobs = {}
+        self._tkick_jobs = {}
+        self._tkick_tasks = set()
         self._amn_jobs = {}
         self._amn_tasks = set()
         self._bulk_kick_tasks = set()
@@ -5765,6 +6103,9 @@ class GodChatMod(loader.Module):
         self._dmute_pulse_tasks = {}
         self._dmute_delete_tasks = set()
         self._guest_bot_blocks = {}
+        self._channel_blocks = {}
+        self._private_inline_blocks = {}
+        self._nochan_linked = {}
         self._guest_bot_member_blocks = {}
         self._sticker_bans = {}
         self._media_bans = {}
@@ -5822,6 +6163,8 @@ class GodChatMod(loader.Module):
         "gcfg_quote_hint": "Run gcfg as a reply to send PNG or preview.",
         "gcfg_quotes_short": "Quotes", "gcfg_chat_short": "Chat",
         "gcfg_channel_short": "Channel", "gcfg_panic_short": "Panic",
+        "gcfg_rich_on": "Rich mode: on", "gcfg_rich_off": "Rich mode: off",
+        "gcfg_rich_owner": "Only the userbot owner can change rich mode.", "gcfg_rich_failed": "Could not switch rich mode.",
         "gcfg_summary_quotes": "Quote format",
         "gcfg_summary_trigger": "Quote trigger", "gcfg_summary_panic": "Auto panic",
         "gcfg_format_sticker": "sticker", "gcfg_format_png": "PNG",
@@ -5838,6 +6181,8 @@ class GodChatMod(loader.Module):
         "gcfg_quote_hint": "Для отправки PNG или превью вызови gcfg реплаем.",
         "gcfg_quotes_short": "Цитаты", "gcfg_chat_short": "Чат",
         "gcfg_channel_short": "Канал", "gcfg_panic_short": "Паника",
+        "gcfg_rich_on": "Rich mode: вкл", "gcfg_rich_off": "Rich mode: выкл",
+        "gcfg_rich_owner": "Режим rich может менять только владелец юзербота.", "gcfg_rich_failed": "Не удалось переключить rich mode.",
         "gcfg_summary_quotes": "Формат цитат",
         "gcfg_summary_trigger": "Триггер цитат", "gcfg_summary_panic": "Автопаника",
         "gcfg_format_sticker": "стикер", "gcfg_format_png": "PNG",
@@ -5859,6 +6204,13 @@ class GodChatMod(loader.Module):
         "panic_number_prompt": "Enter a number", "panic_supergroup_menu": "Open this menu in a supergroup.",
         "panic_seconds": "sec",
         "panic_changes_next": "Changed actions apply on the next activation.",
+        "panic_disable_partial": "Panic remains active. Could not restore: {actions}. Run .panic again to retry.",
+        "panic_disable_failed": "Could not disable panic. Check the server log and retry.",
+        "panic_enable_partial": "Panic could not be enabled completely. Some settings remain changed. Run .panic to restore them.",
+        "panic_restore_chat": "chat permissions", "panic_restore_slow": "slow mode",
+        "panic_restore_requests": "join requests",
+        "panic_no_actions_applied": "The chat already had these settings.",
+        "panic_nothing_to_restore": "No chat settings needed restoring.",
     })
     strings_ru.update({
         "panic_settings_title": "Настройки паники", "panic_auto": "Автовключение",
@@ -5875,6 +6227,13 @@ class GodChatMod(loader.Module):
         "panic_number_prompt": "Введи число", "panic_supergroup_menu": "Открой меню в супергруппе.",
         "panic_seconds": "сек",
         "panic_changes_next": "Изменения действий применятся при следующем включении.",
+        "panic_disable_partial": "Паника остаётся включённой. Не удалось восстановить: {actions}. Повтори .panic для повторной попытки.",
+        "panic_disable_failed": "Не удалось выключить панику. Проверь журнал ошибок и повтори команду.",
+        "panic_enable_partial": "Не удалось полностью включить панику. Часть настроек осталась изменённой. Повтори .panic, чтобы восстановить их.",
+        "panic_restore_chat": "права чата", "panic_restore_slow": "медленный режим",
+        "panic_restore_requests": "заявки на вступление",
+        "panic_no_actions_applied": "В чате уже были такие настройки.",
+        "panic_nothing_to_restore": "Настройки чата не требовали восстановления.",
     })
 
     def _timezone_minutes(self):
@@ -5938,7 +6297,7 @@ class GodChatMod(loader.Module):
         if delta == 0:
             await call.delete()
         else:
-            await call.edit(self._timezone_text(), reply_markup=self._timezone_markup(token))
+            await self._rich_edit_form(call, self._timezone_text(), reply_markup=self._timezone_markup(token))
 
     async def client_ready(self, client, db):
         self._me_id = int((await client.get_me()).id)
@@ -5967,6 +6326,10 @@ class GodChatMod(loader.Module):
         self._guest_bot_blocks = (
             guest_bot_blocks if isinstance(guest_bot_blocks, dict) else {}
         )
+        channel_blocks = self.get('channel_blocks', {})
+        self._channel_blocks = channel_blocks if isinstance(channel_blocks, dict) else {}
+        private_inline_blocks = self.get('private_inline_blocks', {})
+        self._private_inline_blocks = private_inline_blocks if isinstance(private_inline_blocks, dict) else {}
         guest_bot_member_blocks = self.get("guest_bot_member_blocks", {})
         self._guest_bot_member_blocks = (
             guest_bot_member_blocks
@@ -6016,6 +6379,17 @@ class GodChatMod(loader.Module):
                 logger.warning("Could not open quote timezone setup", exc_info=True)
 
     async def on_unload(self):
+        installer = getattr(self, '_ffmpeg_install_task', None)
+        if installer and installer is not asyncio.current_task():
+            installer.cancel()
+            await asyncio.gather(installer, return_exceptions=True)
+        self._getmsg_closing = True
+        for task in tuple(self._getmsg_tasks):
+            task.cancel()
+        if self._getmsg_tasks:
+            await asyncio.gather(*tuple(self._getmsg_tasks), return_exceptions=True)
+        self._getmsg_tasks.clear()
+        self._getmsg_jobs.clear()
         for task in (self._media_scan_task, self._media_recovery_task):
             if task:
                 task.cancel()
@@ -6044,7 +6418,9 @@ class GodChatMod(loader.Module):
         self._gquote_sessions.clear()
         remaining_tasks = (
             tuple(self._banchat_tasks.values())
+            + tuple(self._inline_toggle_tasks)
             + tuple(self._bulk_kick_tasks)
+            + tuple(self._tkick_tasks)
             + tuple(self._join_request_tasks.values())
             + tuple(self._temporary_message_tasks)
         )
@@ -6053,14 +6429,20 @@ class GodChatMod(loader.Module):
         if remaining_tasks:
             await asyncio.gather(*remaining_tasks, return_exceptions=True)
         self._banchat_tasks.clear()
+        self._inline_toggle_tasks.clear()
         self._panic_joins.clear()
         self._bulk_kick_tasks.clear()
         self._bulk_kick_jobs.clear()
+        self._tkick_jobs.clear()
+        self._tkick_tasks.clear()
         self._join_request_confirms.clear()
         self._join_request_tasks.clear()
         self._delete_mutes.clear()
         self._dmute_delete_tasks.clear()
         self._guest_bot_blocks.clear()
+        self._channel_blocks.clear()
+        self._private_inline_blocks.clear()
+        self._nochan_linked.clear()
         self._guest_bot_member_blocks.clear()
         self._sticker_bans.clear()
         self._media_bans.clear()
@@ -6243,12 +6625,265 @@ class GodChatMod(loader.Module):
         self._schedule_temporary_delete(result, seconds)
         return result
 
-    async def _create_inline_form(self, message, text, reply_markup=None):
-        return await self.inline.form(
-            message=message,
-            text=text,
-            reply_markup=reply_markup,
+    def _rich_enabled(self):
+        try:
+            return bool(self.config["rich_mode"])
+        except (AttributeError, KeyError, TypeError):
+            return False
+
+    @staticmethod
+    def _rich_layout(text):
+        content = str(text or "")
+        if content.lstrip().startswith("<h3>"):
+            return content
+        title = re.match(
+            r"^(?P<emoji>\s*<tg-emoji\b[^>]*>.*?</tg-emoji>\s*)?"
+            r"<b>(?P<title>GodChat(?:\s*·\s*[^<]+)?)</b>",
+            content, re.DOTALL,
         )
+        if title:
+            content = (
+                f"<h3>{title.group('emoji') or ''}{title.group('title')}</h3>"
+                + content[title.end():]
+            )
+
+        def block_to_table(match):
+            lines = [line.strip() for line in match.group(1).splitlines() if line.strip()]
+            if len(lines) < 2:
+                return match.group(0)
+            rows = []
+            for line in lines:
+                labeled = (
+                    re.match(r"^<b>([^<>]+):</b>\s*(.+)$", line)
+                    or re.match(r"^(<b>[^<>]+</b>):\s*(.+)$", line)
+                    or re.match(r"^([^<>:]{1,80}):\s*(.+)$", line)
+                )
+                if not labeled:
+                    return match.group(0)
+                label, value = labeled.groups()
+                rows.append(f"<tr><td>{label}</td><td>{value.strip()}</td></tr>")
+            return f'<table bordered striped compact>{"".join(rows)}</table>'
+
+        content = re.sub(r"<blockquote>(.*?)</blockquote>", block_to_table, content, flags=re.DOTALL)
+
+        def expandable_quote(match):
+            body = match.group(1).replace("\r\n", "\n").replace("\r", "\n")
+            body = body.replace("\n", "<br/>")
+            return f"<details><summary>⋯</summary><p>{body}</p></details>"
+
+        return re.sub(
+            r"<blockquote\s+expandable>(.*?)</blockquote>", expandable_quote,
+            content, flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    @staticmethod
+    def _inline_plain_emoji(text):
+        return re.sub(
+            r"<tg-emoji\b[^>]*>(.*?)</tg-emoji\s*>",
+            lambda match: match.group(1), str(text or ""),
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+
+    @staticmethod
+    def _rich_button_label(button):
+        label = quote_html.escape(str(button.get("text", "")))
+        emoji_id = str(button.get("emoji_id") or "")
+        if emoji_id.isdigit():
+            fallback = button.get('emoji_fallback')
+            if fallback:
+                return f'<tg-emoji emoji-id="{emoji_id}">{quote_html.escape(str(fallback))}</tg-emoji> {label}'
+            for source in (*_EMOJI.values(), *_RANDOM_EMOJI.values()):
+                match = re.fullmatch(r'<tg-emoji emoji-id="(\d+)">([^<]+)</tg-emoji>', source)
+                if match and match.group(1) == emoji_id:
+                    return f'<tg-emoji emoji-id="{emoji_id}">{match.group(2)}</tg-emoji> {label}'
+        return label
+
+    @staticmethod
+    def _rich_is_close_button(button):
+        if button.get("action") == "close":
+            return True
+        callback = button.get("callback")
+        name = getattr(callback, "__name__", "")
+        if name.endswith("_close"):
+            return True
+        if button.get("args") and button["args"][-1] == "close":
+            return True
+        return str(button.get("text", "")).strip().casefold() in ("close", "закрыть")
+
+    def _rich_form_content(self, text, reply_markup):
+        content = self._rich_layout(text)
+        if not reply_markup:
+            return content, [], []
+        markup = self.inline._normalize_markup(reply_markup)
+        if not isinstance(markup, list):
+            raise ValueError("Invalid rich markup")
+        has_input = any("input" in button for row in markup for button in row)
+        native_close = next(
+            (button for row in markup for button in row if self._rich_is_close_button(button)),
+            None,
+        )
+        if has_input and native_close is None:
+            native_close = {"text": self._s("gq_close"), "action": "close", "style": "danger"}
+            markup.append([native_close])
+        if markup and not self.inline.generate_markup(markup):
+            raise ValueError("Invalid rich button markup")
+        rich_rows = []
+        native_rows = []
+        for row in markup:
+            rich_buttons = []
+            native_buttons = []
+            for button in row:
+                if button is native_close or "action" in button:
+                    native_buttons.append(button)
+                    continue
+                attributes = []
+                style = button.get("style")
+                if style in ("primary", "success", "danger"):
+                    attributes.append(f'style="{style}"')
+                if "callback" in button:
+                    attributes.insert(0, 'type="callback_data"')
+                    attributes.append(
+                        f'data="{quote_html.escape(str(button["_callback_data"]), quote=True)}"'
+                    )
+                elif "input" in button:
+                    attributes.insert(0, 'type="switch_inline_query_current_chat"')
+                    attributes.append(
+                        f'query="{quote_html.escape(str(button["_switch_query"]) + " ", quote=True)}"'
+                    )
+                elif "url" in button:
+                    attributes.insert(0, 'type="url"')
+                    attributes.append(f'url="{quote_html.escape(str(button["url"]), quote=True)}"')
+                elif "copy" in button:
+                    attributes.insert(0, 'type="copy_text"')
+                    attributes.append(f'text="{quote_html.escape(str(button["copy"]), quote=True)}"')
+                elif "data" in button:
+                    attributes.insert(0, 'type="callback_data"')
+                    attributes.append(f'data="{quote_html.escape(str(button["data"]), quote=True)}"')
+                else:
+                    native_buttons.append(button)
+                    continue
+                rich_buttons.append(
+                    f'<tg-button {" ".join(attributes)}>{self._rich_button_label(button)}</tg-button>'
+                )
+            if rich_buttons:
+                rich_rows.append(f'<tg-button-row>{"".join(rich_buttons)}</tg-button-row>')
+            if native_buttons:
+                native_rows.append(native_buttons)
+        return content + ("\n" + "\n".join(rich_rows) if rich_rows else ""), markup, native_rows
+
+    def _rich_store_form(self, target, text, content, markup):
+        unit_id = getattr(target, "unit_id", None)
+        units = getattr(self.inline, "_units", None)
+        if not unit_id or not isinstance(units, dict) or unit_id not in units:
+            return
+        form = getattr(target, "form", None)
+        source_id = units[unit_id].get("inline_message_id")
+        if not source_id and isinstance(form, dict):
+            source_id = form.get("inline_message_id")
+        source_id = source_id or getattr(target, "inline_message_id", None)
+        if source_id:
+            units[unit_id]["inline_message_id"] = source_id
+        units[unit_id]["buttons"] = markup
+        units[unit_id]["text"] = text
+        units[unit_id]["rich_message"] = content
+
+    async def _create_inline_form(self, message, text, reply_markup=None, **kwargs):
+        kwargs = {**kwargs}
+        kwargs.setdefault("silent", True)
+        if self._rich_enabled():
+            try:
+                content, markup, native_markup = self._rich_form_content(text, reply_markup)
+                rich_kwargs = {**kwargs}
+                rich_kwargs.setdefault("ttl", 86400)
+                rich_kwargs.setdefault("reply_to", getattr(message, "id", None))
+                result = await self.inline.form(
+                    message=message,
+                    text=re.sub(r"<[^>]+>", "", str(text)),
+                    rich_message=content,
+                    reply_markup=native_markup,
+                    **rich_kwargs,
+                )
+                if result:
+                    self._rich_store_form(result, text, content, markup)
+                    return result
+            except Exception:
+                logger.exception("Could not create rich GodChat form")
+        return await self.inline.form(
+            message=message, text=self._inline_plain_emoji(text),
+            reply_markup=reply_markup, **kwargs,
+        )
+
+    async def _rich_edit_form(self, call, text=None, reply_markup=None, **kwargs):
+        if self._rich_enabled():
+            try:
+                content, markup, native_markup = self._rich_form_content(text, reply_markup)
+                form = getattr(call, "form", None)
+                unit_id = getattr(call, "unit_id", None)
+                if not unit_id and isinstance(form, dict):
+                    unit_id = form.get("id")
+                if unit_id:
+                    call.unit_id = unit_id
+                units = getattr(self.inline, "_units", None)
+                unit = units.get(unit_id, {}) if isinstance(units, dict) else {}
+                inline_message_id = unit.get("inline_message_id")
+                if not inline_message_id and isinstance(form, dict):
+                    inline_message_id = form.get("inline_message_id")
+                inline_message_id = inline_message_id or getattr(call, "inline_message_id", None)
+                if inline_message_id:
+                    call.inline_message_id = inline_message_id
+                    result = await call.edit(
+                        rich_message=content, reply_markup=native_markup, **kwargs,
+                    )
+                elif unit.get("chat") and unit.get("message_id"):
+                    result = await self.inline.bot.edit_rich_message(
+                        rich_message=content,
+                        chat_id=unit["chat"],
+                        message_id=unit["message_id"],
+                        reply_markup=(
+                            self.inline.generate_markup(native_markup)
+                            if native_markup else None
+                        ),
+                    )
+                else:
+                    logger.warning("Rich GodChat form has no message address for editing")
+                    return False
+                if result is not False:
+                    self._rich_store_form(call, text, content, markup)
+                    return result
+                logger.warning("Rich GodChat form edit returned False; keeping current form")
+                return False
+            except Exception as error:
+                if "MESSAGE_NOT_MODIFIED" in str(error).upper():
+                    return call
+                logger.warning("Could not edit rich GodChat form: %s", error, exc_info=True)
+                return False
+        return await call.edit(text=text, reply_markup=reply_markup, **kwargs)
+
+    async def _rich_answer(self, message, text):
+        if self._rich_enabled():
+            try:
+                result = await utils.answer(
+                    message, rich_message=self._rich_layout(text),
+                )
+                if result is not False:
+                    return result
+            except Exception:
+                logger.exception("Could not send rich GodChat result")
+            if (getattr(message, "rich", False)
+                    or getattr(message, "rich_message", None)
+                    or getattr(message, "unit_id", None)):
+                return False
+        return await utils.answer(message, text)
+
+    async def _send_rich_chat_message(self, entity, text, **kwargs):
+        if self._rich_enabled():
+            try:
+                return await self.client.send_rich_message(
+                    entity, html=self._rich_layout(text), **kwargs,
+                )
+            except Exception:
+                logger.exception("Could not send rich GodChat chat message")
+        return await self.client.send_message(entity, text, **kwargs)
 
     async def _inline_fallback(self, message, text):
         if getattr(message, "form", None) is None and hasattr(
@@ -6259,7 +6894,7 @@ class GodChatMod(loader.Module):
                 return await message.respond(text)
             except Exception:
                 logger.debug("Could not send inline fallback response", exc_info=True)
-        return await utils.answer(message, text)
+        return await self._rich_answer(message, text)
 
     async def _inline_answer(self, target, text, reply_markup=None):
         if getattr(target, '_gquote_plain_status', False):
@@ -6278,10 +6913,10 @@ class GodChatMod(loader.Module):
                 if form:
                     return form
             elif hasattr(target, "edit") and callable(target.edit):
-                edited = await target.edit(
-                    text=text,
-                    reply_markup=reply_markup,
-                )
+                if self._rich_enabled():
+                    await self._rich_edit_form(target, text, reply_markup)
+                    return target
+                edited = await target.edit(text=text, reply_markup=reply_markup)
                 if edited is not False:
                     return target
             form = target if isinstance(target, dict) else getattr(
@@ -6306,8 +6941,8 @@ class GodChatMod(loader.Module):
     async def _open_inline_status(self, message, text, reply_markup=None):
         try:
             status = await asyncio.wait_for(
-                self.inline.form(
-                    message=message, text=text, reply_markup=reply_markup,
+                self._create_inline_form(
+                    message, text, reply_markup,
                     silent=True, ttl=1800,
                 ),
                 30,
@@ -6587,6 +7222,9 @@ class GodChatMod(loader.Module):
         )
 
     async def _dmute_pulse(self, chat, sender, message=None):
+        capabilities = await self._operator_capabilities(chat)
+        if not capabilities.get("ban_users"):
+            return
         if message is not None and getattr(message, "input_sender", None) is None:
             try:
                 sender = await asyncio.wait_for(message.get_input_sender(), timeout=5) or sender
@@ -6633,8 +7271,8 @@ class GodChatMod(loader.Module):
                 rights = getattr(current.participant, "banned_rights", None)
                 if (isinstance(current.participant, types.ChannelParticipantBanned)
                         and self._rights_until_date(getattr(rights, "until_date", None)) == until_date
-                        and (getattr(rights, "send_messages", False)
-                             or getattr(rights, "send_plain", False))):
+                        and all(bool(getattr(rights, field, False)) == value
+                                for field, value in pulse_fields.items())):
                     await asyncio.wait_for(self.client(functions.channels.EditBannedRequest(
                         channel=chat, participant=sender,
                         banned_rights=types.ChatBannedRights(
@@ -7132,7 +7770,6 @@ def compare(a,b):
     if not a or not b or a.get('v') != 1 or b.get('v') != 1: return False
     if len(a['frames']) != 7 or len(b['frames']) != 7: return False
     if len(a.get('colors',[])) != 7 or len(b.get('colors',[])) != 7: return False
-    # No geometric search is needed for ordinary re-encoding, including low-detail clips.
     reversed_b=dict(b,frames=b['frames'][::-1],colors=b['colors'][::-1])
     if verify(a,b,np.eye(3)) or verify(a,reversed_b,np.eye(3),allow_motion_gaps=True): return True
     pa,pb = np.float32(a['points']),np.float32(b['points'])
@@ -7142,7 +7779,6 @@ def compare(a,b):
     pairs = cv.BFMatcher().knnMatch(da,db,k=2)
     good = [p[0] for p in pairs if len(p)==2 and p[0].distance < .70*p[1].distance]
     if len(good)<16: return False
-    # A repeated texture must not supply many votes for the same target point.
     good = sorted(good,key=lambda m:m.distance)
     used=set(); unique=[]
     for m in good:
@@ -7181,7 +7817,6 @@ def verify(a,b,h,allow_motion_gaps=False):
         informative+=1
         aligned.append(x); targets.append(y)
     if informative<3: return False
-    # Same background is insufficient: changed regions must agree as well.
     bad_motion=0; checked_motion=0
     for ax,bx,ay,by in zip(aligned,aligned[1:],targets,targets[1:]):
         dx,dy=bx-ax,by-ay
@@ -7253,6 +7888,78 @@ except Exception:
             bits=sum((value>median)<<i for i,value in enumerate(values))
             result.append({'hash':format(bits,'016x'),'rgb':[sum(raw[c::3])/1024 for c in range(3)]})
         return result
+
+    strings.update({
+        'ffmpeg_required': 'This command needs FFmpeg. Install it with the button or run:',
+        'ffmpeg_install': 'Install FFmpeg', 'ffmpeg_installing': 'Installing FFmpeg…',
+        'ffmpeg_ready': 'FFmpeg is installed. Repeat the command.',
+        'ffmpeg_failed': 'Installation failed. Try the command manually:',
+        'ffmpeg_busy': 'Installation is already running.', 'ffmpeg_owner': 'Only the owner can install FFmpeg.',
+        'ffmpeg_close': 'Close',
+    })
+    strings_ru.update({
+        'ffmpeg_required': 'Эта команда использует FFmpeg. Установи его кнопкой или выполни команду:',
+        'ffmpeg_install': 'Установить FFmpeg', 'ffmpeg_installing': 'Устанавливаю FFmpeg…',
+        'ffmpeg_ready': 'FFmpeg установлен. Повтори команду.',
+        'ffmpeg_failed': 'Не удалось установить FFmpeg. Попробуй выполнить команду вручную:',
+        'ffmpeg_busy': 'Установка уже выполняется.', 'ffmpeg_owner': 'Устанавливать FFmpeg может только владелец.',
+        'ffmpeg_close': 'Закрыть',
+    })
+
+    @staticmethod
+    def _ffmpeg_install_command():
+        import shlex
+        import sys
+        return shlex.quote(sys.executable) + ' -m pip install --no-cache-dir imageio-ffmpeg'
+
+    async def _ffmpeg_menu(self, target, failed=False):
+        text = (_EMOJI['warning'] + ' <b>GodChat · FFmpeg</b>\n\n'
+                + self._s('ffmpeg_failed' if failed else 'ffmpeg_required') + '\n'
+                + '<pre>' + utils.escape_html(self._ffmpeg_install_command()) + '</pre>')
+        return await self._inline_answer(target, text, [
+            [{'text': self._s('ffmpeg_install'), 'callback': self._ffmpeg_install, 'style': 'success'}],
+            [{'text': self._s('ffmpeg_close'), 'action': 'close', 'style': 'danger'}],
+        ])
+
+    async def _ffmpeg_install(self, call):
+        if getattr(getattr(call, 'from_user', None), 'id', None) != self._me_id:
+            return await call.answer(self._s('ffmpeg_owner'), show_alert=True)
+        task = getattr(self, '_ffmpeg_install_task', None)
+        if task and not task.done():
+            return await call.answer(self._s('ffmpeg_busy'), show_alert=True)
+        if self._media_ffmpeg_executable():
+            return await self._inline_answer(call, _EMOJI['success'] + ' <b>' + self._s('ffmpeg_ready') + '</b>',
+                [[{'text': self._s('ffmpeg_close'), 'action': 'close'}]])
+        self._ffmpeg_install_task = asyncio.current_task()
+        process = None
+        try:
+            await call.answer()
+            await self._inline_answer(call, _EMOJI['time'] + ' <b>' + self._s('ffmpeg_installing') + '</b>', [])
+            import importlib
+            import sys
+            with tempfile.TemporaryDirectory(prefix='godchat-ffmpeg-', dir=sys.prefix) as folder:
+                environment = dict(os.environ, TMPDIR=folder, TMP=folder, TEMP=folder)
+                process = await asyncio.create_subprocess_exec(sys.executable, '-m', 'pip', 'install',
+                    '--no-cache-dir', '--disable-pip-version-check', '-q', 'imageio-ffmpeg',
+                    stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL, env=environment)
+                try:
+                    await asyncio.wait_for(process.wait(), 600)
+                finally:
+                    if process.returncode is None:
+                        process.kill()
+                        await process.wait()
+                importlib.invalidate_caches()
+                if process.returncode or not self._media_ffmpeg_executable():
+                    raise RuntimeError('ffmpeg_install_failed')
+            await self._inline_answer(call, _EMOJI['success'] + ' <b>' + self._s('ffmpeg_ready') + '</b>',
+                [[{'text': self._s('ffmpeg_close'), 'action': 'close'}]])
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            logger.warning('Optional FFmpeg installation failed', exc_info=True)
+            await self._ffmpeg_menu(call, failed=True)
+        finally:
+            self._ffmpeg_install_task = None
 
     @staticmethod
     def _media_ffmpeg_executable():
@@ -7531,7 +8238,7 @@ except Exception:
         'media_other_scope':'Запреты другой области продолжают действовать.',
     })
 
-    @loader.command(ru_doc=' [-p] [-g] - запретить медиа/стикер; [-p] - пак; [-g] - глобально', en_doc=' [-p] [-g] - ban replied media or toggle a sticker ban; -p - sticker pack; -g - globally')
+    @loader.command(ru_doc='[-p] [-g] - запретить медиа/стикер; [-p] - пак; [-g] - глобально', en_doc='[-p] [-g] - ban replied media or toggle a sticker ban; -p - sticker pack; -g - globally')
     @loader.owner
     async def banmedia(self, message: Message):
         args = [str(item).lower() for item in self._args(message)]
@@ -7541,7 +8248,7 @@ except Exception:
             return await self._toggle_sticker_ban(message, args, reply)
         await self._media_ban_command(message, clear=False)
 
-    @loader.command(ru_doc=' [-p] [-g] [-all] - снять запрет с реплая; [-p] - пак; [-g] - глобально; [-all] - снять все запреты', en_doc=' [-p] [-g] [-all] - unban replied media/sticker; -p - sticker pack; -g - globally; -all - clear all bans')
+    @loader.command(ru_doc='[-p] [-g] [-all] - снять запрет с реплая; [-p] - пак; [-g] - глобально; [-all] - снять все запреты', en_doc='[-p] [-g] [-all] - unban replied media/sticker; -p - sticker pack; -g - globally; -all - clear all bans')
     @loader.owner
     async def unbanmedia(self, message: Message):
         args = [str(item).lower() for item in self._args(message)]
@@ -7602,6 +8309,8 @@ except Exception:
                 error = 'media_ban_rights'
             if error:
                 return await self._answer_temporary(message,_EMOJI['error']+' '+self._s(error),_IMPORTANT_RESULT_TTL)
+            if not clear and self._media_video_info(reply) is not None and not self._media_ffmpeg_executable():
+                return await self._ffmpeg_menu(message)
             if self._media_donor is None and not clear and not self.get('media_donor', None):
                 if not await self._media_donor_load():
                     return await self._answer_temporary(message,
@@ -7747,14 +8456,43 @@ except Exception:
     def _rank_error(self):
         return f"{_EMOJI['error']} <b>{self._s('rank_error')}</b>"
 
+    strings.update({'result_user': 'Member'})
+    strings_ru.update({'result_user': 'Участник'})
+
+    def _result_table(self, icon, title, rows):
+        rich = self._rich_enabled()
+        output = []
+        for key, marker, value, highlighted in rows:
+            if rich and highlighted:
+                value = f'<mark><b>{value}</b></mark>'
+            label = f'<b>{self._s(key)}</b>'
+            value = marker + ' ' + value
+            output.append(f'<tr><td>{label}</td><td>{value}</td></tr>' if rich else f'{label}: {value}')
+        body = '<table bordered striped compact>' + ''.join(output) + '</table>' if rich else '<blockquote>' + '\n'.join(output) + '</blockquote>'
+        return icon + f' <b>GodChat · {title}</b>\n\n' + body
+
     def _rank_result(self, user, rank, admin):
-        kind = self._s("tag_admin" if admin else "tag_regular")
-        return (
-            f"{_EMOJI['prefix']} <b>GodChat · {self._s('tag')}</b>\n\n"
-            f"<blockquote>{self._label(user)}\n"
-            f"<b>{self._s('tag')}:</b> {utils.escape_html(rank)}\n"
-            f"<b>{self._s('tag_type')}:</b> {kind}</blockquote>"
-        )
+        return self._result_table(_EMOJI['prefix'], self._s('tag'), [
+            ('result_user', _RANDOM_EMOJI['user'], self._label(user), False),
+            ('tag', _EMOJI['prefix'], utils.escape_html(rank), True),
+            ('tag_type', _EMOJI['success'], self._s('tag_admin' if admin else 'tag_regular'), False),
+        ])
+
+    def _mute_result(self, icon, title, user, status, duration, reason, history_deleted=None, history_pending=False):
+        rows = [
+            ('result_user', _RANDOM_EMOJI['user'], self._label(user), False),
+            ('status', icon, utils.escape_html(status), True),
+        ]
+        if duration is not None:
+            rows.append(('duration', _EMOJI['time'], utils.escape_html(duration), True))
+        if reason:
+            rows.append(('reason', _EMOJI['reason'], utils.escape_html(reason), False))
+        if history_pending:
+            rows.append(('messages', _EMOJI['warning'], self._s('will_be_deleted'), True))
+        elif history_deleted is not None:
+            rows.append(('messages', _EMOJI['success' if history_deleted else 'error'],
+                         self._s('messages_deleted_value' if history_deleted else 'messages_delete_failed_value'), True))
+        return self._result_table(icon, title, rows)
 
     async def _set_rank(self, entity, target, rank):
         await self.client(
@@ -7765,7 +8503,23 @@ except Exception:
             )
         )
 
-    @loader.command(ru_doc=" - снять админку со всех в чате, сохранив префиксы", en_doc=' - remove all chat administrators while keeping their tags')
+    def _aclear_result(self, removed, failed, tag_failed):
+        rich = self._rich_enabled()
+        rows = []
+        for key, count, icon in (
+            ('aclear_removed', removed, 'success'),
+            ('aclear_failed', failed, 'error' if failed else 'success'),
+            ('aclear_tag_failed', tag_failed, 'warning' if tag_failed else 'success'),
+        ):
+            number = f'<mark><b>{count}</b></mark>' if rich else f'<b>{count}</b>'
+            label = f'<b>{self._s(key)}</b>'
+            value = _EMOJI[icon] + ' ' + number
+            rows.append(f'<tr><td>{label}</td><td>{value}</td></tr>' if rich else f'{label}: {value}')
+        body = '<table bordered striped compact>' + ''.join(rows) + '</table>' if rich else '<blockquote>' + '\n'.join(rows) + '</blockquote>'
+        icon = _EMOJI['warning' if failed or tag_failed else 'success']
+        return icon + ' <b>GodChat · aclear</b>\n\n' + body
+
+    @loader.command(ru_doc='снять админку со всех в чате, сохранив префиксы', en_doc='remove all chat administrators while keeping their tags')
     @loader.group_admin_add_admins
     async def aclear(self, message: Message):
         if getattr(message, "is_private", False) or not getattr(message, "is_group", False):
@@ -7832,17 +8586,13 @@ except Exception:
                 failed += 1
                 logger.exception("Could not demote chat administrator %s", user.id)
 
-        text = self._s("aclear_result", removed=removed, failed=failed, tag_failed=tag_failed)
-        await self._inline_answer(
-            message,
-            f"{_EMOJI['success' if not failed and not tag_failed else 'warning']} <b>{text}</b>",
-        )
+        await self._inline_answer(message, self._aclear_result(removed, failed, tag_failed))
 
     @loader.command(
-        ru_doc=" [пользователь] [префикс] [-a] - префикс; -a - админ-префикс"
-    , en_doc=' [user] [tag] [-a] - set a tag; -a - admin tag')
+        ru_doc='[пользователь] [префикс] [-a] - префикс; -a - админ-префикс'
+    , en_doc='[user] [tag] [-a] - set a tag; -a - admin tag')
     @loader.group_admin
-    async def prefix(self, message: Message):
+    async def pref(self, message: Message):
         context = await self._context(message, allow_self=True, target_options={"-a"})
         if not context:
             return
@@ -8434,7 +9184,7 @@ except Exception:
                 participant,
                 types.ChannelParticipantLeft,
             ):
-                member_status = "unbanned"
+                member_status = "left"
             else:
                 member_status = "member"
             joined_at = (
@@ -8454,9 +9204,13 @@ except Exception:
                     )
                 ),
             )
-        except Exception:
+        except Exception as error:
             logger.debug("Could not get fresh member info", exc_info=True)
-            return self._member_role(fallback), None, "member", False
+            if type(error).__name__ == 'UserNotParticipantError' or getattr(fallback, 'has_left', False):
+                return self._member_role(fallback), None, 'left', False
+            if fallback is None:
+                return self._s('unknown'), None, 'unknown', False
+            return self._member_role(fallback), None, 'banned' if self._member_fully_banned(fallback) else 'member', self._member_inline_blocked(fallback)
 
     async def _common_chats_count(self, user):
         try:
@@ -8488,15 +9242,20 @@ except Exception:
         user,
         permissions,
         topic_id=None,
+        profile_only=False,
     ):
-        last_messages, common_chats, member_info, chat_inline_blocked = (
-            await asyncio.gather(
-                self._random_latest_message(entity, chat_id, user),
-                self._common_chats_count(user),
-                self._fresh_member_info(entity, user, permissions),
-                self._chat_inline_blocked(entity),
+        if profile_only:
+            last_messages, common_chats, chat_inline_blocked = [], None, False
+            member_info = (self._s('unknown'), None, 'unknown', False)
+        else:
+            last_messages, common_chats, member_info, chat_inline_blocked = (
+                await asyncio.gather(
+                    self._random_latest_message(entity, chat_id, user),
+                    self._common_chats_count(user),
+                    self._fresh_member_info(entity, user, permissions),
+                    self._chat_inline_blocked(entity),
+                )
             )
-        )
         role, joined_at, member_status, member_inline_blocked = member_info
         state = {
             "entity": entity,
@@ -8510,7 +9269,7 @@ except Exception:
             "seen": {int(user.id)},
             "banned": member_status == "banned",
             "kicked": False,
-            "notice": None,
+            "notice": self._s("member_profile_unavailable") if profile_only else None,
             "notice_error": False,
             "busy": False,
             "expires": time.monotonic() + _SESSION_TTL,
@@ -8521,75 +9280,62 @@ except Exception:
             "member_status": member_status,
             "member_inline_blocked": member_inline_blocked,
             "chat_inline_blocked": chat_inline_blocked,
-            "capabilities": await self._operator_capabilities(entity),
+            "capabilities": {} if profile_only else await self._operator_capabilities(entity),
+            "profile_only": profile_only or member_status == "unknown",
         }
         state["history"] = [self._random_member_snapshot(state)]
         state["history_index"] = 0
         return state
 
     def _random_card(self, state):
-        user = state["user"]
-        resolver = getattr(self, '_random_display_name', None)
-        display_name = resolver(user) if callable(resolver) else state['display_name']
-        name = utils.escape_html(display_name)
+        user = state['user']
+        profile_only = bool(state.get('profile_only'))
+        name = utils.escape_html(self._name(user))
         profile_url = self._random_profile_url(user)
-        identity = (
-            f'<a href="{utils.escape_html(profile_url)}"><b>{name}</b></a>'
-            if profile_url
-            else f"<b>{name}</b>"
-        )
-        if state["display_name"] != str(int(user.id)):
-            identity += f" (<code>{int(user.id)}</code>)"
+        identity = f'<a href="{utils.escape_html(profile_url)}">{name}</a>' if profile_url else name
+        if name != str(int(user.id)):
+            identity += f' (<code>{int(user.id)}</code>)'
+        else:
+            identity = f'<code>{int(user.id)}</code>'
+        rows = [(self._s('result_user'), _RANDOM_EMOJI['user'], identity, False)]
         usernames = self._active_usernames(user)
         if usernames:
-            identity += '\n<blockquote expandable><b>'+self._s('active_usernames')+':</b>\n'+'\n'.join(
-                '<a href="https://t.me/'+utils.escape_html(value)+'">@'+utils.escape_html(value)+'</a>' for value in usernames)+'</blockquote>'
-        activity_line = f"<i>{self._s('activity_unchecked')}</i>"
-        if state["activity"] is not None:
-            activity_line = (
-                f"{_RANDOM_EMOJI['activity']} <b>{self._s('activity', months=state['activity_months'])}:</b> "
-                f"<code>{state['activity']}</code> {self._s('messages_short')}"
-            )
-        inline_blocked = (
-            state.get("member_status", "member") == "member"
-            and state.get("role") == self._s("role_member")
-            and (
-                state.get("member_inline_blocked", False)
-                or state.get("chat_inline_blocked", False)
-            )
-        )
-        inline_status = (
-            f"<b>{self._s('inline')}:</b> {self._s('forbidden')}\n" if inline_blocked else ""
-        )
-        member_details = ""
-        if not state.get("random_mode"):
-            visible_status = {
-                "banned": self._s("banned"),
-                "kicked": self._s("kicked"),
-                "unbanned": self._s("not_in_chat"),
-            }.get(
-                state.get("member_status", "member"),
-                state.get("role") or self._s("role_member"),
-            )
-            common_chats = state.get("common_chats")
-            common_chats = (
-                str(common_chats)
-                if common_chats is not None
-                else self._s("unknown")
-            )
-            joined_at = state.get("joined_at")
-            joined_at = (
-                joined_at.strftime("%d.%m.%Y")
-                if joined_at
-                else self._s("unknown")
-            )
-            member_details = (
-                f"<b>{self._s('status')}:</b> "
-                f"{utils.escape_html(visible_status)}\n"
-                f"<b>{self._s('common_chats')}:</b> <code>{common_chats}</code>\n"
-                f"<b>{self._s('joined')}:</b> <code>{joined_at}</code>\n"
-                f"{inline_status}"
-            )
+            links = ', '.join('<a href="https://t.me/' + utils.escape_html(value) + '">@' + utils.escape_html(value) + '</a>' for value in usernames)
+            rows.append((self._s('active_usernames'), _EMOJI['reason'], links, False))
+        visible_status = {
+            'banned': self._s('banned'), 'kicked': self._s('kicked'), 'unbanned': self._s('not_in_chat'),
+            'left': self._s('not_in_chat'), 'unknown': self._s('member_status_unknown'),
+        }.get(state.get('member_status', 'member'), state.get('role') or self._s('role_member'))
+        if not profile_only:
+            rows.append((self._s('status'), _EMOJI['error'] if state.get('member_status') == 'banned' else _EMOJI['success'], utils.escape_html(visible_status), True))
+        if not state.get('random_mode'):
+            common = state.get('common_chats')
+            joined = state.get('joined_at')
+            rows.append((self._s('common_chats'), _RANDOM_EMOJI['message'], str(common) if common is not None else self._s('unknown'), False))
+            if not profile_only:
+                rows.append((self._s('joined'), _EMOJI['time'], joined.strftime('%d.%m.%Y') if joined else self._s('unknown'), False))
+        inline_blocked = (state.get('member_status', 'member') == 'member' and state.get('role') == self._s('role_member')
+                          and (state.get('member_inline_blocked') or state.get('chat_inline_blocked')))
+        if inline_blocked:
+            rows.append((self._s('inline'), _EMOJI['error'], self._s('inline_result_forbidden'), True))
+        activity = state.get('activity')
+        activity_label = self._s('activity', months=state.get('activity_months')) if activity is not None else self._s('activity_label')
+        activity_value = f"{activity} {self._s('messages_short')}" if activity is not None else self._s('activity_pending')
+        if not profile_only:
+            rows.append((activity_label, _RANDOM_EMOJI['activity'], activity_value, activity is not None))
+        rich = self._rich_enabled()
+        rendered = []
+        for label, marker, value, highlighted in rows:
+            if rich and highlighted:
+                value = f'<mark><b>{value}</b></mark>'
+            value = marker + ' ' + value
+            rendered.append(f'<tr><td><b>{label}</b></td><td>{value}</td></tr>' if rich else f'<b>{label}</b>: {value}')
+        details = '<table bordered striped compact>' + ''.join(rendered) + '</table>' if rich else '<blockquote>' + '\n'.join(rendered) + '</blockquote>'
+        if profile_only:
+            title = self._s('member_card')
+            notice = utils.escape_html(state.get('notice') or self._s('member_status_unknown'))
+            return (_RANDOM_EMOJI['user'] + f' <b>GodChat · {title}</b>\n\n' + details
+                    + '\n\n<blockquote>' + _EMOJI['warning'] + ' ' + notice + '</blockquote>')
         last_block = f"<i>{self._s('last_message_missing')}</i>"
         if state["last_messages"]:
             item = state["last_messages"][0]
@@ -8637,16 +9383,9 @@ except Exception:
                 f"\n\n{_RANDOM_EMOJI['ok']} "
                 f"<b>{self._s('user_unbanned')}</b>"
             )
-        return (
-            f"{_RANDOM_EMOJI['dice']} "
-            f"<b>{self._s('random_member') if state.get('random_mode') else self._s('member_card')}</b>\n\n"
-            f"{_RANDOM_EMOJI['user']} {identity}\n"
-            f"{inline_status if state.get('random_mode') else ''}"
-            f"{member_details}"
-            f"{activity_line}\n\n"
-            f"{_RANDOM_EMOJI['message']} <b>{self._s('last_message')}:</b>\n"
-            f"{last_block}{status}"
-        )
+        title = self._s('random_member' if state.get('random_mode') else 'member_card')
+        return (_RANDOM_EMOJI['dice' if state.get('random_mode') else 'user'] + f' <b>GodChat · {title}</b>\n\n'
+                + details + '\n\n' + _RANDOM_EMOJI['message'] + f" <b>{self._s('last_message')}:</b>\n" + last_block + status)
 
     def _prefix_allowed(self, state, admin):
         capabilities = state.get("capabilities", {})
@@ -8667,6 +9406,43 @@ except Exception:
         if role == self._s("role_creator") or not capabilities.get("manage_ranks"):
             return False
         return role != self._s("role_admin") or bool(capabilities.get("add_admins"))
+
+    @staticmethod
+    def _member_button_icons(markup):
+        icons = {
+            '_random_kick': ('5873225338984599714', '📤'),
+            '_random_ban': ('5447128406711891434', '🚫'),
+            '_random_unban': ('5444987348334965906', '✅'),
+            '_random_check_activity': ('5877485980901971030', '📊'),
+            '_random_previous': ('5447651546613449378', '◀️'),
+            '_random_next': ('5445364025556759279', '▶️'),
+            '_random_toggle_inline': ('5445373775132522312', '🔑'),
+            '_random_toggle_guest_bots': ('5247029067256987229', '🤖'),
+            '_random_close': ('5447647474984449520', '✖️'),
+            '_channel_member_forbid': ('5447128406711891434', '🚫'),
+            '_member_prefix_input': ('5879841310902324730', '✏️'),
+        }
+        result = []
+        for row in markup:
+            rendered = []
+            for original in row:
+                button = dict(original)
+                callback = button.get('callback') or button.get('handler')
+                icon = icons.get(getattr(callback, '__name__', ''))
+                if 'url' in button:
+                    icon = ('5445326466067754897', '🌐')
+                    button.setdefault('style', 'primary')
+                elif 'copy' in button:
+                    icon = ('5445260044398524944', '📋')
+                if getattr(callback, '__name__', '') == '_member_prefix_input' and button.get('args', ())[-1:]:
+                    if button['args'][-1]:
+                        icon = ('5445373775132522312', '🔑')
+                if icon:
+                    button['text'] = re.sub(r'^[^\w]+', '', str(button['text'])).strip() or '\u200b'
+                    button['emoji_id'], button['emoji_fallback'] = icon
+                rendered.append(button)
+            result.append(rendered)
+        return result
 
     def _member_inline_button(self, token, state):
         if (
@@ -8825,7 +9601,7 @@ except Exception:
                 rows.append([guest_button])
             rows.append(close_row)
         markup.extend(rows)
-        return markup
+        return self._member_button_icons(markup)
 
     def _member_markup(self, token, state):
         member_status = state.get("member_status", "member")
@@ -8891,6 +9667,10 @@ except Exception:
                     }
                 ]
             )
+        if state.get('profile_only'):
+            markup.append([{'text': self._s('close_button'), 'callback': self._random_close,
+                            'args': (token,), 'style': 'danger'}])
+            return self._member_button_icons(markup)
         rows = []
         if moderation_row:
             rows.append(moderation_row)
@@ -8950,7 +9730,7 @@ except Exception:
             ]
         )
         markup.extend(rows)
-        return markup
+        return self._member_button_icons(markup)
 
     def _member_state_markup(self, token, state):
         if state.get("random_mode"):
@@ -8968,7 +9748,7 @@ except Exception:
             return
         await self._refresh_operator_capabilities(state)
         self._sync_random_history(state)
-        await call.edit(
+        await self._rich_edit_form(call, 
             self._random_card(state),
             reply_markup=self._member_state_markup(token, state),
         )
@@ -9626,7 +10406,7 @@ except Exception:
                     show_alert=True,
                 )
 
-    @loader.command(ru_doc=" - действия со случайным участником", en_doc=' - actions with a random member')
+    @loader.command(ru_doc='действия со случайным участником', en_doc='actions with a random member')
     @loader.group_admin
     async def rmember(self, message: Message):
         if getattr(message, "is_private", False):
@@ -9668,9 +10448,9 @@ except Exception:
             return
         token = secrets.token_urlsafe(12)
         self._sessions[token] = state
-        sent = await self.inline.form(
-            self._random_card(state),
+        sent = await self._create_inline_form(
             message,
+            self._random_card(state),
             reply_markup=self._random_markup(token, state),
             ttl=_SESSION_TTL,
         )
@@ -9689,15 +10469,19 @@ except Exception:
         "id_plain": "Plain", "id_marked": "With prefix",
         "id_failed": "Could not identify the requested user/chat or replied message sender.",
         "id_target": "Specified user/chat", "id_usage": "Use one <code>@username</code>, or run without arguments in a chat or as a reply.",
+        "id_owner": "Owner", "id_type": "Type", "id_user": "User", "id_bot": "Bot", "id_group": "Group", "id_channel": "Channel",
+        "id_full": "Telegram ID", "id_internal": "ID without prefix", "id_unknown": "Name unavailable",
     })
     strings_ru.update({
         "id_title": "ID", "id_chat": "Текущий чат", "id_sender": "Отправитель сообщения из реплая",
         "id_plain": "Обычный", "id_marked": "С префиксом",
         "id_failed": "Не удалось определить ID указанного пользователя/чата или отправителя сообщения из реплая.",
         "id_target": "Указанный пользователь/чат", "id_usage": "Укажи один <code>@username</code> или вызови команду без аргументов в чате либо реплаем.",
+        "id_owner": "Владелец", "id_type": "Тип", "id_user": "Пользователь", "id_bot": "Бот", "id_group": "Группа", "id_channel": "Канал",
+        "id_full": "Telegram ID", "id_internal": "ID без префикса", "id_unknown": "Имя недоступно",
     })
 
-    @loader.command(ru_doc=" [@username] - ID пользователя/бота/чата", en_doc=' [@username] - user/bot/chat ID; otherwise replied sender or current chat')
+    @loader.command(ru_doc='[@username] - ID пользователя/бота/чата', en_doc='[@username] - user/bot/chat ID; otherwise replied sender or current chat')
     async def id(self, message: Message):
         args = self._args(message)
         if len(args) > 1 or (args and not re.fullmatch(r"@[A-Za-z0-9_]+", args[0])):
@@ -9707,7 +10491,7 @@ except Exception:
             )
             return
         try:
-            reply = None if args else await self._get_reply_message(message)
+            reply = await self._get_reply_message(message)
             if not args and reply is None and (getattr(message, "is_reply", False) or getattr(message, "reply_to_msg_id", None)):
                 raise ValueError("reply_unavailable")
             if args:
@@ -9731,33 +10515,230 @@ except Exception:
                 _IMPORTANT_RESULT_TTL,
             )
             return
-        text = (
-            f"<b>GodChat · {self._s('id_title')}</b>\n"
-            f"{self._s('id_target' if args else 'id_sender' if reply is not None else 'id_chat')}\n\n"
-            f"{self._s('id_plain')}: <code>{plain}</code>"
-        )
+        try:
+            entity = peer if args else await self.client.get_entity(peer)
+            name = utils.escape_html(self._original_name(entity))
+            username = self._username(entity)
+            kind = 'id_bot' if marked > 0 and getattr(entity, 'bot', False) else 'id_user' if marked > 0 else 'id_channel' if getattr(entity, 'broadcast', False) else 'id_group'
+        except Exception:
+            name, username = self._s('id_unknown'), None
+            kind = 'id_user' if marked > 0 else 'id_group'
+        if marked > 0:
+            name = f'<a href="tg://user?id={plain}">{name}</a>'
+        elif username:
+            name = f'<a href="https://t.me/{utils.escape_html(username)}">{name}</a>'
+        rows = [f'<b>{self._s("id_owner")}</b>: {name}',
+                f'<b>{self._s("id_type")}</b>: {self._s(kind)}']
+        if username:
+            rows.append(f'<b>Username</b>: @{utils.escape_html(username)}')
+        rows.append(f'<b>{self._s("id_full")}</b>: <code>{marked}</code>')
         if marked != plain:
-            text += f"\n{self._s('id_marked')}: <code>{marked}</code>"
-        await self._inline_answer(message, text)
+            rows.append(f'<b>{self._s("id_internal")}</b>: <code>{plain}</code>')
+        text = (_EMOJI['reason'] + f' <b>GodChat · {self._s("id_title")}</b>\n\n'
+                + '<blockquote>' + '\n'.join(rows) + '</blockquote>')
+        reply_to = getattr(reply, 'id', None) if reply is not None else utils.get_topic(message)
+        try:
+            result = await self._create_inline_form(message, text, reply_to=reply_to)
+        except Exception:
+            logger.debug('Could not send inline ID result', exc_info=True)
+            result = None
+        if not result:
+            await self._send_rich_chat_message(message.peer_id, text, reply_to=reply_to)
+            await self._delete_command_message(message)
+
+    strings.update({
+        'channel_member_title': 'Channel', 'channel_member_name': 'Name', 'channel_member_about': 'Description',
+        'channel_member_subscribers': 'Subscribers', 'channel_member_forbid': 'Forbid messages',
+        'channel_member_blocked': 'Forbidden in this chat', 'channel_member_allowed': 'Not blocked in this chat',
+        'channel_member_failed': 'Could not forbid messages from this channel.',
+        'channel_member_actor': 'This card can only be controlled by its author or the userbot owner.',
+    })
+    strings_ru.update({
+        'channel_member_title': 'Канал', 'channel_member_name': 'Название', 'channel_member_about': 'Описание',
+        'channel_member_subscribers': 'Подписчики', 'channel_member_forbid': 'Запретить писать',
+        'channel_member_blocked': 'Запрещено в этом чате', 'channel_member_allowed': 'Не запрещено в этом чате',
+        'channel_member_failed': 'Не удалось запретить писать от этого канала.',
+        'channel_member_actor': 'Управлять карточкой может её автор или владелец юзербота.',
+    })
+
+    def _channel_member_card(self, state):
+        channel = state['channel']
+        rows = [
+            ('channel_member_name', _EMOJI['reason'], utils.escape_html(getattr(channel, 'title', None) or str(channel.id)), False),
+            ('id_type', _RANDOM_EMOJI['message'], self._s('id_group' if getattr(channel, 'megagroup', False) else 'id_channel'), False),
+            ('id_full', _EMOJI['reason'], f'<code>{tl_utils.get_peer_id(channel)}</code>', False),
+        ]
+        usernames = self._active_usernames(channel)
+        if usernames:
+            rows.append(('active_usernames', _EMOJI['reason'], ', '.join(
+                f'<a href="https://t.me/{utils.escape_html(name)}">@{utils.escape_html(name)}</a>' for name in usernames), False))
+        if state.get('subscribers') is not None:
+            rows.append(('channel_member_subscribers', _RANDOM_EMOJI['user'], str(state['subscribers']), False))
+        if not state.get('same_chat'):
+            rows.append(('status', _EMOJI['error' if state.get('blocked') else 'success'],
+                         self._s('channel_member_blocked' if state.get('blocked') else 'channel_member_allowed') if state.get('status_known') else self._s('unknown'), True))
+        text = self._result_table(_RANDOM_EMOJI['message'], self._s('channel_member_title'), rows)
+        if state.get('about'):
+            text += '\n\n<blockquote>' + utils.escape_html(state['about'][:350]) + '</blockquote>'
+        return text
+
+    def _channel_member_markup(self, token, state):
+        rows = []
+        username = self._username(state['channel'])
+        if username:
+            rows.append([{'text': self._s('profile_button'), 'url': f'https://t.me/{username}'}])
+        if state.get('can_ban') and not state.get('blocked') and not state.get('same_chat') and not state.get('busy'):
+            rows.append([{'text': self._s('channel_member_forbid'), 'callback': self._channel_member_forbid,
+                          'args': (token,), 'style': 'danger'}])
+        rows.append([{'text': self._s('close_button'), 'callback': self._random_close, 'args': (token,), 'style': 'danger'}])
+        return self._member_button_icons(rows)
+
+    async def _channel_member_rights(self, entity, actor_id):
+        if not isinstance(entity, types.Channel) or not (await self._operator_capabilities(entity)).get('ban_users'):
+            return False
+        if int(actor_id) == int(self._me_id):
+            return True
+        try:
+            permissions = await self.client.get_permissions(entity, actor_id)
+            return bool(getattr(permissions, 'is_creator', False) or getattr(permissions, 'ban_users', False))
+        except Exception:
+            return False
+
+    async def _channel_member_open(self, message, sender):
+        if self._args(message):
+            return await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('reply_or_one_user') + '</b>')
+        try:
+            channel, entity = await asyncio.gather(self.client.get_entity(sender), self.client.get_entity(message.chat_id))
+        except Exception:
+            return await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('member_card_open_failed') + '</b>')
+        actor = int(getattr(message, 'sender_id', None) or self._me_id)
+        state = dict(channel=channel, entity=entity, chat_id=message.chat_id, operator_id=actor, channel_mode=True,
+                     same_chat=int(tl_utils.get_peer_id(channel)) == int(message.chat_id), blocked=False, status_known=False,
+                     about='', subscribers=getattr(channel, 'participants_count', None), busy=False,
+                     expires=time.monotonic() + _SESSION_TTL)
+        try:
+            full = await asyncio.wait_for(self.client(functions.channels.GetFullChannelRequest(channel=channel)), 10)
+            state['about'] = getattr(full.full_chat, 'about', None) or ''
+            count = getattr(full.full_chat, 'participants_count', None)
+            if count is not None:
+                state['subscribers'] = count
+        except Exception:
+            logger.debug('Could not get extended channel card details', exc_info=True)
+        if not state['same_chat']:
+            try:
+                permissions = await asyncio.wait_for(self.client.get_permissions(entity, channel), 5)
+                rights = getattr(getattr(permissions, 'participant', None), 'banned_rights', None)
+                state['blocked'] = bool(getattr(rights, 'view_messages', False) or getattr(rights, 'send_messages', False))
+                state['status_known'] = True
+            except Exception:
+                pass
+        state['can_ban'] = not state['same_chat'] and await self._channel_member_rights(entity, actor)
+        self._prune_random_runtime()
+        token = secrets.token_urlsafe(12)
+        self._sessions[token] = state
+        try:
+            form = await self._create_inline_form(message, self._channel_member_card(state), self._channel_member_markup(token, state),
+                ttl=_SESSION_TTL, force_me=True, always_allow=[actor])
+        except Exception:
+            form = None
+            logger.debug('Could not open channel member card', exc_info=True)
+        if not form:
+            self._sessions.pop(token, None)
+            return await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('menu_open_failed') + '</b>')
+
+    async def _channel_member_forbid(self, call, token):
+        state = await self._random_state(call, token)
+        if not state or not state.get('channel_mode'):
+            return
+        actor = getattr(getattr(call, 'from_user', None), 'id', None)
+        if actor not in (self._me_id, state['operator_id']):
+            return await call.answer(self._s('channel_member_actor'), show_alert=True)
+        if state.get('same_chat') or state.get('blocked'):
+            return await call.answer(self._s('channel_member_blocked'), show_alert=True)
+        async with self._random_action(call, state) as ready:
+            if not ready:
+                return
+            if not await self._channel_member_rights(state['entity'], actor):
+                state['can_ban'] = False
+                return await call.answer(self._s('member_ban_rights'), show_alert=True)
+            await call.answer()
+            try:
+                await self.client(functions.channels.EditBannedRequest(channel=state['entity'], participant=state['channel'],
+                    banned_rights=types.ChatBannedRights(until_date=0, view_messages=True)))
+            except Exception:
+                logger.debug('Could not restrict channel from member card', exc_info=True)
+                return await call.answer(self._s('channel_member_failed'), show_alert=True)
+            state.update(blocked=True, status_known=True)
+            await self._rich_edit_form(call, self._channel_member_card(state), reply_markup=self._channel_member_markup(token, state))
+
+    strings.update({
+        'member_status_unknown': 'Membership could not be checked',
+        'member_profile_unavailable': 'Telegram did not return a profile for this ID. Try @username or reply to a message.',
+    })
+    strings_ru.update({
+        'member_status_unknown': 'Участие не удалось проверить',
+        'member_profile_unavailable': 'Telegram не вернул профиль по этому ID. Попробуй @username или реплай на сообщение.',
+    })
+
+    async def _member_context(self, message):
+        entity = await self._chat_command_entity(message)
+        if entity is None:
+            return None
+        args = self._args(message)
+        if len(args) > 1:
+            await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('reply_or_one_user') + '</b>')
+            return None
+        target = None
+        unresolved = False
+        identity = int(args[0]) if args and args[0].isdigit() and int(args[0]) > 0 else None
+        try:
+            if args:
+                target = await asyncio.wait_for(self.client.get_entity(identity or args[0]), 15)
+            else:
+                reply = await self._get_reply_message(message)
+                if reply is not None:
+                    target = await asyncio.wait_for(reply.get_sender(), 15)
+        except Exception:
+            logger.debug('Could not resolve member profile', exc_info=True)
+        if not isinstance(target, types.User) and identity:
+            try:
+                users = await asyncio.wait_for(self.client(functions.users.GetUsersRequest(
+                    id=[types.InputUser(user_id=identity, access_hash=0)]
+                ), flood_sleep_threshold=0), 5)
+                target = next((user for user in users if isinstance(user, types.User) and int(user.id) == identity), None)
+            except Exception:
+                logger.debug('Member ID has no accessible profile', exc_info=True)
+            if target is None:
+                target = types.User(id=identity, first_name=self._s('id_unknown'))
+                unresolved = True
+        if not isinstance(target, types.User):
+            await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('reply_or_user') + '</b>')
+            return None
+        permissions = None
+        if not unresolved:
+            try:
+                permissions = await asyncio.wait_for(self.client.get_permissions(entity, target), 10)
+            except Exception as error:
+                if type(error).__name__ == 'UserNotParticipantError':
+                    permissions = SimpleNamespace(has_left=True, is_admin=False, is_creator=False)
+                else:
+                    logger.debug('Could not check member profile participation', exc_info=True)
+        return entity, target, permissions, unresolved
 
     @loader.command(
-        ru_doc=" [пользователь] - карточка пользователя"
-    , en_doc=' [user] - member card')
+        ru_doc='[пользователь/реплай] - карточка пользователя или канала-отправителя'
+    , en_doc='[user/reply] - member or sender channel card')
     @loader.group_admin
     async def member(self, message: Message):
-        context = await self._context(message, allow_self=True)
+        if getattr(message, 'is_group', False) and not getattr(message, 'is_private', False):
+            reply = await self._get_reply_message(message)
+            sender = getattr(reply, 'from_id', None)
+            if isinstance(sender, types.PeerChannel):
+                return await self._channel_member_open(message, sender)
+        context = await self._member_context(message)
         if not context:
             return
-        entity, target, permissions, args = context
-        if args:
-            await self._inline_answer(
-                message,
-                (
-                    f"{_EMOJI['error']} "
-                    f"<b>{self._s('reply_or_one_user')}</b>"
-                ),
-            )
-            return
+        entity, target, permissions, unresolved = context
         try:
             state = await self._make_member_state(
                 entity,
@@ -9765,6 +10746,7 @@ except Exception:
                 target,
                 permissions,
                 utils.get_topic(message),
+                profile_only=unresolved,
             )
         except Exception:
             logger.exception("Could not create member card")
@@ -9778,9 +10760,9 @@ except Exception:
             return
         token = secrets.token_urlsafe(12)
         self._sessions[token] = state
-        sent = await self.inline.form(
-            self._random_card(state),
+        sent = await self._create_inline_form(
             message,
+            self._random_card(state),
             reply_markup=self._member_markup(token, state),
             ttl=_SESSION_TTL,
         )
@@ -9844,7 +10826,7 @@ except Exception:
             deleted += len(batch)
         return deleted
 
-    @loader.command(ru_doc=" - удалить сообщения до реплая", en_doc=' - delete messages up to the replied one')
+    @loader.command(ru_doc='удалить сообщения до реплая', en_doc='delete messages up to the replied one')
     @loader.group_admin_delete_messages
     async def purge(self, message: Message):
         entity = await self._chat_command_entity(message)
@@ -9909,8 +10891,8 @@ except Exception:
             return
 
     @loader.command(
-        ru_doc=" [пользователь] [n|-all] - удаление сообщений, без аргументов удаляет реплай"
-    , en_doc=' [user] [n|-all] - delete messages; without arguments deletes the reply')
+        ru_doc='[пользователь] [n|-all] - удаление сообщений, без аргументов удаляет реплай'
+    , en_doc='[user] [n|-all] - delete messages; without arguments deletes the reply')
     @loader.group_admin_delete_messages
     async def delcmd(self, message: Message):
         args = self._args(message)
@@ -10054,10 +11036,8 @@ except Exception:
 
     def _gban_report(self, target, counts, chats, show_chats, undo=False, running=False,
                      stopped=False, reason=""):
-        icon = _EMOJI["success" if undo else "ban"]
-        title = self._s("gunban_title" if undo else "gban_title")
-        if running:
-            title = self._s("gunban_work" if undo else "gban_work")
+        icon = _EMOJI['warning'] if stopped or counts.get('errors') else _EMOJI['success' if undo else 'ban']
+        title = self._s('gunban_title' if undo else 'gban_title')
         username = self._username(target)
         profile = (f"https://t.me/{username}"
                    if username and re.fullmatch(r"[A-Za-z0-9_]{1,32}", username)
@@ -10065,15 +11045,16 @@ except Exception:
         name = utils.escape_html(self._name(target))
         label = (f'<a href="{profile}"><b>{name}</b></a> '
                  f'(<code>{int(target.id)}</code>)')
-        text = f"{icon} <b>GodChat · {title}</b>\n{label}"
+        status = self._s('gunban_work' if undo else 'gban_work') if running else self._s(
+            'gban_result_stopped' if stopped else 'gban_result_partial' if counts.get('errors') else 'gban_result_done')
+        rows = [('result_user', _RANDOM_EMOJI['user'], label, False), ('status', icon, utils.escape_html(status), True)]
         if reason and not undo:
-            text += self._reason_block(reason)
+            rows.append(('reason', _EMOJI['reason'], utils.escape_html(reason), False))
         if not running:
-            total = counts["changed"] + (0 if undo else counts["removed"])
-            text += (f"\n\n{self._s('gunban_changed' if undo else 'gban_changed')}: "
-                     f"<b>{total}</b>")
-        if stopped:
-            text += "\n" + self._s("gban_flood_stopped")
+            total = counts['changed'] + (0 if undo else counts['removed'])
+            result = self._s('gban_result_unbanned' if undo else 'gban_result_banned', count=total)
+            rows.append(('gban_result_action', _EMOJI['success'], utils.escape_html(result), True))
+        text = self._result_table(icon, title, rows)
         if show_chats and chats:
             items = []
             for entity in chats:
@@ -10081,14 +11062,17 @@ except Exception:
                 username = self._username(entity)
                 if username and re.fullmatch(r"[A-Za-z0-9_]{5,32}", username):
                     name = f'<a href="https://t.me/{username}">{name}</a>'
-                line = "▫️ " + name
+                line = "• " + name
                 if len(text) + sum(map(len, items)) + len(line) > 3400:
                     break
                 items.append(line)
             hidden = len(chats) - len(items)
             if hidden:
                 items.append(self._s("gban_more", count=hidden))
-            text += "\n\n<blockquote expandable>" + "\n".join(items) + "</blockquote>"
+            if self._rich_enabled():
+                text += '\n\n<details><summary>' + self._s('gban_result_chats') + '</summary><p>' + '<br>'.join(items) + '</p></details>'
+            else:
+                text += "\n\n<blockquote expandable>" + "\n".join(items) + "</blockquote>"
         return text
 
     async def _gban_member_state(self, entity, target):
@@ -10172,7 +11156,7 @@ except Exception:
         counts = {"changed": 0, "removed": 0, "skipped": 0, "errors": 0}
         chats = []
         async with self._gban_lock:
-            status = await utils.answer(
+            status = await self._rich_answer(
                 message, self._gban_report(target, counts, chats, False,
                                            undo=undo, running=True, reason=reason))
             eligible = []
@@ -10224,17 +11208,17 @@ except Exception:
                                 chats.append(entity)
                     if stopped:
                         break
-            await utils.answer(
+            await self._rich_answer(
                 status or message, self._gban_report(target, counts, chats, show_chats,
                                                       undo=undo, stopped=stopped,
                                                       reason=reason))
 
-    @loader.command(ru_doc=" [пользователь] [причина] [-f] - забанить во всех доступных чатах; -f: список чатов", en_doc=' [user] [reason] [-f] - ban in all accessible chats; -f: chat list')
+    @loader.command(ru_doc='[пользователь] [причина] [-f] - забанить во всех доступных чатах; -f: список чатов', en_doc='[user] [reason] [-f] - ban in all accessible chats; -f: chat list')
     @loader.owner
     async def gban(self, message: Message):
         await self._gban_run(message)
 
-    @loader.command(ru_doc=" [пользователь] [-f] - разбанить во всех доступных чатах; -f: список чатов", en_doc=' [user] [-f] - unban in all accessible chats; -f: chat list')
+    @loader.command(ru_doc='[пользователь] [-f] - разбанить во всех доступных чатах; -f: список чатов', en_doc='[user] [-f] - unban in all accessible chats; -f: chat list')
     @loader.owner
     async def gunban(self, message: Message):
         await self._gban_run(message, undo=True)
@@ -10243,6 +11227,9 @@ except Exception:
         "gban_usage": "Reply to a user or specify @username/ID. Use -f to show the chat list.",
         "gban_busy": "A global ban or unban is already running.",
         "gban_title": "Global ban", "gunban_title": "Global unban",
+        "gban_result_done": "Completed", "gban_result_partial": "Completed with errors", "gban_result_stopped": "Stopped (FloodWait)",
+        "gban_result_action": "Result", "gban_result_banned": "Banned in {count} chats", "gban_result_unbanned": "Unbanned in {count} chats",
+        "gban_result_errors": "Errors", "gban_result_chats": "Chats",
         "gban_work": "Banning across chats...", "gunban_work": "Unbanning across chats...",
         "gban_changed": "Banned in chats and channels",
         "gunban_changed": "Unbanned in chats and channels",
@@ -10253,6 +11240,9 @@ except Exception:
         "gban_usage": "Ответь на пользователя или укажи @username/ID. Флаг -f покажет список чатов.",
         "gban_busy": "Глобальный бан или разбан уже выполняется.",
         "gban_title": "Глобальный бан", "gunban_title": "Глобальный разбан",
+        "gban_result_done": "Завершено", "gban_result_partial": "Завершено с ошибками", "gban_result_stopped": "Остановлено (FloodWait)",
+        "gban_result_action": "Результат", "gban_result_banned": "Забанен в {count} чатах", "gban_result_unbanned": "Разбанен в {count} чатах",
+        "gban_result_errors": "Ошибки", "gban_result_chats": "Чаты",
         "gban_work": "Баню в чатах...", "gunban_work": "Разбаниваю в чатах...",
         "gban_changed": "Забанено в чатах и каналах",
         "gunban_changed": "Разбанено в чатах и каналах",
@@ -10275,7 +11265,7 @@ except Exception:
         try:
             permissions = await self.client.get_permissions(entity, target)
             if getattr(permissions, "is_creator", False):
-                await call.edit(
+                await self._rich_edit_form(call, 
                     (
                         f"{_EMOJI['error']} "
                         f"<b>{self._s('creator_ban_forbidden')}</b>"
@@ -10308,7 +11298,7 @@ except Exception:
                     f"<b>{self._s('demote_ban_failed')}</b>"
                 )
             )
-            await call.edit(
+            await self._rich_edit_form(call, 
                 text,
                 reply_markup={
                     "text": self._s("close_button"),
@@ -10318,8 +11308,8 @@ except Exception:
             )
             self._schedule_temporary_delete(call, _IMPORTANT_RESULT_TTL)
             return
-        await call.edit(
-            self._result(
+        await self._rich_edit_form(call, 
+            self._mute_result(
                 _EMOJI["ban"],
                 self._s("ban_title"),
                 target,
@@ -10337,10 +11327,9 @@ except Exception:
 
     @loader.command(
         ru_doc=(
-            " [пользователь] [время] [-d] [причина] - бан; "
-            "[-d] - удалить все сообщения"
+            '[пользователь] [время] [-d] [причина] - бан; [-d] - удалить все сообщения'
         )
-    , en_doc=' [user] [time] [-d] [reason] - ban; [-d] - delete all messages')
+    , en_doc='[user] [time] [-d] [reason] - ban; [-d] - delete all messages')
     @loader.group_admin_ban_users
     async def ban(self, message: Message):
         context = await self._context(
@@ -10371,22 +11360,11 @@ except Exception:
             )
             return
         if getattr(permissions, "is_admin", False):
-            sent = await self.inline.form(
-                (
-                    f"{_EMOJI['warning']} "
-                    f"<b>GodChat · {self._s('confirmation')}</b>\n\n"
-                    f"<blockquote>{self._label(target)}\n"
-                    f"<b>{self._s('administrator')}:</b> {self._s('admin_will_be_demoted')}"
-                    f"{self._duration_block(duration_label)}"
-                    f"{self._reason_block(reason)}"
-                    + (
-                        f"\n<b>{self._s('messages')}:</b> {self._s('will_be_deleted')}"
-                        if delete_history
-                        else ""
-                    )
-                    + "</blockquote>"
-                ),
+            sent = await self._create_inline_form(
                 message,
+                self._mute_result(_EMOJI['warning'], self._s('confirmation'), target,
+                                  self._s('admin_will_be_demoted'), duration_label, reason,
+                                  history_pending=delete_history),
                 reply_markup=[
                     [
                         {
@@ -10442,7 +11420,7 @@ except Exception:
             return
         await self._inline_answer(
             message,
-            self._result(
+            self._mute_result(
                 _EMOJI["ban"],
                 self._s("ban_title"),
                 target,
@@ -10453,7 +11431,7 @@ except Exception:
             ),
         )
 
-    @loader.command(ru_doc=" [пользователь] [-all] - разбан; [-all] - разбан всех", en_doc=' [user] [-all] - unban; [-all] - unban all')
+    @loader.command(ru_doc='[пользователь] [-all] - разбан; [-all] - разбан всех', en_doc='[user] [-all] - unban; [-all] - unban all')
     @loader.group_admin_ban_users
     async def unban(self, message: Message):
         args = utils.get_args_raw(message).split()
@@ -10492,7 +11470,7 @@ except Exception:
             return
         await self._inline_answer(
             message,
-            self._result(
+            self._mute_result(
                 _EMOJI["success"],
                 self._s("unban_title"),
                 target,
@@ -10576,7 +11554,7 @@ except Exception:
             text = (_EMOJI['warning']+' <b>GodChat · '+self._s('amn_title')+'</b>\n\n<blockquote>'
                     +utils.escape_html(entity.title)+' · <code>'+str(message.chat_id)+'</code>\n'
                     +self._s('amn_confirm', count=len(job['users']))+'</blockquote>')
-            sent = await self.inline.form(text, message, force_me=True, reply_markup=[[
+            sent = await self._create_inline_form(message, text, force_me=True, reply_markup=[[
                 {"text":self._s('amn_start'),"callback":self._amn_confirm,"args":(token,),"style":"danger"},
                 {"text":self._s('cancel_button'),"callback":self._amn_stop,"args":(token,),"style":"danger"}]])
             if not sent:
@@ -10624,7 +11602,7 @@ except Exception:
                 if job['stop']:
                     break
                 if (done+skipped) % 10 == 0:
-                    await call.edit(self._s('amn_running',done=done,total=len(job['users'])), reply_markup=[[
+                    await self._rich_edit_form(call, self._s('amn_running',done=done,total=len(job['users'])), reply_markup=[[
                         {'text':self._s('amn_stop'),'callback':self._amn_stop,'args':(token,), 'style':'danger'}]])
                 stage = 'recheck'
                 current = await self.client(functions.channels.GetParticipantRequest(
@@ -10655,9 +11633,9 @@ except Exception:
             text = self._s('amn_result',status=self._s('amn_stopped' if job['stop'] or error_text else 'amn_done'),
                 done=done,skipped=skipped,remaining=len(job['users'])-done-skipped)
             try:
-                await call.edit(_EMOJI['success' if not error_text else 'warning']+' <b>'+text+'</b>',reply_markup=None)
+                await self._rich_edit_form(call, _EMOJI['success' if not error_text else 'warning']+' <b>'+text+'</b>',reply_markup=None)
                 if error_text:
-                    report = await self.client.send_message(job['entity'],_EMOJI['error']+' '+error_text)
+                    report = await self._send_rich_chat_message(job['entity'],_EMOJI['error']+' '+error_text)
                     self._schedule_temporary_delete(report,_IMPORTANT_RESULT_TTL)
             except Exception:
                 logger.exception('amn op=%s stage=report completed=%s',token,done)
@@ -10722,7 +11700,7 @@ except Exception:
             current_admin_ids = await self._random_admin_ids(job["entity"])
         except Exception:
             logger.exception("Could not refresh admin list for bulk kick")
-            await call.edit(
+            await self._rich_edit_form(call, 
                 (
                     f"{_EMOJI['error']} "
                     f"<b>{self._s('admin_list_refresh_failed')}</b>"
@@ -10742,14 +11720,14 @@ except Exception:
                 kicked += 1
             except Exception:
                 logger.debug("Could not kick deleted account", exc_info=True)
-        await call.edit(
+        await self._rich_edit_form(call, 
             f"{_EMOJI['success']} <b>{self._s('kicked_count')}: <code>{kicked}</code></b>",
             reply_markup=None,
         )
 
     @loader.command(
-        ru_doc=" [пользователь] [причина] [-d] - кик; [-d] - кик удалённых аккаунтов"
-    , en_doc=' [user] [reason] [-d] - kick; [-d] - kick deleted accounts')
+        ru_doc='[пользователь] [причина] [-d] - кик; [-d] - кик удалённых аккаунтов'
+    , en_doc='[user] [reason] [-d] - kick; [-d] - kick deleted accounts')
     @loader.group_admin_ban_users
     async def kick(self, message: Message):
         raw_args = [arg.lower() for arg in self._args(message)]
@@ -10797,14 +11775,14 @@ except Exception:
                 "users": users,
                 "expires": time.monotonic() + _BULK_KICK_TTL,
             }
-            sent = await self.inline.form(
+            sent = await self._create_inline_form(
+                message,
                 (
                     f"{_EMOJI['warning']} "
                     f"<b>GodChat · {self._s('deleted_accounts')}</b>\n\n"
                     f"<blockquote><b>{self._s('will_be_kicked')}:</b> "
                     f"<code>{self._number(len(users))}</code></blockquote>"
                 ),
-                message,
                 reply_markup=[
                     [
                         {
@@ -10875,6 +11853,1691 @@ except Exception:
                 reason,
             ),
         )
+
+    strings.update({
+        "tkick_title": "Kick by join time", "tkick_from": "From", "tkick_to": "Until",
+        "tkick_unset": "not selected", "tkick_now": "now", "tkick_timezone": "Timezone",
+        "tkick_weekdays": "Mon|Tue|Wed|Thu|Fri|Sat|Sun",
+        "tkick_pick_day": "{field}: choose a date",
+        "tkick_pick_time": "{field}: choose a time",
+        "tkick_pick_hour": "Hour", "tkick_pick_minute": "Minute",
+        "tkick_picker_save": "Set", "tkick_picker_clear": "Clear start",
+        "tkick_picker_now": "Until now", "tkick_picker_today": "Today",
+        "tkick_picker_week": "7 days", "tkick_picker_month": "30 days",
+        "tkick_picker_year": "Year",
+        "tkick_hour_input": "Enter hour: 0–23",
+        "tkick_minute_input": "Enter minute: 0–59",
+        "tkick_bad_hour": "Enter an hour from 0 to 23.",
+        "tkick_bad_minute": "Enter a minute from 0 to 59.",
+        "tkick_time_hint": "Enter hours and minutes, then press Set.",
+        "tkick_bad_range": "The end must not precede the start or be in the future.",
+        "tkick_need_from": "Choose the start time first.",
+        "tkick_show": "Show members", "tkick_scanning": "Scanning members…",
+        "tkick_scan_failed": "Could not scan all members. Check permissions and try again.",
+        "tkick_scan_limit": "The member list is too large for a complete scan. No one was selected.",
+        "tkick_supergroup": "Open .tkick in a supergroup.",
+        "tkick_found": "Found", "tkick_selected": "Selected",
+        "tkick_empty": "No members joined during this interval.",
+        "tkick_kick": "Kick", "tkick_settings": "Configure", "tkick_close": "Close",
+        "tkick_back": "Back", "tkick_confirm": "Confirm kick",
+        "tkick_confirm_text": "Kick {count} selected members? Their membership and join time will be checked again.",
+        "tkick_none_selected": "Select at least one member.",
+        "tkick_expired": "This menu expired. Run .tkick again.",
+        "tkick_busy": "The member scan or kick is already running.",
+        "tkick_settings_failed": "Could not open settings. Try again.",
+        "tkick_rights": "Administrator rights to remove members are required.",
+        "tkick_progress": "Kicking: {done}/{total}",
+        "tkick_stop": "Stop", "tkick_stopped": "Stopped",
+        "tkick_result": "Kicked: {done} · Skipped: {skipped} · Failed: {failed} · Remaining: {remaining}",
+        "tkick_flood": "Telegram rate limit. Stopped; try again later.",
+        "tkick_run_failed": "The kick was interrupted by an error. See the server log.",
+        "tkick_refresh": "Refresh list", "tkick_settings_hint": "Green members will be kicked; red members will be skipped.",
+    })
+    strings_ru.update({
+        "tkick_title": "Кик по времени вступления", "tkick_from": "С", "tkick_to": "До",
+        "tkick_unset": "не выбрано", "tkick_now": "сейчас", "tkick_timezone": "Часовой пояс",
+        "tkick_weekdays": "Пн|Вт|Ср|Чт|Пт|Сб|Вс",
+        "tkick_pick_day": "{field}: выбери дату",
+        "tkick_pick_time": "{field}: выбери время",
+        "tkick_pick_hour": "Часы", "tkick_pick_minute": "Минуты",
+        "tkick_picker_save": "Установить", "tkick_picker_clear": "Убрать «С»",
+        "tkick_picker_now": "До сейчас", "tkick_picker_today": "Сегодня",
+        "tkick_picker_week": "7 дней", "tkick_picker_month": "30 дней",
+        "tkick_picker_year": "Год",
+        "tkick_hour_input": "Введи часы: от 0 до 23",
+        "tkick_minute_input": "Введи минуты: от 0 до 59",
+        "tkick_bad_hour": "Введи часы от 0 до 23.",
+        "tkick_bad_minute": "Введи минуты от 0 до 59.",
+        "tkick_time_hint": "Введи часы и минуты, затем нажми «Установить».",
+        "tkick_bad_range": "Конец промежутка должен быть не раньше начала и не позже текущего времени.",
+        "tkick_need_from": "Сначала выбери время «С».",
+        "tkick_show": "Показать участников", "tkick_scanning": "Проверяю участников…",
+        "tkick_scan_failed": "Не удалось проверить всех участников. Проверь права и попробуй снова.",
+        "tkick_scan_limit": "Список участников слишком велик для полной проверки. Никто не выбран.",
+        "tkick_supergroup": "Открой .tkick в супергруппе.",
+        "tkick_found": "Найдено", "tkick_selected": "Выбрано",
+        "tkick_empty": "За этот промежуток никто не вступил.",
+        "tkick_kick": "Кикнуть", "tkick_settings": "Настроить", "tkick_close": "Закрыть",
+        "tkick_back": "Назад", "tkick_confirm": "Подтвердить кик",
+        "tkick_confirm_text": "Кикнуть выбранных участников: {count}? Перед киком их статус и дата вступления будут проверены ещё раз.",
+        "tkick_none_selected": "Выбери хотя бы одного участника.",
+        "tkick_expired": "Меню устарело. Запусти .tkick снова.",
+        "tkick_busy": "Проверка участников или кик уже выполняется.",
+        "tkick_settings_failed": "Не удалось открыть настройки. Попробуй ещё раз.",
+        "tkick_rights": "Нужны права администратора на удаление участников.",
+        "tkick_progress": "Кикаю: {done}/{total}",
+        "tkick_stop": "Остановить", "tkick_stopped": "Остановлено",
+        "tkick_result": "Кикнуто: {done} · Пропущено: {skipped} · Ошибок: {failed} · Осталось: {remaining}",
+        "tkick_flood": "Ограничение Telegram. Остановлено; попробуй позже.",
+        "tkick_run_failed": "Кик прерван из-за ошибки. Подробности в журнале.",
+        "tkick_refresh": "Обновить список", "tkick_settings_hint": "Зелёные будут кикнуты, красные — пропущены.",
+    })
+
+    @staticmethod
+    def _getmsg_tr(job, ru, en):
+        return ru if job.get('ru') else en
+
+    @staticmethod
+    def _getmsg_tz(job):
+        return timezone(timedelta(minutes=job['tz_minutes']))
+
+    @staticmethod
+    def _getmsg_chat(entity):
+        return {'id': int(tl_utils.get_peer_id(entity)), 'entity': entity,
+                'title': str(getattr(entity, 'title', None) or ' '.join(filter(None, (
+                    getattr(entity, 'first_name', None), getattr(entity, 'last_name', None)
+                ))) or getattr(entity, 'username', None) or getattr(entity, 'id', '')),
+                'selected': True}
+
+    @staticmethod
+    def _getmsg_date(value):
+        if not isinstance(value, datetime):
+            return None
+        return (value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value).astimezone(timezone.utc)
+
+    async def _getmsg_ack(self, call, text=None, alert=False):
+        if getattr(call, 'data', None) is not None:
+            try:
+                await call.answer(text, show_alert=alert)
+            except Exception:
+                logger.debug('getmsg callback answer unavailable', exc_info=True)
+
+    def _getmsg_prune(self):
+        now = time.monotonic()
+        for token, job in tuple(self._getmsg_jobs.items()):
+            if not job.get('running') and not job.get('busy') and job['expires'] <= now:
+                self._getmsg_jobs.pop(token, None)
+
+    async def _getmsg_job(self, call, token):
+        if self._getmsg_closing:
+            return None
+        self._getmsg_prune()
+        job = self._getmsg_jobs.get(token)
+        if not job:
+            await self._getmsg_ack(call, self._s('gq_expired'), True)
+            return None
+        actor = getattr(getattr(call, 'from_user', None), 'id', None) or getattr(call, 'sender_id', None)
+        if actor != job['operator_id']:
+            await self._getmsg_ack(call, self._getmsg_tr(job, 'Это меню другого пользователя.', 'This menu belongs to another user.'), True)
+            return None
+        job['expires'] = time.monotonic() + 86400
+        return job
+
+    def _getmsg_period(self, job):
+        tr = lambda ru, en: self._getmsg_tr(job, ru, en)
+        zone = self._getmsg_tz(job)
+        fmt = lambda value: value.astimezone(zone).strftime('%d.%m.%y %H:%M')
+        if job['from'] is None and job['to'] is None:
+            return tr('Вся доступная история', 'All available history')
+        return (tr('С: ', 'From: ') + (fmt(job['from']) if job['from'] else tr('начала истории', 'beginning'))
+                + ' · ' + tr('До: ', 'To: ') + (fmt(job['to']) if job['to'] else tr('сейчас', 'now')))
+
+    def _getmsg_text(self, job):
+        tr = lambda ru, en: self._getmsg_tr(job, ru, en)
+        selected = sum(chat['selected'] for chat in job['chats'].values())
+        mode = {'current': tr('Текущий чат', 'Current chat'), 'common': tr('Все общие чаты', 'All common chats'),
+                'manual': tr('Чаты по ID', 'Chats by ID')}[job['mode']]
+        minutes = job['tz_minutes']
+        zone_name = f'UTC{"+" if minutes >= 0 else "-"}{abs(minutes) // 60:02d}:{abs(minutes) % 60:02d}'
+        summary_rows = [
+            (tr('Источник', 'Source'), _RANDOM_EMOJI['message'], mode),
+            (tr('Чаты', 'Chats'), _RANDOM_EMOJI['activity'], str(selected)),
+            (tr('Период', 'Period'), _EMOJI['time'],
+             utils.escape_html(self._getmsg_period(job)) + f' · <code>{zone_name}</code>'),
+            (tr('Результат', 'Output'), _EMOJI['reason'],
+             tr('По файлу на чат', 'One file per chat') if job['split'] and selected > 1 else tr('Один TXT', 'One TXT')),
+            (tr('Отправка', 'Send to'), _EMOJI['kick'],
+             tr('Избранное', 'Saved Messages') if job['destination'] == 'saved' else tr('Текущий чат', 'Current chat')),
+        ]
+        summary = '\n'.join(f'<b>{label}</b>: {marker} {value}' for label, marker, value in summary_rows)
+        text = (_EMOJI['reason'] + ' <b>GodChat · getmsg</b>\n\n'
+                + f'<a href="tg://user?id={job["user"].id}">{utils.escape_html(self._original_name(job["user"]))}</a>'
+                + f' (<code>{job["user"].id}</code>)\n'
+                + '<blockquote>' + summary + '</blockquote>')
+        status_rows = []
+        if job.get('busy'):
+            text += '\n' + (tr('Проверяю ID чатов…', 'Checking chat IDs…') if job.get('busy_kind') == 'ids'
+                            else tr('Получаю список общих чатов…', 'Loading common chats…'))
+        elif job.get('running'):
+            status_rows.extend([
+                (tr('Чат', 'Chat'), _RANDOM_EMOJI['message'], utils.escape_html(job.get('current_title', '…'))),
+                (tr('Обработано чатов', 'Processed chats'), _RANDOM_EMOJI['activity'], f'{job["processed"]}/{job["chat_count"]}'),
+                (tr('Сообщений', 'Messages'), _EMOJI['reason'], str(job['found'] + job.get('buffered', 0))),
+                (tr('Просмотрено', 'Scanned'), _RANDOM_EMOJI['activity'], str(job.get('scanned', 0))),
+            ])
+            if job.get('phase') == 'sending':
+                status_rows.append((tr('Отправка файлов', 'Sending files'), _EMOJI['kick'], f'{job["sent"]}/{job["files"]}'))
+            elif job.get('phase') == 'writing':
+                status_rows.append((tr('Этап', 'Stage'), _EMOJI['time'], tr('Подготавливаю TXT…', 'Preparing TXT…')))
+        elif job.get('finished'):
+            status_rows.extend([
+                (tr('Сохранено сообщений', 'Saved messages'), _EMOJI['reason'], str(job['found'])),
+                (tr('Отправлено файлов', 'Files sent'), _EMOJI['kick'], f'{job["sent"]}/{job["files"]}'),
+            ])
+            if job.get('stopped'):
+                status_rows.append((tr('Статус', 'Status'), _EMOJI['warning'], tr('Сбор остановлен; результат неполный.', 'Collection stopped; the result is incomplete.')))
+            if job.get('errors'):
+                status_rows.append((tr('Чатов с неполным сбором', 'Chats with incomplete history'), _EMOJI['warning'], str(job['errors'])))
+            if job.get('send_errors'):
+                status_rows.append((tr('Не удалось отправить файлов', 'Files not sent'), _EMOJI['error'], str(job['send_errors'])))
+        if job.get('wait_seconds'):
+            status_rows.append((tr('Пауза Telegram', 'Telegram wait'), _EMOJI['time'], f'{job["wait_seconds"]} ' + tr('с', 's')))
+        if status_rows:
+            text += '\n\n<blockquote>' + '\n'.join(f'<b>{label}</b>: {marker} {value}' for label, marker, value in status_rows) + '</blockquote>'
+        if job.get('notice'):
+            text += '\n\n' + _EMOJI['warning'] + ' ' + utils.escape_html(job['notice'])
+        if job.get('view') == 'chats':
+            chats = list(job['chats'].values())
+            pages = max(1, (len(chats) + 7) // 8)
+            job['page'] = max(0, min(job.get('page', 0), pages - 1))
+            text += '\n\n' + tr('Выбор чатов', 'Chat selection') + f' · {job["page"] + 1}/{pages}'
+        elif job.get('view') in ('calendar', 'time'):
+            text += '\n\n' + tr('Дата начала', 'Start date') if job['picker_field'] == 'from' else '\n\n' + tr('Дата окончания', 'End date')
+            if job['view'] == 'time':
+                text += f' · {job["picker_date"]:%d.%m.%Y} {job["picker_hour"]:02d}:{job["picker_minute"]:02d}'
+        return text
+
+    def _getmsg_markup(self, token, job):
+        tr = lambda ru, en: self._getmsg_tr(job, ru, en)
+        def button(text, action, value=None, style=None):
+            item = {'text': text, 'callback': self._getmsg_action, 'args': (token, action, value)}
+            if style:
+                item['style'] = style
+            return item
+        close = button(tr('Закрыть', 'Close'), 'close', style='danger')
+        back = button(tr('Назад', 'Back'), 'main')
+        if job.get('running') or job.get('busy'):
+            label = (tr('Остановить отправку', 'Stop sending') if job.get('phase') == 'sending'
+                     else tr('Отменить подготовку', 'Cancel preparation') if job.get('phase') == 'writing'
+                     else tr('Остановить и сохранить', 'Stop and save') if job.get('running')
+                     else tr('Отмена', 'Cancel'))
+            return [[button(label, 'stop', style='danger')]]
+        view = job.get('view', 'main')
+        selected = sum(chat['selected'] for chat in job['chats'].values())
+        if view == 'chats':
+            chats = list(job['chats'].values())
+            page = max(0, min(job.get('page', 0), max(0, (len(chats) - 1) // 8)))
+            rows = [[button(('✓ ' if chat['selected'] else '✕ ') + chat['title'][:48], 'toggle', chat['id'],
+                            'success' if chat['selected'] else 'danger')] for chat in chats[page * 8:page * 8 + 8]]
+            if len(chats) > 8:
+                rows.append([button('‹', 'page', -1), button('›', 'page', 1)])
+            if job['mode'] == 'manual':
+                rows.append([{'text': tr('Добавить ID чатов', 'Add chat IDs'), 'input': tr('ID чатов через пробел', 'Chat IDs separated by spaces'),
+                              'handler': self._getmsg_ids_input, 'args': (token,), 'style': 'primary'}])
+            if chats:
+                rows.append([button(tr('Выбрать все', 'Select all'), 'select_all', True),
+                             button(tr('Снять все', 'Clear selection'), 'select_all', False)])
+            return rows + [[back, close]]
+        if view == 'period':
+            fmt = lambda value, default: value.astimezone(self._getmsg_tz(job)).strftime('%d.%m.%y %H:%M') if value else default
+            return [[button(tr('С: ', 'From: ') + fmt(job['from'], tr('начала истории', 'beginning')), 'picker', 'from', 'primary')],
+                    [button(tr('До: ', 'To: ') + fmt(job['to'], tr('сейчас', 'now')), 'picker', 'to', 'primary')],
+                    [button(tr('Сутки', '24 hours'), 'preset', 1), button(tr('7 дней', '7 days'), 'preset', 7),
+                     button(tr('30 дней', '30 days'), 'preset', 30)],
+                    [button(tr('Вся доступная история', 'All available history'), 'preset', 0, 'success')], [back, close]]
+        if view == 'calendar':
+            anchor = job['picker_anchor']
+            days = [anchor - timedelta(days=offset) for offset in range(7)
+                    if anchor - timedelta(days=offset) >= datetime(2003, 1, 1).date()]
+            weekdays = self._s('tkick_weekdays').split('|')
+            rows = [[button(f'{weekdays[day.weekday()]} · {day:%d.%m.%y}', 'day', day.isoformat(),
+                            'success' if day == job.get('picker_date') else 'primary') for day in days[i:i + 2]]
+                    for i in range(0, len(days), 2)]
+            rows += [[button('← 7', 'shift', -7), button(tr('Сегодня', 'Today'), 'shift', 0), button('7 →', 'shift', 7)],
+                     [button('← 30', 'shift', -30), button('30 →', 'shift', 30)],
+                     [button('← 365', 'shift', -365), button('365 →', 'shift', 365)],
+                     [button(tr('Без начала', 'No start') if job['picker_field'] == 'from' else tr('До сейчас', 'Until now'),
+                             'date_reset'), button(tr('Назад', 'Back'), 'period'), close]]
+            return rows
+        if view == 'time':
+            rows = [[{'text': tr('Часы: ', 'Hours: ') + f'{job["picker_hour"]:02d}', 'input': '00–23',
+                      'handler': self._getmsg_time_input, 'args': (token, 'hour'), 'style': 'primary'},
+                     {'text': tr('Минуты: ', 'Minutes: ') + f'{job["picker_minute"]:02d}', 'input': '00–59',
+                      'handler': self._getmsg_time_input, 'args': (token, 'minute'), 'style': 'primary'}]]
+            return rows + [[button(tr('Установить', 'Set'), 'date_save', style='success'),
+                            button(tr('Назад', 'Back'), 'calendar'), close]]
+        rows = [[button(tr('Текущий чат', 'Current chat'), 'mode', 'current', 'success' if job['mode'] == 'current' else 'primary'),
+                 button(tr('Все общие', 'All common'), 'mode', 'common', 'success' if job['mode'] == 'common' else 'primary')],
+                [button(tr('Чаты по ID', 'Chats by ID'), 'mode', 'manual', 'success' if job['mode'] == 'manual' else 'primary')]]
+        if job['mode'] != 'current':
+            rows.append([button(tr('Выбрать чаты', 'Select chats') + f' ({selected})', 'chats')])
+        rows.append([button(tr('Период', 'Period'), 'period')])
+        if selected > 1:
+            rows.append([button(tr('Один файл', 'One file'), 'format', False, 'success' if not job['split'] else None),
+                         button(tr('По чатам', 'Per chat'), 'format', True, 'success' if job['split'] else None)])
+        rows.append([button(tr('В Избранное', 'Saved Messages'), 'destination', 'saved', 'success' if job['destination'] == 'saved' else None),
+                     button(tr('В текущий чат', 'Current chat'), 'destination', 'current', 'success' if job['destination'] == 'current' else None)])
+        rows.append([button(tr('Собрать', 'Collect'), 'start', style='success'), close])
+        return rows
+
+    async def _getmsg_render(self, call, token, job, force=True):
+        if self._getmsg_closing:
+            return
+        now = time.monotonic()
+        if not force and now - job.get('updated', 0) < 2:
+            return
+        job['updated'] = now
+        try:
+            await self._rich_edit_form(call, self._getmsg_text(job), self._getmsg_markup(token, job))
+        except Exception:
+            logger.debug('getmsg menu update failed op=%s', token, exc_info=True)
+
+    async def _getmsg_interruptible(self, job, awaitable, timeout=120):
+        operation = asyncio.ensure_future(awaitable)
+        stopped = asyncio.create_task(job['stop'].wait())
+        try:
+            done, _ = await asyncio.wait((operation, stopped), timeout=timeout, return_when=asyncio.FIRST_COMPLETED)
+            if stopped in done:
+                raise _GetMsgStopped()
+            if operation not in done:
+                raise TimeoutError('getmsg_request_timeout')
+            return await operation
+        finally:
+            for task in (operation, stopped):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(operation, stopped, return_exceptions=True)
+
+    async def _getmsg_wait(self, job, call, token, seconds):
+        seconds = max(1, int(seconds))
+        job['wait_seconds'] = seconds
+        await self._getmsg_render(call, token, job)
+        try:
+            try:
+                await asyncio.wait_for(job['stop'].wait(), seconds)
+            except TimeoutError:
+                return
+            raise _GetMsgStopped()
+        finally:
+            job['wait_seconds'] = 0
+
+    async def _getmsg_rpc(self, job, call, token, factory, timeout=120):
+        while True:
+            if job['stop'].is_set():
+                raise _GetMsgStopped()
+            try:
+                return await self._getmsg_interruptible(job, factory(), timeout)
+            except FloodWaitError as error:
+                await self._getmsg_wait(job, call, token, getattr(error, 'seconds', 1))
+
+    async def _getmsg_common(self, call, token, job):
+        chats = {}
+        try:
+            if int(job['user'].id) == int(self._me_id):
+                iterator = self.client.iter_dialogs().__aiter__()
+                while True:
+                    try:
+                        dialog = await self._getmsg_rpc(job, call, token, iterator.__anext__)
+                    except StopAsyncIteration:
+                        break
+                    entity = getattr(dialog, 'entity', None)
+                    if isinstance(entity, types.Chat) or isinstance(entity, types.Channel) and getattr(entity, 'megagroup', False):
+                        chat = self._getmsg_chat(entity)
+                        chats[chat['id']] = chat
+            else:
+                cursor = 0
+                while True:
+                    result = await self._getmsg_rpc(job, call, token, lambda: self.client(
+                        functions.messages.GetCommonChatsRequest(user_id=job['user'], max_id=cursor, limit=100)))
+                    page = getattr(result, 'chats', None) or []
+                    if not page:
+                        break
+                    previous = len(chats)
+                    for entity in page:
+                        chat = self._getmsg_chat(entity)
+                        chats[chat['id']] = chat
+                    total = getattr(result, 'count', None)
+                    if total is not None and len(chats) >= int(total) or len(page) < 100 and total is None:
+                        break
+                    next_cursor = int(page[-1].id)
+                    if len(chats) == previous or not next_cursor or next_cursor == cursor:
+                        raise ValueError('getmsg_common_pagination_stalled')
+                    cursor = next_cursor
+            private = self._getmsg_chat(job['user'])
+            private['title'] = self._getmsg_tr(job, 'Избранное', 'Saved Messages') if int(job['user'].id) == int(self._me_id) else self._getmsg_tr(job, 'Личная переписка', 'Private messages')
+            private['selected'] = False
+            job['mode'] = 'common'
+            job['chats'] = {private['id']: private, **dict(sorted(chats.items(), key=lambda pair: (pair[1]['title'].casefold(), pair[0])))}
+            job['view'] = 'chats'
+            job['page'] = 0
+        except _GetMsgStopped:
+            job['notice'] = self._getmsg_tr(job, 'Получение списка отменено.', 'Chat discovery cancelled.')
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            job['notice'] = self._getmsg_tr(job, 'Не удалось получить полный список общих чатов: ', 'Could not load the complete common chat list: ') + type(error).__name__
+            logger.warning('getmsg common discovery failed op=%s exception=%s', token, type(error).__name__)
+        finally:
+            job['busy'] = False
+            job['split'] = job['split'] and sum(chat['selected'] for chat in job['chats'].values()) > 1
+            await self._getmsg_render(call, token, job)
+
+    async def _getmsg_ids_input(self, call, value, token):
+        call = self._input_source_form(call)
+        job = await self._getmsg_job(call, token)
+        if not job or job.get('running') or job.get('busy') or job['mode'] != 'manual':
+            return
+        raw = str(value or '').replace('\u200b', '').strip()
+        refs = list(dict.fromkeys(re.split(r'[\s,;]+', raw))) if raw else []
+        if not refs or any(not re.fullmatch(r'-?[0-9]{1,20}', ref) or int(ref) == 0 for ref in refs):
+            job['notice'] = self._getmsg_tr(job, 'Введи числовые ID чатов через пробел.', 'Enter numeric chat IDs separated by spaces.')
+            return await self._getmsg_render(call, token, job)
+        job['busy'] = True
+        job['busy_kind'] = 'ids'
+        job['stop'].clear()
+        task = asyncio.current_task()
+        self._getmsg_tasks.add(task)
+        failures = []
+        try:
+            for ref in refs:
+                try:
+                    entity = await self._getmsg_rpc(job, call, token, lambda ref=ref: self.client.get_entity(int(ref)))
+                    if not isinstance(entity, (types.User, types.Chat, types.Channel)):
+                        raise ValueError('getmsg_invalid_chat')
+                    await self._getmsg_rpc(job, call, token, lambda entity=entity: self.client.get_messages(entity, limit=1))
+                    chat = self._getmsg_chat(entity)
+                    job['manual'][chat['id']] = chat
+                except _GetMsgStopped:
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    failures.append(ref)
+            job['chats'] = job['manual']
+            job['view'] = 'chats'
+            job['notice'] = (self._getmsg_tr(job, 'Не удалось определить или открыть чаты: ', 'Could not resolve or access chats: ')
+                             + ', '.join(failures)) if failures else None
+        finally:
+            job['busy'] = False
+            self._getmsg_tasks.discard(task)
+            await self._getmsg_render(call, token, job)
+
+    async def _getmsg_time_input(self, call, value, token, component):
+        call = self._input_source_form(call)
+        job = await self._getmsg_job(call, token)
+        if not job or job.get('running') or job.get('busy') or job.get('view') != 'time' or component not in ('hour', 'minute'):
+            return
+        raw = str(value or '').replace('\u200b', '').strip()
+        maximum = 23 if component == 'hour' else 59
+        if not re.fullmatch(r'[0-9]{1,2}', raw) or int(raw) > maximum:
+            job['notice'] = self._getmsg_tr(job, 'Допустимый диапазон: ', 'Allowed range: ') + f'00–{maximum}'
+        else:
+            job['picker_' + component] = int(raw)
+            job['notice'] = None
+        await self._getmsg_render(call, token, job)
+
+    async def _getmsg_action(self, call, token, action, value=None):
+        job = await self._getmsg_job(call, token)
+        if not job:
+            return
+        await self._getmsg_ack(call)
+        if action == 'stop':
+            job['stop'].set()
+            return
+        if job.get('busy') or job.get('running'):
+            return
+        job['notice'] = None
+        if action == 'close':
+            self._getmsg_jobs.pop(token, None)
+            return await call.delete()
+        if action in ('main', 'chats', 'period'):
+            job['view'] = action
+        elif action == 'mode' and value in ('current', 'common', 'manual'):
+            if value == 'common':
+                job['busy'] = True
+                job['busy_kind'] = 'common'
+                job['stop'].clear()
+                await self._getmsg_render(call, token, job)
+                task = asyncio.create_task(self._getmsg_common(call, token, job))
+                self._getmsg_tasks.add(task)
+                task.add_done_callback(self._getmsg_tasks.discard)
+                return
+            job['mode'] = value
+            job['chats'] = {job['current']['id']: dict(job['current'])} if value == 'current' else job['manual']
+            job['view'] = 'main' if value == 'current' else 'chats'
+            job['page'] = 0
+        elif action == 'toggle' and value in job['chats']:
+            job['chats'][value]['selected'] = not job['chats'][value]['selected']
+        elif action == 'select_all':
+            for chat in job['chats'].values():
+                chat['selected'] = bool(value)
+        elif action == 'page':
+            job['page'] = max(0, min(job.get('page', 0) + int(value), max(0, (len(job['chats']) - 1) // 8)))
+        elif action == 'format':
+            job['split'] = bool(value)
+        elif action == 'destination' and value in ('saved', 'current'):
+            job['destination'] = value
+        elif action == 'preset' and value in (0, 1, 7, 30):
+            job['from'] = datetime.now(timezone.utc) - timedelta(days=value) if value else None
+            job['to'] = None
+        elif action == 'picker' and value in ('from', 'to'):
+            local = (job[value] or datetime.now(timezone.utc)).astimezone(self._getmsg_tz(job))
+            job.update(picker_field=value, picker_anchor=local.date(), picker_date=local.date(),
+                       picker_hour=local.hour if job[value] or value == 'to' else 0,
+                       picker_minute=local.minute if job[value] or value == 'to' else 0, view='calendar')
+        elif action == 'shift' and job.get('view') == 'calendar':
+            today = datetime.now(self._getmsg_tz(job)).date()
+            job['picker_anchor'] = today if not value else max(datetime(2003, 1, 1).date(), min(today, job['picker_anchor'] + timedelta(days=int(value))))
+        elif action == 'day' and job.get('view') == 'calendar':
+            day = datetime.strptime(value, '%Y-%m-%d').date()
+            today = datetime.now(self._getmsg_tz(job))
+            if max(datetime(2003, 1, 1).date(), job['picker_anchor'] - timedelta(days=6)) <= day <= min(job['picker_anchor'], today.date()):
+                job['picker_date'] = day
+                if job['picker_field'] == 'to':
+                    job['picker_hour'], job['picker_minute'] = (today.hour, today.minute) if day == today.date() else (23, 59)
+                job['view'] = 'time'
+        elif action == 'calendar' and job.get('picker_field'):
+            job['view'] = 'calendar'
+        elif action in ('date_save', 'date_reset') and job.get('view') in ('calendar', 'time'):
+            field = job['picker_field']
+            date = job['picker_date']
+            chosen = None if action == 'date_reset' else datetime(
+                date.year, date.month, date.day, job['picker_hour'], job['picker_minute'],
+                59 if field == 'to' else 0, tzinfo=self._getmsg_tz(job)).astimezone(timezone.utc)
+            now = datetime.now(timezone.utc)
+            if chosen and field == 'to' and chosen > now and chosen.replace(second=0) <= now:
+                chosen = now
+            start = chosen if field == 'from' else job['from']
+            end = chosen if field == 'to' else job['to']
+            if chosen and chosen > now or start and end and start > end:
+                job['notice'] = self._getmsg_tr(job, 'Проверь границы периода.', 'Check the date range.')
+            else:
+                job[field] = chosen
+                job['view'] = 'period'
+        elif action == 'start':
+            if not any(chat['selected'] for chat in job['chats'].values()):
+                job['notice'] = self._getmsg_tr(job, 'Выбери хотя бы один чат.', 'Select at least one chat.')
+            elif self._getmsg_export_lock.locked():
+                job['notice'] = self._getmsg_tr(job, 'Другая выгрузка ещё выполняется.', 'Another export is still running.')
+            else:
+                job.update(running=True, finished=False, stopped=False, found=0, buffered=0, scanned=0, matched=0,
+                           sent=0, files=0, errors=0, send_errors=0, processed=0, phase='collect',
+                           chat_count=sum(chat['selected'] for chat in job['chats'].values()))
+                job['stop'].clear()
+                await self._getmsg_render(call, token, job)
+                task = asyncio.create_task(self._getmsg_run(call, token, job))
+                self._getmsg_tasks.add(task)
+                task.add_done_callback(self._getmsg_tasks.discard)
+                return
+        if sum(chat['selected'] for chat in job['chats'].values()) <= 1:
+            job['split'] = False
+        await self._getmsg_render(call, token, job)
+
+    @staticmethod
+    def _getmsg_plain(value, depth=0):
+        if depth > 32:
+            raise ValueError('getmsg_rich_depth_limit')
+        if value is None:
+            return ''
+        if isinstance(value, str):
+            return value
+        if isinstance(value, (list, tuple)):
+            return ''.join(GodChatMod._getmsg_plain(item, depth + 1) for item in value)
+        plain = lambda item: GodChatMod._getmsg_plain(item, depth + 1)
+        kind = type(value).__name__
+        if kind == 'TextCustomEmoji':
+            return str(getattr(value, 'alt', '') or '')
+        if hasattr(value, 'texts'):
+            return plain(value.texts)
+        if hasattr(value, 'rows'):
+            return '\n'.join(' | '.join(plain(getattr(cell, 'text', None)) for cell in row.cells) for row in value.rows)
+        if getattr(value, 'items', None) is not None and not callable(value.items):
+            return '\n'.join('• ' + plain(item) for item in value.items)
+        parts = []
+        for key in ('title', 'text'):
+            item = getattr(value, key, None)
+            if item is not None:
+                parts.append(plain(item))
+        blocks = getattr(value, 'blocks', None)
+        if blocks:
+            parts.append('\n\n'.join(text for text in (plain(block) for block in blocks) if text.strip()))
+        caption = getattr(value, 'caption', None)
+        if caption:
+            parts.append(plain(caption))
+        return '\n'.join(part for part in parts if part)
+
+
+    async def _getmsg_message_text(self, job, call, token, message):
+        rich = getattr(message, 'rich_message', None)
+        incomplete = False
+        suspected = (not getattr(message, 'message', None) and getattr(message, 'media', None) is None
+                     and not getattr(message, 'action', None) and rich is None)
+        if rich and getattr(rich, 'part', False) or suspected or type(getattr(message, 'media', None)).__name__ == 'MessageMediaUnsupported':
+            try:
+                result = await self._getmsg_rpc(job, call, token, lambda: self.client(
+                    functions.messages.GetRichMessageRequest(message.peer_id, message.id)))
+                full = next((item for item in getattr(result, 'messages', None) or [] if item.id == message.id), None)
+                rich = getattr(full, 'rich_message', None) or rich
+                incomplete = not rich or bool(getattr(rich, 'part', False))
+            except _GetMsgStopped:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                incomplete = True
+        text = self._getmsg_plain(rich) if rich else str(getattr(message, 'message', '') or '')
+        if not text.strip():
+            return '', incomplete
+        if getattr(message, 'fwd_from', None):
+            text = '[Переслано] ' + text
+        if getattr(message, 'edit_date', None):
+            text = '[Изменено] ' + text
+        if incomplete:
+            text = '[Неполное сообщение] ' + text
+        return text.replace('\r\n', '\n').replace('\r', '\n'), incomplete
+
+    async def _getmsg_collect(self, connection, chat, job, call, token):
+        offset = 0
+        batch = []
+        size = 0
+        report = {'chat': chat, 'complete': False, 'error': None, 'partial_messages': 0, 'count': 0}
+        report.update(scanned=0, matched=0)
+        stalled_offset = None
+        def flush():
+            nonlocal size
+            if batch:
+                before = connection.total_changes
+                connection.executemany('INSERT OR IGNORE INTO messages(chat, id, stamp, body) VALUES (?, ?, ?, ?)', batch)
+                connection.commit()
+                job['found'] += connection.total_changes - before
+                batch.clear()
+                size = 0
+                job['buffered'] = 0
+        try:
+            while True:
+                resume = False
+                iterator = self.client.iter_messages(chat['entity'], limit=None,
+                    offset_id=offset, offset_date=job['scan_to'] + timedelta(seconds=1) if not offset else None, wait_time=1).__aiter__()
+                try:
+                    while True:
+                        try:
+                            message = await self._getmsg_interruptible(job, iterator.__anext__())
+                        except StopAsyncIteration:
+                            tail = await self._getmsg_rpc(job, call, token, lambda: self.client.get_messages(
+                                chat['entity'], limit=1, offset_id=offset,
+                                offset_date=job['scan_to'] + timedelta(seconds=1) if not offset else None))
+                            if tail:
+                                if stalled_offset == offset:
+                                    report['error'] = 'history_stalled'
+                                    break
+                                stalled_offset = offset
+                                resume = True
+                                break
+                            report['complete'] = True
+                            break
+                        identity = int(getattr(message, 'id', 0) or 0)
+                        if identity <= 0:
+                            report['partial_messages'] += 1
+                            continue
+                        if offset and identity > offset:
+                            report['error'] = 'history_order_invalid'
+                            break
+                        if identity == offset:
+                            continue
+                        offset = identity
+                        report['scanned'] += 1
+                        job['scanned'] = job.get('scanned', 0) + 1
+                        date = self._getmsg_date(getattr(message, 'date', None))
+                        if date is None:
+                            report['partial_messages'] += 1
+                            continue
+                        if job['from'] and date < job['from']:
+                            report['complete'] = True
+                            break
+                        if date > job['scan_to']:
+                            continue
+                        if time.monotonic() - job.get('updated', 0) >= 2:
+                            flush()
+                            await self._getmsg_render(call, token, job, force=False)
+                        if getattr(message, 'sender_id', None) != job['user'].id or getattr(message, 'action', None):
+                            continue
+                        report['matched'] += 1
+                        job['matched'] = job.get('matched', 0) + 1
+                        text, incomplete = await self._getmsg_message_text(job, call, token, message)
+                        report['partial_messages'] += int(incomplete)
+                        if not text.strip():
+                            continue
+                        batch.append((chat['id'], identity, date.timestamp(), text))
+                        size += len(text.encode('utf-8'))
+                        job['buffered'] = len(batch)
+                        if len(batch) >= 100 or size >= 512 * 1024 or time.monotonic() - job.get('updated', 0) >= 2:
+                            flush()
+                            await self._getmsg_render(call, token, job, force=False)
+                    if not resume:
+                        break
+                except FloodWaitError as error:
+                    flush()
+                    await self._getmsg_wait(job, call, token, getattr(error, 'seconds', 1))
+                finally:
+                    if hasattr(iterator, 'aclose'):
+                        await iterator.aclose()
+        except _GetMsgStopped:
+            report['error'] = 'stopped'
+            job['stopped'] = True
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            report['error'] = report['error'] or type(error).__name__
+            logger.warning('getmsg history failed op=%s chat=%s exception=%s', token, chat['id'], type(error).__name__)
+        finally:
+            flush()
+        report['count'] = connection.execute('SELECT count(*) FROM messages WHERE chat=?', (chat['id'],)).fetchone()[0]
+        return report
+
+    async def _getmsg_write_files(self, connection, reports, job, folder, part_limit=1_900_000_000):
+        zone = self._getmsg_tz(job)
+        minutes = job['tz_minutes']
+        zone_name = f'UTC{"+" if minutes >= 0 else "-"}{abs(minutes) // 60:02d}:{abs(minutes) % 60:02d}'
+        username = self._username(job['user'])
+        name = self._original_name(job['user']).replace('\n', ' ').replace('\r', ' ')
+        heading = (name + (' · @' + username if username else '') + f' · ID {job["user"].id}\n'
+                   + self._getmsg_period(job) + ' · ' + zone_name + '\n'
+                   + self._getmsg_tr(job, 'История до: ', 'History until: ')
+                   + job['scan_to'].astimezone(zone).strftime('%d.%m.%Y %H:%M:%S') + '\n'
+                   + self._getmsg_tr(job, 'Собрано: ', 'Collected: ') + datetime.now(zone).strftime('%d.%m.%Y %H:%M') + '\n')
+        if any(not report['complete'] or report['partial_messages'] for report in reports):
+            heading += self._getmsg_tr(job, 'НЕПОЛНАЯ ВЫГРУЗКА\n', 'INCOMPLETE EXPORT\n')
+        heading += '\n'
+        groups = [[report] for report in reports if report['count'] or report['error']] if job['split'] and len(reports) > 1 else [reports]
+        files = []
+        job['file_reports'] = {}
+        stamp = datetime.now(zone).strftime('%Y%m%d_%H%M%S')
+        for group_index, group in enumerate(groups):
+            handle = None
+            written = 0
+            part = 0
+            def open_part():
+                nonlocal handle, written, part
+                if handle:
+                    handle.close()
+                part += 1
+                label = str(group[0]['chat']['id']) if job['split'] and len(reports) > 1 else 'all'
+                path = Path(folder) / f'getmsg_{job["user"].id}_{label}_{stamp}_{group_index + 1}_{part}.txt'
+                handle = path.open('wb')
+                content = heading.encode('utf-8')
+                handle.write(content)
+                written = len(content)
+                files.append(path)
+                job['file_reports'][str(path)] = []
+            try:
+                for report in group:
+                    chat = report['chat']
+                    title = chat['title'].replace('\r', ' ').replace('\n', ' ')
+                    chat_heading = f'=== {title} · {chat["id"]} ===\n\n'
+                    if handle is None:
+                        open_part()
+                    block = chat_heading.encode('utf-8')
+                    if written + len(block) > part_limit:
+                        open_part()
+                    handle.write(block)
+                    written += len(block)
+                    job['file_reports'][str(files[-1])].append(report)
+                    previous_day = None
+                    count = 0
+                    cursor = connection.execute('SELECT stamp, body FROM messages WHERE chat=? ORDER BY stamp, id', (chat['id'],))
+                    for timestamp, text in cursor:
+                        if job['stop'].is_set():
+                            raise _GetMsgStopped()
+                        local = datetime.fromtimestamp(timestamp, zone)
+                        day = '• ' + local.strftime('%d.%m.%Y')
+                        body = '\n'.join('    ' + line for line in text.rstrip('\n').split('\n')) + f' [{local:%H:%M}]\n\n'
+                        prefix = day + '\n\n' if day != previous_day else ''
+                        block = (prefix + body).encode('utf-8')
+                        if len(block) + len(heading.encode('utf-8')) + len(chat_heading.encode('utf-8')) > part_limit:
+                            raise ValueError('getmsg_message_exceeds_file_limit')
+                        if written + len(block) > part_limit:
+                            open_part()
+                            prefix_bytes = (chat_heading + day + '\n\n').encode('utf-8')
+                            handle.write(prefix_bytes)
+                            written += len(prefix_bytes)
+                            job['file_reports'][str(files[-1])].append(report)
+                            block = body.encode('utf-8')
+                        handle.write(block)
+                        written += len(block)
+                        previous_day = day
+                        count += 1
+                        if count % 100 == 0:
+                            await asyncio.sleep(0)
+                    if not count:
+                        note = self._getmsg_tr(job, '[Сообщения не найдены]\n\n', '[No messages found]\n\n')
+                        handle.write(note.encode('utf-8'))
+                        written += len(note.encode('utf-8'))
+                    if not report['complete'] or report['partial_messages']:
+                        reason = report['error'] or ('partial_messages=' + str(report['partial_messages']))
+                        note = self._getmsg_tr(job, '[Сбор неполный: ', '[Incomplete history: ') + reason + ']\n\n'
+                        handle.write(note.encode('utf-8'))
+                        written += len(note.encode('utf-8'))
+                    await asyncio.sleep(0)
+            finally:
+                if handle:
+                    handle.close()
+        return files
+
+    def _getmsg_result_text(self, job, reports, index, total, rich=True):
+        tr = lambda ru, en: self._getmsg_tr(job, ru, en)
+        incomplete = job.get('stopped') or job.get('errors') or any(not r['complete'] or r['partial_messages'] for r in reports)
+        status = tr('Неполная', 'Incomplete') if incomplete else tr('Полная', 'Complete')
+        title = 'GodChat · getmsg' + (f' · {index}/{total}' if total > 1 else '')
+        user = job['user']
+        text = f'<h3>{_EMOJI["reason"]} {title}</h3>' if rich else f'<b>{title}</b>'
+        text += f'\n<a href="tg://user?id={user.id}">{utils.escape_html(self._original_name(user))}</a> (<code>{user.id}</code>)'
+        if rich:
+            status = f"<mark><b>{status}</b></mark>"
+        text += f'\n<b>{tr("Выгрузка", "Export")}:</b> {status}'
+        if job.get('stopped'):
+            text += '\n' + tr('Сбор остановлен вручную.', 'Collection stopped manually.')
+        rows = []
+        for report in reports:
+            chat = report['chat']
+            state = (tr('Не обработан', 'Not processed') if report['error'] == 'not_processed'
+                     else tr('Полная', 'Complete') if report['complete'] and not report['partial_messages']
+                     else tr('Неполная', 'Incomplete'))
+            name = utils.escape_html(chat['title'])
+            label = f'{name} (<code>{chat["id"]}</code>)'
+            if rich:
+                state = f"<mark><b>{state}</b></mark>"
+            value = f'{state} · {report["count"]} ' + tr('сообщ.', 'msgs')
+            if report['error'] and report['error'] not in ('stopped', 'not_processed'):
+                reason = {'history_stalled': tr('Обход истории прервался', 'History traversal stalled'),
+                          'history_order_invalid': tr('Нарушен порядок истории', 'Invalid history order')}.get(report['error'], report['error'])
+                value += ' · ' + utils.escape_html(reason)
+            rows.append(f'<tr><td>{label}</td><td>{value}</td></tr>' if rich else f'{label} — {value}')
+        return text + ('\n<table bordered striped compact>' + ''.join(rows) + '</table>' if rich else '\n\n' + '\n'.join(rows))
+
+    async def _getmsg_send_file(self, destination, path, job, reports, index, total, topic, call=None, token=""):
+        paths = list(path) if isinstance(path, (list, tuple)) else [path]
+        async def rpc(factory):
+            return await self._getmsg_rpc(job, call, token, factory, timeout=600)
+        if self._rich_enabled():
+            try:
+                peer = await rpc(lambda: self.client.get_input_entity(destination))
+                documents, embeds = [], []
+                for number, item in enumerate(paths):
+                    uploaded = await rpc(lambda item=item: self.client.upload_file(str(item)))
+                    media = await rpc(lambda uploaded=uploaded, item=item: self.client(functions.messages.UploadMediaRequest(
+                        peer=peer, media=types.InputMediaUploadedDocument(file=uploaded, mime_type='text/plain',
+                            attributes=[types.DocumentAttributeFilename(file_name=item.name)], force_file=True))))
+                    key = f'export_{number}'
+                    documents.append(types.InputRichFileDocument(id=key, document=tl_utils.get_input_document(media.document)))
+                    embeds.append(f'<tg-document src="tg://document?id={key}"/>')
+                content = self._getmsg_result_text(job, reports, index, total)
+                rich = types.InputRichMessageHTML(html=''.join(embeds) + content, files=documents)
+            except _GetMsgStopped:
+                raise
+            except FloodWaitError:
+                raise
+            except Exception:
+                logger.warning('getmsg rich file preparation failed; using ordinary document', exc_info=True)
+            else:
+                try:
+                    result = await rpc(lambda: self.client.send_rich_message(destination, rich_message=rich, reply_to=topic))
+                    job['sent'] += len(paths)
+                    return result
+                except Exception as error:
+                    if 'RICH_MESSAGE' not in str(error).upper() and 'MEDIA_INVALID' not in str(error).upper():
+                        raise
+                    logger.warning('getmsg rich file rejected; using ordinary document')
+        caption = self._getmsg_result_text(job, reports, index, total, rich=False)
+        if len(caption) > 950:
+            caption = f'<b>GodChat · getmsg</b> · ID <code>{job["user"].id}</code>\n' + self._getmsg_tr(job, 'Список чатов и полнота сбора — в TXT.', 'Chat list and completeness are recorded in the TXT.')
+            incomplete = job.get('stopped') or job.get('errors') or any(not r['complete'] or r['partial_messages'] for r in reports)
+            caption += '\n' + self._getmsg_tr(job, 'Выгрузка: ', 'Export: ') + (self._getmsg_tr(job, 'Неполная', 'Incomplete') if incomplete else self._getmsg_tr(job, 'Полная', 'Complete'))
+        result = None
+        for offset in range(0, len(paths), 10):
+            batch = paths[offset:offset + 10]
+            files = str(batch[0]) if len(batch) == 1 else [str(item) for item in batch]
+            captions = caption if len(batch) == 1 else [caption] + [''] * (len(batch) - 1)
+            result = await rpc(lambda files=files, captions=captions: self.client.send_file(
+                destination, files, force_document=True, caption=captions, parse_mode='html', reply_to=topic))
+            job['sent'] += len(batch)
+        return result
+
+    async def _getmsg_run(self, call, token, job):
+        if self._getmsg_export_lock.locked():
+            job['running'] = False
+            job['notice'] = self._getmsg_tr(job, 'Другая выгрузка ещё выполняется.', 'Another export is still running.')
+            return await self._getmsg_render(call, token, job)
+        reports = []
+        cancelled = False
+        try:
+            async with self._getmsg_export_lock:
+                job['scan_to'] = min(job['to'], datetime.now(timezone.utc)) if job['to'] else datetime.now(timezone.utc)
+                chosen = [dict(chat) for chat in job['chats'].values() if chat['selected']]
+                with tempfile.TemporaryDirectory(prefix='godchat-getmsg-') as folder:
+                    connection = sqlite3.connect(str(Path(folder) / 'messages.sqlite3'))
+                    try:
+                        connection.execute('PRAGMA temp_store=FILE')
+                        connection.execute('PRAGMA cache_size=-2048')
+                        connection.execute('CREATE TABLE messages(chat INTEGER, id INTEGER, stamp REAL, body TEXT, PRIMARY KEY(chat, id))')
+                        for chat in chosen:
+                            job['current_title'] = chat['title']
+                            if job['stop'].is_set():
+                                job['stopped'] = True
+                                reports.append({'chat': chat, 'complete': False, 'error': 'not_processed', 'partial_messages': 0, 'count': 0})
+                                continue
+                            await self._getmsg_render(call, token, job)
+                            report = await self._getmsg_collect(connection, chat, job, call, token)
+                            reports.append(report)
+                            job['processed'] += 1
+                        job['errors'] = sum(not report['complete'] or bool(report['partial_messages']) for report in reports)
+                        job['stop'].clear()
+                        job['phase'] = 'writing'
+                        await self._getmsg_render(call, token, job)
+                        if job['found'] or job['errors']:
+                            files = await self._getmsg_write_files(connection, reports, job, folder)
+                        else:
+                            files = []
+                            job['notice'] = self._getmsg_tr(job, 'В выбранных чатах сообщений участника не найдено.', 'No messages by this user were found in the selected chats.')
+                        job['phase'] = 'sending'
+                        job['files'] = len(files)
+                        destination = 'me' if job['destination'] == 'saved' else job['source'].peer_id
+                        topic = None if job['destination'] == 'saved' else utils.get_topic(job['source'])
+                        batches = [files] if files else []
+                        if not self._rich_enabled():
+                            batches = [files[offset:offset + 10] for offset in range(0, len(files), 10)]
+                        for index, batch in enumerate(batches):
+                            await self._getmsg_render(call, token, job)
+                            before = job['sent']
+                            try:
+                                file_reports = {}
+                                for path in batch:
+                                    for report in job.get('file_reports', {}).get(str(path), reports):
+                                        file_reports[report['chat']['id']] = report
+                                await self._getmsg_send_file(destination, batch, job, list(file_reports.values()),
+                                    index + 1, len(batches), topic, call, token)
+                            except _GetMsgStopped:
+                                job['send_errors'] += len(files) - job['sent'] - job['send_errors']
+                                job['notice'] = self._getmsg_tr(job, 'Отправка оставшихся файлов отменена.', 'Sending the remaining files was cancelled.')
+                                break
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception as error:
+                                job['send_errors'] += len(batch) - (job['sent'] - before)
+                                logger.warning('getmsg file send failed op=%s part=%s exception=%s', token, index + 1, type(error).__name__)
+                    finally:
+                        connection.close()
+        except _GetMsgStopped:
+            job['notice'] = self._getmsg_tr(job, 'Подготовка файлов отменена.', 'File preparation cancelled.')
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
+        except Exception as error:
+            job['notice'] = self._getmsg_tr(job, 'Выгрузка прервана: ', 'Export interrupted: ') + type(error).__name__
+            logger.warning('getmsg export failed op=%s exception=%s', token, type(error).__name__)
+        finally:
+            job.update(running=False, buffered=0, finished=True, view='main', wait_seconds=0)
+            if not cancelled:
+                await self._getmsg_render(call, token, job)
+
+    @loader.command(ru_doc='<ID/@username/реплай> — сохранить текст сообщений участника в TXT',
+                    en_doc='<ID/@username/reply> — save a user\'s message text to TXT')
+    @loader.owner
+    async def getmsg(self, message: Message):
+        if self._getmsg_closing:
+            return
+        self._getmsg_prune()
+        ru = self._s('gq_theme') == 'Тема'
+        usage = 'Используй getmsg @username, getmsg ID или реплай.' if ru else 'Use getmsg @username, getmsg ID, or reply to a message.'
+        args = self._args(message)
+        try:
+            if len(args) > 1:
+                raise ValueError('getmsg_arguments')
+            if args:
+                reference = int(args[0]) if args[0].isdigit() else args[0]
+                user = await asyncio.wait_for(self.client.get_entity(reference), 30)
+            else:
+                reply = await asyncio.wait_for(self._get_reply_message(message), 30)
+                user = await asyncio.wait_for(reply.get_sender(), 30) if reply else None
+            if not isinstance(user, types.User):
+                raise ValueError('getmsg_user_required')
+            entity = await asyncio.wait_for(self.client.get_entity(message.peer_id), 30)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            return await self._rich_answer(message, _EMOJI['error'] + ' ' + usage)
+        if len(self._getmsg_jobs) >= 6:
+            return await self._rich_answer(message, self._s('gq_full'))
+        chat = self._getmsg_chat(entity)
+        token = secrets.token_urlsafe(12)
+        job = {'user': user, 'source': message, 'operator_id': int(getattr(message, 'sender_id', None) or self._me_id),
+               'ru': ru, 'tz_minutes': self._timezone_minutes(), 'current': chat, 'chats': {chat['id']: dict(chat)},
+               'manual': {}, 'mode': 'current', 'split': False, 'destination': 'saved', 'from': None, 'to': None,
+               'view': 'main', 'page': 0, 'busy': False, 'running': False, 'stop': asyncio.Event(),
+               'notice': None, 'expires': time.monotonic() + 86400}
+        self._getmsg_jobs[token] = job
+        try:
+            form = await self._create_inline_form(message, self._getmsg_text(job), self._getmsg_markup(token, job),
+                                                  force_me=True, ttl=86400)
+            if not form:
+                raise RuntimeError('getmsg_form_unavailable')
+        except asyncio.CancelledError:
+            self._getmsg_jobs.pop(token, None)
+            raise
+        except Exception:
+            self._getmsg_jobs.pop(token, None)
+            logger.exception('Could not open getmsg menu')
+            await self._rich_answer(message, self._s('menu_open_failed'))
+
+
+    def _tkick_prune(self):
+        now = time.monotonic()
+        self._tkick_jobs = {
+            token: job for token, job in self._tkick_jobs.items()
+            if job.get("running") or job.get("expires", 0) > now
+        }
+        while len(self._tkick_jobs) >= _MAX_TKICK_JOBS:
+            token = next((key for key, job in self._tkick_jobs.items() if not job.get("running")), None)
+            if token is None:
+                break
+            self._tkick_jobs.pop(token, None)
+
+    def _tkick_job(self, call, token):
+        job = self._tkick_jobs.get(token)
+        if not job or not job.get("running") and job.get("expires", 0) <= time.monotonic():
+            return None
+        if getattr(getattr(call, "from_user", None), "id", None) != job.get("operator_id"):
+            return None
+        return job
+
+    async def _tkick_operator_allowed(self, job):
+        try:
+            permissions = await self.client.get_permissions(job["entity"], job["operator_id"])
+        except Exception:
+            return False
+        return bool(
+            getattr(permissions, "is_creator", False)
+            or getattr(permissions, "is_admin", False) and getattr(permissions, "ban_users", False)
+        )
+
+    def _tkick_date_text(self, value):
+        return value.astimezone(self._quote_timezone()).strftime("%d.%m.%y %H:%M")
+
+    def _tkick_period_text(self, job):
+        start = job.get("from")
+        end = job.get("to")
+        offset = self._timezone_minutes()
+        sign = "+" if offset >= 0 else "−"
+        zone = f"UTC{sign}{abs(offset) // 60:02d}:{abs(offset) % 60:02d}"
+        from_text = self._tkick_date_text(start) if start else self._s("tkick_unset")
+        to_text = self._tkick_date_text(end) if end else self._s("tkick_now")
+        if not end and job.get("scan_to"):
+            to_text += f" ({self._tkick_date_text(job['scan_to'])})"
+        return (
+            f"{self._s('tkick_from')}: <code>{from_text}</code> · "
+            f"{self._s('tkick_to')}: <code>{to_text}</code>\n"
+            f"{self._s('tkick_timezone')}: <code>{zone}</code>"
+        )
+
+    def _tkick_text(self, job):
+        view = job.get("view", "range")
+        if view == "picker_calendar":
+            anchor = job["picker_anchor"]
+            oldest = max(anchor - timedelta(days=6), datetime(2003, 1, 1).date())
+            field = self._s("tkick_" + job["picker_field"])
+            return (
+                f"{_EMOJI['time']} <b>{self._s('tkick_pick_day', field=field)}</b>\n\n"
+                f"<code>{oldest:%d.%m.%y} — {anchor:%d.%m.%y}</code>"
+            )
+        if view == "picker_time":
+            day = f"{job['picker_day']:02d}.{job['picker_month']:02d}.{job['picker_year']}"
+            field = self._s("tkick_" + job["picker_field"])
+            return (
+                f"{_EMOJI['time']} <b>{self._s('tkick_pick_time', field=field)}</b>\n\n"
+                f"{day} · <b>{job['picker_hour']:02d}:{job['picker_minute']:02d}</b>\n"
+                f"<i>{self._s('tkick_time_hint')}</i>"
+            )
+        text = f"{_EMOJI['time']} <b>GodChat · {self._s('tkick_title')}</b>\n\n"
+        text += f"<blockquote>{self._tkick_period_text(job)}</blockquote>"
+        members = job.get("members") or []
+        if view == "range":
+            text += f"\n\n<i>{self._s('tkick_need_from' if not job.get('from') else 'tkick_show')}</i>"
+            if job.get("error"):
+                text += f"\n<i>{utils.escape_html(job['error'])}</i>"
+        elif view == "settings":
+            text += (
+                f"\n\n{self._s('tkick_found')}: <code>{len(members)}</code> · "
+                f"{self._s('tkick_selected')}: <code>{len(job['selected'])}</code>\n"
+                f"<i>{self._s('tkick_settings_hint')}</i>"
+            )
+        elif view == "confirm":
+            text += f"\n\n<blockquote>{self._s('tkick_confirm_text', count=len(job['selected']))}</blockquote>"
+        elif view == "running":
+            text += f"\n\n<b>{self._s('tkick_progress', done=job.get('done', 0), total=job.get('total', 0))}</b>"
+        elif view == "done":
+            text += (
+                f"\n\n<b>{self._s('tkick_stopped') if job.get('stopped') else self._s('tkick_result', done=job.get('done', 0), skipped=job.get('skipped', 0), failed=job.get('failed', 0), remaining=job.get('remaining', 0))}</b>"
+            )
+            if job.get("stopped"):
+                text += f"\n{self._s('tkick_result', done=job.get('done', 0), skipped=job.get('skipped', 0), failed=job.get('failed', 0), remaining=job.get('remaining', 0))}"
+            if job.get("error"):
+                text += f"\n<i>{utils.escape_html(job['error'])}</i>"
+        else:
+            text += (
+                f"\n\n{self._s('tkick_found')}: <code>{len(members)}</code> · "
+                f"{self._s('tkick_selected')}: <code>{len(job['selected'])}</code>"
+            )
+            page = max(0, min(job.get("page", 0), max(0, (len(members) - 1) // _TKICK_PAGE_SIZE)))
+            job["page"] = page
+            visible = members[page * _TKICK_PAGE_SIZE:(page + 1) * _TKICK_PAGE_SIZE]
+            if visible:
+                lines = []
+                for item in visible:
+                    user = item["user"]
+                    name = " ".join(self._random_display_name(user).split())[:44] or str(user.id)
+                    status = "✓" if int(user.id) in job["selected"] else "✗"
+                    label = f'<a href="tg://user?id={user.id}">{utils.escape_html(name)}</a>'
+                    if not self._username(user):
+                        label += f' (<code>{int(user.id)}</code>)'
+                    lines.append(
+                        f'<blockquote>{status} {label} · '
+                        f'<code>{self._tkick_date_text(item["joined_at"])}</code></blockquote>'
+                    )
+                text += "\n\n" + "\n".join(lines)
+            else:
+                text += f"\n\n<i>{self._s('tkick_empty')}</i>"
+        return text
+
+    def _tkick_markup(self, token, job):
+        def button(key, callback, *args, style=None, emoji_id=None):
+            item = {"text": self._s(key), "callback": callback, "args": (token, *args)}
+            if style:
+                item["style"] = style
+            if emoji_id:
+                item["emoji_id"] = emoji_id
+            return item
+
+        close = button("tkick_close", self._tkick_close, style="danger", emoji_id="5121063440311386962")
+        view = job.get("view", "range")
+        if view == "picker_calendar":
+            anchor = job["picker_anchor"]
+            earliest = datetime(2003, 1, 1).date()
+            weekdays = self._s("tkick_weekdays").split("|")
+            dates = [anchor - timedelta(days=offset) for offset in range(7)
+                     if anchor - timedelta(days=offset) >= earliest]
+            rows = []
+            for offset in range(0, len(dates), 2):
+                rows.append([{
+                    "text": f"{weekdays[day.weekday()]} · {day:%d.%m.%y}",
+                    "callback": self._tkick_picker_day, "args": (token, day.isoformat()),
+                    "style": "success" if day == job.get("picker_selected") else "primary",
+                } for day in dates[offset:offset + 2]])
+            rows.append([
+                {"text": f"← {self._s('tkick_picker_week')}", "callback": self._tkick_picker_shift, "args": (token, -7)},
+                button("tkick_picker_today", self._tkick_picker_shift, 0),
+                {"text": f"{self._s('tkick_picker_week')} →", "callback": self._tkick_picker_shift, "args": (token, 7)},
+            ])
+            rows.append([
+                {"text": f"← {self._s('tkick_picker_month')}", "callback": self._tkick_picker_shift, "args": (token, -30)},
+                {"text": f"{self._s('tkick_picker_month')} →", "callback": self._tkick_picker_shift, "args": (token, 30)},
+            ])
+            rows.append([
+                {"text": f"← {self._s('tkick_picker_year')}", "callback": self._tkick_picker_shift, "args": (token, -365)},
+                {"text": f"{self._s('tkick_picker_year')} →", "callback": self._tkick_picker_shift, "args": (token, 365)},
+            ])
+            rows.append([
+                button("tkick_picker_clear" if job["picker_field"] == "from" else "tkick_picker_now",
+                       self._tkick_picker_reset, style="danger" if job["picker_field"] == "from" else None),
+                button("tkick_back", self._tkick_picker_back), close,
+            ])
+            return rows
+        if view == "picker_time":
+            rows = [[
+                {"text": f"{self._s('tkick_pick_hour')}: {job['picker_hour']:02d}",
+                 "input": self._s("tkick_hour_input"), "handler": self._tkick_picker_time_input,
+                 "args": (token, "hour"), "style": "primary"},
+                {"text": f"{self._s('tkick_pick_minute')}: {job['picker_minute']:02d}",
+                 "input": self._s("tkick_minute_input"), "handler": self._tkick_picker_time_input,
+                 "args": (token, "minute"), "style": "primary"},
+            ]]
+            rows.append([
+                button("tkick_picker_save", self._tkick_picker_save, style="success"),
+                button("tkick_back", self._tkick_picker_back),
+                button("tkick_picker_clear" if job["picker_field"] == "from" else "tkick_picker_now",
+                       self._tkick_picker_reset, style="danger" if job["picker_field"] == "from" else None),
+            ])
+            return rows
+        if view in ("range", "preview"):
+            dates = [
+                {"text": f"{self._s('tkick_from')}: {self._tkick_date_text(job['from']) if job.get('from') else self._s('tkick_unset')}",
+                 "callback": self._tkick_picker_open, "args": (token, "from"),
+                 "emoji_id": "5870921681735781843", "style": "primary"},
+                {"text": f"{self._s('tkick_to')}: {self._tkick_date_text(job['to']) if job.get('to') else self._s('tkick_now')}",
+                 "callback": self._tkick_picker_open, "args": (token, "to"),
+                 "emoji_id": "5870921681735781843", "style": "primary"},
+            ]
+            rows = [[item] for item in dates]
+            if view == "range":
+                rows.append([button("tkick_show", self._tkick_refresh, style="primary")])
+                rows.append([close])
+                return rows
+            pages = max(1, (len(job["members"]) + _TKICK_PAGE_SIZE - 1) // _TKICK_PAGE_SIZE)
+            if pages > 1:
+                rows.append([
+                    {"text": "←", "callback": self._tkick_page, "args": (token, -1)},
+                    {"text": f"{job['page'] + 1}/{pages}", "callback": self._tkick_page, "args": (token, 0)},
+                    {"text": "→", "callback": self._tkick_page, "args": (token, 1)},
+                ])
+            rows.append([
+                button("tkick_kick", self._tkick_confirm_view, style="danger", emoji_id="5121063440311386962"),
+                button("tkick_settings", self._tkick_settings_view, style="primary"),
+                close,
+            ])
+            return rows
+        if view == "settings":
+            page = max(0, min(job.get("page", 0), max(0, (len(job["members"]) - 1) // _TKICK_PAGE_SIZE)))
+            job["page"] = page
+            rows = []
+            for item in job["members"][page * _TKICK_PAGE_SIZE:(page + 1) * _TKICK_PAGE_SIZE]:
+                user = item["user"]
+                enabled = int(user.id) in job["selected"]
+                name = " ".join(self._random_display_name(user).split())[:25] or str(user.id)
+                if not self._username(user):
+                    name += f" ({int(user.id)})"
+                rows.append([{
+                    "text": name,
+                    "callback": self._tkick_toggle, "args": (token, int(user.id)),
+                    "style": "success" if enabled else "danger",
+                }])
+            pages = max(1, (len(job["members"]) + _TKICK_PAGE_SIZE - 1) // _TKICK_PAGE_SIZE)
+            if pages > 1:
+                rows.append([
+                    {"text": "←", "callback": self._tkick_page, "args": (token, -1)},
+                    {"text": f"{page + 1}/{pages}", "callback": self._tkick_page, "args": (token, 0)},
+                    {"text": "→", "callback": self._tkick_page, "args": (token, 1)},
+                ])
+            rows.append([button("tkick_back", self._tkick_preview_view, style="primary"), close])
+            return rows
+        if view == "confirm":
+            return [[button("tkick_confirm", self._tkick_start, style="danger"),
+                     button("tkick_back", self._tkick_preview_view, style="primary"), close]]
+        if view == "running":
+            return [[button("tkick_stop", self._tkick_stop, style="danger")]]
+        return [[close]]
+
+    async def _tkick_render(self, call, token, job):
+        await self._inline_answer(call, self._tkick_text(job), self._tkick_markup(token, job))
+
+    async def _tkick_collect(self, entity, start, end):
+        members = []
+        offset = 0
+        while True:
+            page = await self.client(functions.channels.GetParticipantsRequest(
+                channel=entity, filter=types.ChannelParticipantsRecent(),
+                offset=offset, limit=_PARTICIPANT_PAGE, hash=0,
+            ), flood_sleep_threshold=0)
+            participants = getattr(page, "participants", None) or []
+            if not participants:
+                if offset < int(getattr(page, "count", offset) or offset):
+                    raise ValueError("incomplete")
+                break
+            users = {int(user.id): user for user in getattr(page, "users", None) or [] if isinstance(user, types.User)}
+            for participant in participants:
+                if isinstance(participant, (types.ChannelParticipantAdmin, types.ChannelParticipantCreator,
+                                            types.ChannelParticipantBanned, types.ChannelParticipantLeft)):
+                    continue
+                user_id = getattr(participant, "user_id", None)
+                joined_at = getattr(participant, "date", None)
+                if user_id is None or not isinstance(joined_at, datetime):
+                    continue
+                user = users.get(int(user_id))
+                if not user or int(user.id) == self._me_id or getattr(user, "bot", False) or getattr(user, "deleted", False):
+                    continue
+                if joined_at.tzinfo is None:
+                    joined_at = joined_at.replace(tzinfo=timezone.utc)
+                joined_at = joined_at.astimezone(timezone.utc)
+                if start <= joined_at <= end:
+                    members.append({"user": user, "joined_at": joined_at})
+            offset += len(participants)
+            count = getattr(page, "count", None)
+            if offset >= _TKICK_SCAN_LIMIT and (
+                count is not None and offset < int(count)
+                or count is None and len(participants) >= _PARTICIPANT_PAGE
+            ):
+                raise ValueError("limit")
+            if count is not None and offset >= int(count):
+                break
+            if count is None and len(participants) < _PARTICIPANT_PAGE:
+                break
+        members.sort(key=lambda item: (item["joined_at"], int(item["user"].id)), reverse=True)
+        return members
+
+    async def _tkick_scan(self, call, token, job):
+        if job.get("busy") or job.get("running"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        start = job.get("from")
+        if not start:
+            return await call.answer(self._s("tkick_need_from"), show_alert=True)
+        end = job.get("to") or datetime.now(timezone.utc)
+        if end < start or end > datetime.now(timezone.utc):
+            return await call.answer(self._s("tkick_bad_range"), show_alert=True)
+        job["busy"] = True
+        job["view"] = "range"
+        task = asyncio.current_task()
+        self._tkick_tasks.add(task)
+        try:
+            await call.answer(self._s("tkick_scanning"))
+            try:
+                await self._inline_answer(call, f"{_EMOJI['time']} <b>{self._s('tkick_scanning')}</b>")
+            except Exception:
+                logger.debug("Could not show tkick scan status", exc_info=True)
+            members = await asyncio.wait_for(self._tkick_collect(job["entity"], start, end), 180)
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            logger.exception("Could not scan members for tkick")
+            job["members"] = []
+            job["selected"] = set()
+            job["view"] = "range"
+            job["error"] = self._s("tkick_scan_limit" if str(error) == "limit" else "tkick_scan_failed")
+            await self._tkick_render(call, token, job)
+            return
+        finally:
+            job["busy"] = False
+            self._tkick_tasks.discard(task)
+        job["scan_to"] = end
+        job["error"] = None
+        job["members"] = members
+        job["selected"] = {int(item["user"].id) for item in members}
+        job["page"] = 0
+        job["view"] = "preview"
+        job["expires"] = time.monotonic() + _TKICK_TTL
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_picker_open(self, call, token, field):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running") or field not in ("from", "to"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        selected = job.get(field)
+        local = selected.astimezone(self._quote_timezone()) if selected else datetime.now(self._quote_timezone())
+        job["picker_field"] = field
+        job["picker_return"] = job.get("view", "range")
+        job["picker_anchor"] = local.date()
+        job["picker_selected"] = local.date() if selected else None
+        job["picker_year"] = local.year
+        job["picker_month"] = local.month
+        job["picker_day"] = local.day if selected or field == "to" else None
+        job["picker_hour"] = local.hour if selected or field == "to" else 0
+        job["picker_minute"] = local.minute if selected or field == "to" else 0
+        job["picker_default_to"] = field == "to" and selected is None
+        job["view"] = "picker_calendar"
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_picker_shift(self, call, token, delta):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("view") != "picker_calendar" or job.get("busy"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        today = datetime.now(self._quote_timezone()).date()
+        earliest = datetime(2003, 1, 1).date()
+        if int(delta) == 0:
+            job["picker_anchor"] = today
+        else:
+            job["picker_anchor"] = max(earliest, min(today, job["picker_anchor"] + timedelta(days=int(delta))))
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_picker_day(self, call, token, date_text):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("view") != "picker_calendar" or job.get("busy"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        try:
+            selected = datetime.strptime(str(date_text), "%Y-%m-%d").date()
+        except ValueError:
+            return await call.answer(self._s("tkick_bad_range"), show_alert=True)
+        today = datetime.now(self._quote_timezone())
+        if not max(datetime(2003, 1, 1).date(), job["picker_anchor"] - timedelta(days=6)) <= selected <= min(job["picker_anchor"], today.date()):
+            return await call.answer(self._s("tkick_bad_range"), show_alert=True)
+        job["picker_year"], job["picker_month"], job["picker_day"] = selected.year, selected.month, selected.day
+        job["picker_selected"] = selected
+        if job.get("picker_default_to"):
+            if selected == today.date():
+                job["picker_hour"], job["picker_minute"] = today.hour, today.minute
+            else:
+                job["picker_hour"], job["picker_minute"] = 23, 59
+        job["view"] = "picker_time"
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_picker_time_input(self, call, data, token, component):
+        call = self._input_source_form(call)
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("view") != "picker_time" or job.get("busy"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        if component not in ("hour", "minute"):
+            return await call.answer(self._s("tkick_bad_range"), show_alert=True)
+        raw = str(data or "").strip()
+        limit = 23 if component == "hour" else 59
+        if not re.fullmatch(r"[0-9]{1,2}", raw) or int(raw) > limit:
+            return await call.answer(self._s("tkick_bad_hour" if component == "hour" else "tkick_bad_minute"), show_alert=True)
+        job["picker_" + component] = int(raw)
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_picker_back(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("view") == "picker_time":
+            job["view"] = "picker_calendar"
+        elif job.get("view") == "picker_calendar":
+            job["view"] = job.get("picker_return", "range")
+        else:
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_picker_save(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("view") != "picker_time" or job.get("busy"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        value = datetime(
+            job["picker_year"], job["picker_month"], job["picker_day"],
+            job["picker_hour"], job["picker_minute"], tzinfo=self._quote_timezone(),
+        ).astimezone(timezone.utc)
+        await self._tkick_set_range(call, token, job, job["picker_field"], value)
+
+    async def _tkick_picker_reset(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("view") not in ("picker_calendar", "picker_time") or job.get("busy"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        await self._tkick_set_range(call, token, job, job["picker_field"], None)
+
+    async def _tkick_set_range(self, call, token, job, field, value):
+        now = datetime.now(timezone.utc)
+        start = value if field == "from" else job.get("from")
+        end = value if field == "to" else job.get("to")
+        if (value is not None and value > now) or (start and end and start > end):
+            return await call.answer(self._s("tkick_bad_range"), show_alert=True)
+        job[field] = value
+        job["members"] = []
+        job["selected"] = set()
+        job["scan_to"] = None
+        job["error"] = None
+        job["page"] = 0
+        job["view"] = "range"
+        if start:
+            await self._tkick_scan(call, token, job)
+        else:
+            await call.answer()
+            await self._tkick_render(call, token, job)
+
+    async def _tkick_refresh(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        await self._tkick_scan(call, token, job)
+
+    async def _tkick_page(self, call, token, delta):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        pages = max(1, (len(job.get("members") or []) + _TKICK_PAGE_SIZE - 1) // _TKICK_PAGE_SIZE)
+        job["page"] = max(0, min(pages - 1, job.get("page", 0) + int(delta)))
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_settings_view(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        previous_view = job.get("view", "preview")
+        job["view"] = "settings"
+        try:
+            result = await self._rich_edit_form(call, 
+                text=self._tkick_text(job),
+                reply_markup=self._tkick_markup(token, job),
+            )
+            if result is False:
+                raise RuntimeError("tkick_settings_edit_failed")
+        except Exception:
+            job["view"] = previous_view
+            logger.exception("Could not open tkick settings")
+            return await call.answer(self._s("tkick_settings_failed"), show_alert=True)
+        await call.answer()
+
+    async def _tkick_preview_view(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        previous_view = job.get("view", "settings")
+        job["view"] = "preview"
+        try:
+            result = await self._rich_edit_form(call, 
+                text=self._tkick_text(job),
+                reply_markup=self._tkick_markup(token, job),
+            )
+            if result is False:
+                raise RuntimeError("tkick_preview_edit_failed")
+        except Exception:
+            job["view"] = previous_view
+            logger.exception("Could not return to tkick preview")
+            return await call.answer(self._s("tkick_settings_failed"), show_alert=True)
+        await call.answer()
+
+    async def _tkick_toggle(self, call, token, user_id):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running") or job.get("view") != "settings":
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        user_id = int(user_id)
+        if user_id not in {int(item["user"].id) for item in job["members"]}:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if user_id in job["selected"]:
+            job["selected"].remove(user_id)
+        else:
+            job["selected"].add(user_id)
+        try:
+            result = await self._rich_edit_form(call, 
+                text=self._tkick_text(job),
+                reply_markup=self._tkick_markup(token, job),
+            )
+            if result is False:
+                raise RuntimeError("tkick_toggle_edit_failed")
+        except Exception:
+            if user_id in job["selected"]:
+                job["selected"].remove(user_id)
+            else:
+                job["selected"].add(user_id)
+            logger.exception("Could not update tkick selection")
+            return await call.answer(self._s("tkick_settings_failed"), show_alert=True)
+        await call.answer()
+
+    async def _tkick_confirm_view(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        if not job.get("selected"):
+            return await call.answer(self._s("tkick_none_selected"), show_alert=True)
+        job["view"] = "confirm"
+        await call.answer()
+        await self._tkick_render(call, token, job)
+
+    async def _tkick_close(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("busy") or job.get("running"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        self._tkick_jobs.pop(token, None)
+        await call.answer()
+        await call.delete()
+
+    async def _tkick_stop(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        job["stop"] = True
+        await call.answer(self._s("tkick_stopped"))
+
+    async def _tkick_start(self, call, token):
+        job = self._tkick_job(call, token)
+        if not job:
+            return await call.answer(self._s("tkick_expired"), show_alert=True)
+        if job.get("running") or job.get("busy"):
+            return await call.answer(self._s("tkick_busy"), show_alert=True)
+        if job.get("view") != "confirm" or not job.get("selected"):
+            return await call.answer(self._s("tkick_none_selected"), show_alert=True)
+        if not (await self._operator_capabilities(job["entity"])).get("ban_users"):
+            return await call.answer(self._s("tkick_rights"), show_alert=True)
+        if not await self._tkick_operator_allowed(job):
+            return await call.answer(self._s("tkick_rights"), show_alert=True)
+        job["running"] = True
+        job["stop"] = False
+        job["view"] = "running"
+        job["expires"] = time.monotonic() + _TKICK_FORM_TTL
+        job["targets"] = [item for item in job["members"] if int(item["user"].id) in job["selected"]]
+        job["total"] = len(job["targets"])
+        job["done"] = job["skipped"] = job["failed"] = 0
+        await call.answer()
+        task = asyncio.create_task(self._tkick_execute(call, token, job))
+        self._tkick_tasks.add(task)
+        task.add_done_callback(self._tkick_tasks.discard)
+        try:
+            await self._tkick_render(call, token, job)
+        except Exception:
+            logger.debug("Could not show tkick progress", exc_info=True)
+
+    async def _tkick_execute(self, call, token, job):
+        error = None
+        try:
+            for index, item in enumerate(job["targets"]):
+                if job.get("stop"):
+                    break
+                if index % 10 == 0 and not await self._tkick_operator_allowed(job):
+                    error = self._s("tkick_rights")
+                    job["stop"] = True
+                    break
+                user = item["user"]
+                try:
+                    result = await self.client(functions.channels.GetParticipantRequest(
+                        channel=job["entity"], participant=user,
+                    ), flood_sleep_threshold=0)
+                    participant = getattr(result, "participant", None)
+                    joined_at = getattr(participant, "date", None)
+                    if joined_at and joined_at.tzinfo is None:
+                        joined_at = joined_at.replace(tzinfo=timezone.utc)
+                    if (not isinstance(joined_at, datetime)
+                            or isinstance(participant, (types.ChannelParticipantAdmin, types.ChannelParticipantCreator,
+                                                        types.ChannelParticipantBanned, types.ChannelParticipantLeft))
+                            or joined_at.astimezone(timezone.utc) != item["joined_at"]
+                            or not job["from"] <= joined_at.astimezone(timezone.utc) <= job["scan_to"]):
+                        job["skipped"] += 1
+                        continue
+                    await self.client.kick_participant(job["entity"], user)
+                    job["done"] += 1
+                    await asyncio.sleep(0.5)
+                except FloodWaitError:
+                    error = self._s("tkick_flood")
+                    job["stop"] = True
+                    break
+                except Exception as member_error:
+                    if type(member_error).__name__ in ("UserNotParticipantError", "ParticipantIdInvalidError"):
+                        job["skipped"] += 1
+                    else:
+                        logger.exception("Could not kick tkick member %s", user.id)
+                        job["failed"] += 1
+                if index % 5 == 0:
+                    try:
+                        await self._tkick_render(call, token, job)
+                    except Exception:
+                        logger.debug("Could not update tkick progress", exc_info=True)
+        except asyncio.CancelledError:
+            job["stop"] = True
+            raise
+        except Exception:
+            logger.exception("Tkick operation failed")
+            error = self._s("tkick_run_failed")
+            job["stop"] = True
+        finally:
+            job["remaining"] = job["total"] - job["done"] - job["skipped"] - job["failed"]
+            job["running"] = False
+            job["stopped"] = bool(job.get("stop"))
+            job["error"] = error
+            job["view"] = "done"
+            job["expires"] = time.monotonic() + _TKICK_TTL
+            job.pop("targets", None)
+            try:
+                await self._tkick_render(call, token, job)
+            except Exception:
+                logger.exception("Could not show tkick result")
+
+    @loader.command(ru_doc='кик участников по времени вступления', en_doc='kick members by join time')
+    @loader.group_admin_ban_users
+    async def tkick(self, message: Message):
+        if utils.get_args_raw(message).strip():
+            return await self._answer_temporary(message, self._s("no_arguments"), _IMPORTANT_RESULT_TTL)
+        entity = await self._chat_command_entity(message, error_ttl=_IMPORTANT_RESULT_TTL)
+        if not entity:
+            return
+        if not isinstance(entity, types.Channel) or not getattr(entity, "megagroup", False):
+            return await self._answer_temporary(message, self._s("tkick_supergroup"), _IMPORTANT_RESULT_TTL)
+        if not (await self._operator_capabilities(entity)).get("ban_users"):
+            return await self._answer_temporary(message, self._s("tkick_rights"), _IMPORTANT_RESULT_TTL)
+        self._tkick_prune()
+        if len(self._tkick_jobs) >= _MAX_TKICK_JOBS:
+            return await self._answer_temporary(message, self._s("tkick_busy"), _IMPORTANT_RESULT_TTL)
+        token = secrets.token_urlsafe(12)
+        job = {
+            "entity": entity, "chat_id": int(message.chat_id),
+            "operator_id": int(getattr(message, "sender_id", None) or self._me_id),
+            "from": None, "to": None, "scan_to": None,
+            "members": [], "selected": set(), "page": 0,
+            "view": "range", "busy": False, "running": False,
+            "expires": time.monotonic() + _TKICK_TTL,
+        }
+        self._tkick_jobs[token] = job
+        try:
+            sent = await self._create_inline_form(
+                message, self._tkick_text(job),
+                reply_markup=self._tkick_markup(token, job), ttl=_TKICK_FORM_TTL,
+            )
+            if not sent:
+                raise RuntimeError("tkick_form_unavailable")
+        except Exception:
+            self._tkick_jobs.pop(token, None)
+            logger.exception("Could not open tkick menu")
+            await self._answer_temporary(message, self._s("menu_open_failed"), _IMPORTANT_RESULT_TTL)
 
     @staticmethod
     def _number(value):
@@ -10948,7 +13611,7 @@ except Exception:
         if unit in {"seconds", "minutes", "hours"} and requested >= 60 * 60:
             label += f" (≈ {self._duration_details(requested)})"
         if clamp_minimum and requested < _TELEGRAM_MIN_MUTE:
-            return _TELEGRAM_MIN_MUTE, label, consumed
+            return _TELEGRAM_MIN_MUTE, self._duration_name(_TELEGRAM_MIN_MUTE, 'seconds'), consumed
         if requested > _TELEGRAM_MAX_MUTE:
             return None, label, consumed
         return requested, label, consumed
@@ -11020,13 +13683,14 @@ except Exception:
             )
         )
 
-    async def _fresh_chat_settings(self, entity):
+    async def _fresh_chat_settings(self, entity, *, flood_sleep_threshold=None):
+        rpc_options = {} if flood_sleep_threshold is None else {"flood_sleep_threshold": flood_sleep_threshold}
         if isinstance(entity, types.Channel):
             result = await asyncio.wait_for(
                 self.client(
                     functions.channels.GetFullChannelRequest(
                         channel=entity,
-                    )
+                    ), **rpc_options
                 ),
                 timeout=5,
             )
@@ -11051,7 +13715,7 @@ except Exception:
             }
         result = await asyncio.wait_for(
             self.client(
-                functions.messages.GetFullChatRequest(chat_id=entity.id)
+                functions.messages.GetFullChatRequest(chat_id=entity.id), **rpc_options
             ),
             timeout=5,
         )
@@ -11096,20 +13760,55 @@ except Exception:
             )
         )
 
-    async def _set_chat_inline(self, entity, chat_id, blocked):
-        settings = await self._fresh_chat_settings(entity)
-        rights = settings["rights"]
+    async def _set_chat_inline(self, entity, chat_id, blocked, *, settings=None, flood_sleep_threshold=None):
+        if settings is None:
+            settings = await self._fresh_chat_settings(entity)
+        rights = dict(settings["rights"])
         rights["send_inline"] = bool(blocked)
-        await self.client(
-            functions.messages.EditChatDefaultBannedRightsRequest(
-                peer=entity,
-                banned_rights=self._load_chat_rights(rights),
+        rpc_options = {} if flood_sleep_threshold is None else {"flood_sleep_threshold": flood_sleep_threshold}
+        try:
+            await self.client(
+                functions.messages.EditChatDefaultBannedRightsRequest(
+                    peer=entity,
+                    banned_rights=self._load_chat_rights(rights),
+                ), **rpc_options
             )
-        )
+        except Exception as error:
+            if not self._panic_not_modified(error):
+                raise
         state = self._chat_controls.get(str(chat_id))
         if state:
             state["base_rights"]["send_inline"] = bool(blocked)
             self._save_chat_controls()
+
+    strings.update({'inline_flood_wait': 'Telegram requested a wait of {seconds} seconds. The operation will continue automatically.'})
+    strings_ru.update({'inline_flood_wait': 'Telegram просит подождать {seconds} сек. Действие продолжится автоматически.'})
+
+    async def _toggle_chat_inline(self, message, entity, chat_id):
+        task = asyncio.current_task()
+        self._inline_toggle_tasks.add(task)
+        blocked = None
+        status = message
+        try:
+            while True:
+                try:
+                    settings = await self._fresh_chat_settings(entity, flood_sleep_threshold=0)
+                    if blocked is None:
+                        blocked = not bool(settings["rights"].get("send_inline", False))
+                    await self._set_chat_inline(entity, chat_id, blocked,
+                        settings=settings, flood_sleep_threshold=0)
+                    return blocked, status
+                except FloodWaitError as error:
+                    seconds = max(1, int(error.seconds))
+                    try:
+                        status = await self._inline_answer(status, _EMOJI['warning']
+                            + ' <b>GodChat · ' + self._s('inline') + '</b>\n\n'
+                            + self._s('inline_flood_wait', seconds=seconds)) or status
+                    except Exception:
+                        logger.debug('Could not display inline flood wait', exc_info=True)
+                    await asyncio.sleep(seconds)
+        finally:
+            self._inline_toggle_tasks.discard(task)
 
     async def _set_chat_closed(self, entity, rights, closed):
         await self.client(
@@ -11173,12 +13872,13 @@ except Exception:
                             try:
                                 entity = await self.client.get_entity(int(chat_id))
                                 await self._set_chat_closed(entity, state["base_rights"], False)
-                            except Exception:
-                                logger.exception("Could not restore chat after banchat timeout")
-                                deadline = time.time() + 60
-                                state["banchat_until"] = deadline
-                                self._save_chat_controls()
-                                retry = True
+                            except Exception as error:
+                                if not self._panic_not_modified(error):
+                                    logger.exception("Could not restore chat after banchat timeout")
+                                    deadline = time.time() + 60
+                                    state["banchat_until"] = deadline
+                                    self._save_chat_controls()
+                                    retry = True
                         if not retry:
                             state["banchat_active"] = False
                             state["banchat_until"] = 0
@@ -11192,12 +13892,18 @@ except Exception:
                         try:
                             entity = await self.client.get_entity(int(chat_id))
                             await self._set_chat_closed(entity, state["base_rights"], False)
-                        except Exception:
-                            logger.exception("Could not restore chat after banchat timeout")
-                            deadline = time.time() + 60
-                            state["banchat_until"] = deadline
-                            self._save_chat_controls()
+                        except Exception as error:
+                            if not self._panic_not_modified(error):
+                                logger.exception("Could not restore chat after banchat timeout")
+                                deadline = time.time() + 60
+                                state["banchat_until"] = deadline
+                                self._save_chat_controls()
+                                retry = True
+                            else:
+                                retry = False
                         else:
+                            retry = False
+                        if not retry:
                             self._chat_controls.pop(chat_id, None)
                             self._save_chat_controls()
                             text = (
@@ -11208,7 +13914,7 @@ except Exception:
                             break
                 await asyncio.sleep(max(0, deadline - time.time()))
             try:
-                await self.client.send_message(
+                await self._send_rich_chat_message(
                     int(chat_id),
                     text,
                     **(
@@ -11464,10 +14170,7 @@ except Exception:
                 except HideRequesterMissingError:
                     self._join_request_jobs.pop(str(chat_id), None)
                     self._save_join_request_jobs()
-                    text = (
-                        f"{_EMOJI['success']} "
-                        f"<b>{self._s('requests_none')}</b>"
-                    )
+                    text = self._join_request_result_text(0, 0, bool(state.get('approved', False)))
                 except FloodWaitError as error:
                     retry_limit = state.get("limit")
                     if retry_limit is not None:
@@ -11498,17 +14201,8 @@ except Exception:
                 else:
                     self._join_request_jobs.pop(str(chat_id), None)
                     self._save_join_request_jobs()
-                    text = (
-                        f"{_EMOJI['success']} "
-                        f"<b>{self._s('requests_accepted' if approved else 'requests_cleared')}:</b> "
-                        f"<code>{self._number(max(0, processed))}</code>"
-                    )
-                    if remaining:
-                        text += (
-                            f"\n<b>{self._s('new_requests')}:</b> "
-                            f"<code>{self._number(remaining)}</code>"
-                        )
-            result = await self.client.send_message(
+                    text = self._join_request_result_text(processed, remaining, approved)
+            result = await self._send_rich_chat_message(
                 int(state["chat_id"]),
                 text,
                 **(
@@ -11528,18 +14222,35 @@ except Exception:
             if self._join_request_tasks.get(str(chat_id)) is current:
                 self._join_request_tasks.pop(str(chat_id), None)
 
+    strings.update({'req_batch_size': 'Accept', 'req_batch_change': 'Change amount',
+                    'req_wait_status': 'Waiting for Telegram', 'req_wait': 'Pause', 'req_resume': 'Resume at'})
+    strings_ru.update({'req_batch_size': 'Принять', 'req_batch_change': 'Изменить количество',
+                       'req_wait_status': 'Ожидание Telegram', 'req_wait': 'Пауза', 'req_resume': 'Продолжение'})
+
     def _join_request_menu_text(self, state):
-        return (
-            f"{_EMOJI['warning']} <b>GodChat · {self._s('requests_title')}</b>\n\n"
-            f"<blockquote><b>{self._s('requests_count')}:</b> "
-            f"<code>{self._number(state['count'])}</code>\n"
-            f"<b>{self._s('requests_batch', count=self._number(state['batch']))}</b>\n"
-            f"{self._s('requests_menu_hint')}</blockquote>"
-        )
+        return self._result_table(_EMOJI['reason'], self._s('requests_title'), [
+            ('requests_count', _EMOJI['reason'], self._number(state['count']), True),
+            ('req_batch_size', _EMOJI['time'], self._number(state['batch']), True),
+        ])
+
+    def _join_request_result_text(self, processed, remaining, approved):
+        return self._result_table(_EMOJI['success'], self._s('requests_title'), [
+            ('requests_accepted' if approved else 'requests_cleared', _EMOJI['success'], self._number(max(0, processed)), True),
+            ('new_requests', _EMOJI['reason'], self._number(remaining), True),
+        ])
+
+    def _join_request_wait_text(self, seconds=None, retry_at=None):
+        rows = [('status', _EMOJI['warning'], self._s('req_wait_status'), True)]
+        if seconds is not None:
+            rows.append(('req_wait', _EMOJI['time'], f'{seconds} {self._s("seconds_short")}', True))
+        if retry_at:
+            zone = timezone(timedelta(minutes=self._timezone_minutes()))
+            rows.append(('req_resume', _EMOJI['time'], datetime.fromtimestamp(retry_at, zone).strftime('%H:%M:%S'), True))
+        return self._result_table(_EMOJI['warning'], self._s('requests_title'), rows)
 
     def _join_request_menu_markup(self, token, state):
         batch = self._number(state["batch"])
-        return [
+        rows = [
             [
                 {
                     "text": self._s("requests_accept_batch", count=batch),
@@ -11555,7 +14266,7 @@ except Exception:
                 },
             ],
             [{
-                "text": self._s("requests_batch", count=batch),
+                "text": self._s("req_batch_change"),
                 "input": self._s("requests_batch_input"),
                 "handler": self._join_request_batch_input,
                 "args": (token,),
@@ -11574,11 +14285,24 @@ except Exception:
                     "style": "danger",
                 },
             ],
-            [{"text": self._s("cancel_button"), "action": "close"}],
+            [{"text": self._s("close_button"), "action": "close", "style": "danger"}],
         ]
+        for row in rows:
+            for button in row:
+                if button.get('action') == 'close':
+                    icon = ('5447647474984449520', '✖️')
+                elif 'input' in button:
+                    icon = ('5879841310902324730', '✏️')
+                elif button.get('style') == 'success':
+                    icon = ('5444987348334965906', '✅')
+                else:
+                    icon = ('5445005936953424165', '🗑')
+                button['emoji_id'], button['emoji_fallback'] = icon
+                button['text'] = re.sub(r'^[^\w]+', '', button['text']).strip() or '\u200b'
+        return rows
 
     async def _render_join_request_menu(self, call, token, state):
-        await call.edit(
+        await self._rich_edit_form(call, 
             self._join_request_menu_text(state),
             reply_markup=self._join_request_menu_markup(token, state),
         )
@@ -11587,7 +14311,7 @@ except Exception:
         call = self._input_source_form(call)
         state = self._join_request_confirms.get(token)
         if not state or state.get("expires", 0) < time.monotonic():
-            await call.edit(
+            await self._rich_edit_form(call, 
                 f"{_EMOJI['error']} <b>{self._s('confirmation_expired')}</b>",
                 reply_markup=None,
             )
@@ -11622,8 +14346,8 @@ except Exception:
         try:
             count = await self._pending_join_request_count(state["entity"])
             if not count:
-                await call.edit(
-                    f"{_EMOJI['success']} <b>{self._s('requests_none')}</b>",
+                await self._rich_edit_form(call, 
+                    self._join_request_result_text(0, 0, approved),
                     reply_markup=None,
                 )
                 return
@@ -11654,34 +14378,23 @@ except Exception:
                 approved=approved,
                 limit=limit,
             )
-            await call.edit(
-                (
-                    f"{_EMOJI['warning']} <b>GodChat · {self._s('requests_title')}</b>\n\n"
-                    f"<blockquote>FloodWait: <code>{error.seconds}</code> {self._s('seconds_short')}\n"
-                    f"{self._s('continues_at')} "
-                    f"<code>{datetime.fromtimestamp(retry_at).strftime('%H:%M:%S')}</code>.</blockquote>"
-                ),
+            await self._rich_edit_form(call, 
+                self._join_request_wait_text(error.seconds, retry_at),
                 reply_markup=None,
             )
             return
         except Exception:
             logger.exception("Could not process join requests")
-            await call.edit(
+            await self._rich_edit_form(call, 
                 f"{_EMOJI['error']} <b>{self._s('requests_failed')}</b>",
                 reply_markup=None,
             )
             self._schedule_temporary_delete(call, _IMPORTANT_RESULT_TTL)
             return
-        text = (
-            f"{_EMOJI['success']} "
-            f"<b>{self._s('requests_accepted' if approved else 'requests_cleared')}:</b> "
-            f"<code>{self._number(processed)}</code>"
-        )
-        if remaining:
-            text += f"\n<b>{self._s('new_requests')}:</b> <code>{self._number(remaining)}</code>"
-        await call.edit(text, reply_markup=None)
+        text = self._join_request_result_text(processed, remaining, approved)
+        await self._rich_edit_form(call, text, reply_markup=None)
 
-    @loader.command(ru_doc=" - управление заявками на вступление", en_doc=' - manage join requests')
+    @loader.command(ru_doc='управление заявками на вступление', en_doc='manage join requests')
     @loader.group_admin_invite_users
     async def reqcmd(self, message: Message):
         if self._args(message):
@@ -11708,11 +14421,7 @@ except Exception:
             retry_at = int(active.get("retry_at", 0) or 0)
             await self._inline_answer(
                 message,
-                (
-                    f"{_EMOJI['warning']} <b>{self._s('requests_cleanup_scheduled')}</b>\n\n"
-                    f"<blockquote>{self._s('continues_at')} "
-                    f"<code>{datetime.fromtimestamp(retry_at).strftime('%H:%M:%S')}</code>.</blockquote>"
-                ),
+                self._join_request_wait_text(retry_at=retry_at),
             )
             return
         try:
@@ -11720,10 +14429,7 @@ except Exception:
         except FloodWaitError as error:
             await self._inline_answer(
                 message,
-                (
-                    f"{_EMOJI['warning']} <b>FloodWait:</b> "
-                    f"<code>{error.seconds}</code> {self._s('seconds_short')} {self._s('try_later')}"
-                ),
+                self._join_request_wait_text(seconds=error.seconds),
             )
             return
         except Exception:
@@ -11744,9 +14450,9 @@ except Exception:
             "batch": max(1, min(10, count)),
             "expires": time.monotonic() + _JOIN_REQUEST_CONFIRM_TTL,
         }
-        sent = await self.inline.form(
-            self._join_request_menu_text(self._join_request_confirms[token]),
+        sent = await self._create_inline_form(
             message,
+            self._join_request_menu_text(self._join_request_confirms[token]),
             reply_markup=self._join_request_menu_markup(
                 token,
                 self._join_request_confirms[token],
@@ -11761,10 +14467,56 @@ except Exception:
                 _IMPORTANT_RESULT_TTL,
             )
 
-    @loader.command(ru_doc=" [пользователь|-all] - запретить или разрешить инлайн", en_doc=' [user|-all] - forbid or allow inline')
+    strings.update({
+        'inline_result_chat': 'Chat', 'inline_result_scope': 'Applies to', 'inline_result_status': 'Inline messages',
+        'inline_result_everyone': 'All members', 'inline_result_partner': 'The other participant',
+        'inline_result_allowed': 'Allowed', 'inline_result_forbidden': 'Forbidden',
+        'inline_private_hint': 'New incoming inline messages will be deleted. Ordinary messages and your own inline messages are allowed.',
+    })
+    strings_ru.update({
+        'inline_result_chat': 'Чат', 'inline_result_scope': 'Для кого', 'inline_result_status': 'Инлайн-сообщения',
+        'inline_result_everyone': 'Все участники', 'inline_result_partner': 'Собеседник',
+        'inline_result_allowed': 'разрешены', 'inline_result_forbidden': 'запрещены',
+        'inline_private_hint': 'Новые входящие инлайн-сообщения будут удаляться. Обычные сообщения и твои инлайн-сообщения разрешены.',
+    })
+
+    async def _inline_result(self, message, entity, blocked, target=None, private=False):
+        text = (_EMOJI['success'] + ' <b>GodChat · ' + self._s('inline') + '</b>\n\n'
+                + f'<blockquote><b>{self._s("inline_result_status")}</b>: {self._s("inline_result_forbidden" if blocked else "inline_result_allowed")}</blockquote>')
+        return await self._inline_answer(message, text)
+
+    @loader.watcher('in', 'only_messages')
+    async def private_inline_watcher(self, message: Message):
+        chat_id = getattr(message, 'chat_id', None)
+        if (not getattr(message, 'is_private', False) or getattr(message, 'out', False) or chat_id is None
+                or not getattr(message, 'via_bot_id', None) or not self._private_inline_blocks.get(str(int(chat_id)), False)):
+            return
+        try:
+            await message.delete()
+        except Exception:
+            logger.debug('Could not delete private inline message', exc_info=True)
+
+    @loader.command(ru_doc='[-all/реплай в группе] - запретить или разрешить инлайн; в ЛС — для собеседника', en_doc='[-all/reply in a group] - toggle inline; in private chats, delete incoming inline messages')
     @loader.group_admin_ban_users
     async def inlinecmd(self, message: Message):
         args = [arg.lower() for arg in self._args(message)]
+        if getattr(message, 'is_private', False):
+            if args not in ([], ['-all']):
+                return await self._answer_temporary(message, _EMOJI['error'] + ' <b>' + self._s('no_arguments') + '</b>', _IMPORTANT_RESULT_TTL)
+            try:
+                entity = await self.client.get_entity(message.chat_id)
+            except Exception:
+                return await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('chat_fetch_failed') + '</b>')
+            key = str(int(message.chat_id))
+            blocked = not self._private_inline_blocks.get(key, False)
+            updated = dict(self._private_inline_blocks)
+            if blocked:
+                updated[key] = True
+            else:
+                updated.pop(key, None)
+            self._save_state('private_inline_blocks', updated)
+            self._private_inline_blocks = updated
+            return await self._inline_result(message, entity, blocked, private=True)
         if args == ["-all"]:
             entity = await self._chat_command_entity(message)
             if not entity:
@@ -11782,8 +14534,7 @@ except Exception:
             chat_id = str(int(message.chat_id))
             async with self._chat_control_lock(chat_id):
                 try:
-                    blocked = not await self._chat_inline_blocked(entity)
-                    await self._set_chat_inline(entity, chat_id, blocked)
+                    blocked, status = await self._toggle_chat_inline(message, entity, chat_id)
                 except Exception:
                     logger.exception("Could not change global inline permission")
                     await self._inline_answer(
@@ -11794,16 +14545,7 @@ except Exception:
                         ),
                     )
                     return
-            await self._answer_temporary(
-                message,
-                (
-                    f"{_EMOJI['success']} <b>GodChat · {self._s('inline')}</b>\n\n"
-                    f"<blockquote>{self._s('inline_all_status')}: "
-                    f"<b>{self._s('forbidden') if blocked else self._s('allowed')}</b>"
-                    "</blockquote>"
-                ),
-                _NORMAL_RESULT_TTL,
-            )
+            await self._inline_result(status, entity, blocked)
             return
         if args:
             await self._answer_temporary(
@@ -11885,18 +14627,9 @@ except Exception:
                 ),
             )
             return
-        await self._answer_temporary(
-            message,
-            (
-                f"{_EMOJI['success']} <b>GodChat · {self._s('inline')}</b>\n\n"
-                f"<blockquote>{self._label(target)}\n"
-                f"<b>{self._s('inline')}:</b> {self._s('forbidden') if blocked else self._s('allowed')}"
-                "</blockquote>"
-            ),
-            _NORMAL_RESULT_TTL,
-        )
+        await self._inline_result(message, entity, blocked, target=target)
 
-    @loader.command(ru_doc=" - запретить или разрешить гостевых ботов в чате", en_doc=' - forbid or allow guest bots in the chat')
+    @loader.command(ru_doc='запретить или разрешить гостевых ботов в чате', en_doc='forbid or allow guest bots in the chat')
     async def guestcmd(self, message: Message):
         if self._args(message):
             await self._answer_temporary(
@@ -11937,7 +14670,85 @@ except Exception:
             _NORMAL_RESULT_TTL,
         )
 
-    @loader.command(ru_doc=" [время] - закрыть/открыть чат", en_doc=' [time] - close/open the chat')
+    strings.update({
+        'nochan_title': 'Messages from channels', 'nochan_chat': 'Chat', 'nochan_status': 'Status',
+        'nochan_enabled': 'Forbidden', 'nochan_disabled': 'Allowed',
+        'nochan_rights': 'I need permission to delete messages to enable this restriction.',
+        'nochan_exceptions': 'Anonymous administrators and automatic posts from the linked channel are allowed.',
+    })
+    strings_ru.update({
+        'nochan_title': 'Сообщения от каналов', 'nochan_chat': 'Чат', 'nochan_status': 'Статус',
+        'nochan_enabled': 'Запрещены', 'nochan_disabled': 'Разрешены',
+        'nochan_rights': 'Для включения запрета мне нужны права на удаление сообщений.',
+        'nochan_exceptions': 'Анонимные администраторы и автоматические публикации привязанного канала разрешены.',
+    })
+
+    @loader.command(ru_doc='запретить писать от канала', en_doc='forbid messages sent as a channel; repeat to allow')
+    async def nochan(self, message: Message):
+        if not getattr(message, 'is_group', False) or getattr(message, 'is_private', False):
+            return await self._answer_temporary(message, _EMOJI['error'] + ' <b>' + self._s('groups_only') + '</b>', _IMPORTANT_RESULT_TTL)
+        if self._args(message):
+            return await self._answer_temporary(message, _EMOJI['error'] + ' <b>' + self._s('no_arguments') + '</b>', _IMPORTANT_RESULT_TTL)
+        key = str(int(message.chat_id))
+        enabled = not self._channel_blocks.get(key, False)
+        try:
+            entity = await self.client.get_entity(message.chat_id)
+        except Exception:
+            if enabled:
+                return await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('chat_fetch_failed') + '</b>')
+            entity = None
+        if enabled and not (await self._operator_capabilities(entity)).get('delete_messages'):
+            return await self._inline_answer(message, _EMOJI['error'] + ' <b>' + self._s('nochan_rights') + '</b>')
+        updated = dict(self._channel_blocks)
+        if enabled:
+            updated[key] = True
+        else:
+            updated.pop(key, None)
+        self._save_state('channel_blocks', updated)
+        self._channel_blocks = updated
+        self._nochan_linked.pop(key, None)
+        text = (_EMOJI['success'] + ' <b>GodChat · ' + self._s('nochan_title') + '</b>\n\n'
+                + f'<blockquote><b>{self._s("nochan_status")}</b>: {self._s("nochan_enabled" if enabled else "nochan_disabled")}</blockquote>')
+        return await self._inline_answer(message, text)
+
+    async def _nochan_automatic_forward(self, message, sender):
+        forwarded = getattr(message, 'fwd_from', None)
+        origin = getattr(forwarded, 'from_id', None)
+        if not isinstance(origin, types.PeerChannel) or origin.channel_id != sender.channel_id or not getattr(forwarded, 'channel_post', None):
+            return False
+        key = str(int(message.chat_id))
+        cached = self._nochan_linked.get(key)
+        if cached and time.monotonic() - cached[0] < 60:
+            linked = cached[1]
+        else:
+            try:
+                full = await self.client(functions.channels.GetFullChannelRequest(channel=message.peer_id))
+                linked = getattr(full.full_chat, 'linked_chat_id', None)
+                self._nochan_linked[key] = (time.monotonic(), linked)
+            except Exception:
+                logger.debug('Could not verify nochan discussion post', exc_info=True)
+                return True
+        return linked == sender.channel_id
+
+    @loader.watcher('only_messages')
+    async def nochan_watcher(self, message: Message):
+        chat_id = getattr(message, 'chat_id', None)
+        if not getattr(message, 'is_group', False) or chat_id is None or not self._channel_blocks.get(str(int(chat_id)), False):
+            return
+        sender = getattr(message, 'from_id', None)
+        if not isinstance(sender, types.PeerChannel) or tl_utils.get_peer_id(sender) == int(chat_id):
+            return
+        if await self._nochan_automatic_forward(message, sender):
+            return
+        if not self._channel_blocks.get(str(int(chat_id)), False):
+            return
+        self._schedule_dmute_pulse(message)
+        try:
+            await message.delete()
+        except Exception:
+            logger.debug('Could not delete message sent as channel', exc_info=True)
+
+    @loader.command(ru_doc='[время] - закрыть/открыть чат', en_doc='[time] - close/open the chat')
     @loader.group_admin_ban_users
     async def banchat(self, message: Message):
         entity = await self._chat_command_entity(message)
@@ -12051,19 +14862,48 @@ except Exception:
             _IMPORTANT_RESULT_TTL,
         )
 
-    def _panic_result_details(self, state, enabled):
-        details = []
-        if state.get("panic_close_applied", True):
-            details.append(self._s("chat_closed" if enabled else
-                                   "chat_closed_by_banchat" if state.get("banchat_active") else "chat_opened"))
-        if state.get("panic_slow_applied", True):
-            details.append(self._s("panic_slow_on_detail" if enabled else "panic_slow_restored_detail"))
-        if state.get("panic_requests_applied", True):
-            details.append(self._s("panic_requests_on_detail" if enabled else "panic_requests_restored_detail"))
-        return "\n".join(details)
+    strings.update({
+        'panic_result_title': 'Panic', 'panic_result_off': 'Disabled', 'panic_result_chat': 'Chat',
+        'panic_result_closed': 'Closed', 'panic_result_open': 'Open', 'panic_result_banchat': 'Closed by banchat',
+        'panic_result_hour': '1 hour', 'panic_result_slow_off': 'Off',
+        'panic_result_requests_on': 'Enabled', 'panic_result_requests_off': 'Disabled',
+        'panic_result_incomplete': 'Still active', 'panic_retry': 'Run .panic again to retry.',
+    })
+    strings_ru.update({
+        'panic_result_title': 'Паника', 'panic_result_off': 'Выключена', 'panic_result_chat': 'Чат',
+        'panic_result_closed': 'Закрыт', 'panic_result_open': 'Открыт', 'panic_result_banchat': 'Закрыт через banchat',
+        'panic_result_hour': '1 час', 'panic_result_slow_off': 'Выключен',
+        'panic_result_requests_on': 'Включены', 'panic_result_requests_off': 'Выключены',
+        'panic_result_incomplete': 'Остаётся включённой', 'panic_retry': 'Повтори .panic для повторной попытки.',
+    })
 
-    @loader.command(ru_doc=" - включение паники", en_doc=' - enable panic')
-    @loader.group_admin_ban_users
+    def _panic_result_details(self, state, enabled):
+        details = [('status', _EMOJI['warning' if enabled else 'success'], self._s('panic_now' if enabled else 'panic_result_off'), True)]
+        if state.get("panic_close_applied", True) or state.get('banchat_active'):
+            details.append(('panic_result_chat', _EMOJI['warning' if enabled or state.get('banchat_active') else 'success'],
+                            self._s('panic_result_closed' if enabled else 'panic_result_banchat' if state.get('banchat_active') else 'panic_result_open'), True))
+        if state.get("panic_slow_applied", True):
+            slow = self._s('panic_result_hour') if enabled else (
+                f'{state["panic_slow"]} {self._s("panic_seconds")}' if state.get('panic_slow') else self._s('panic_result_slow_off'))
+            details.append(('panic_slow_button', _EMOJI['time'], slow, True))
+        if state.get("panic_requests_applied", True):
+            details.append(('panic_requests', _EMOJI['reason'], self._s('panic_result_requests_on' if enabled or state.get('panic_join_request') else 'panic_result_requests_off'), True))
+        return self._result_table(_EMOJI['warning' if enabled else 'success'], self._s('panic_result_title'), details)
+
+    @staticmethod
+    def _panic_not_modified(error):
+        return (type(error).__name__ in ('ChatNotModifiedError', 'SlowmodeNotModifiedError')
+                or getattr(error, 'message', None) in ('CHAT_NOT_MODIFIED', 'SLOWMODE_NOT_MODIFIED'))
+
+    def _panic_failure_result(self, state, failures):
+        rows = [('status', _EMOJI['warning'], self._s('panic_result_incomplete'), True)]
+        errors = state.get('panic_restore_errors', {})
+        for action in failures:
+            rows.append((f'panic_restore_{action}', _EMOJI['error'], utils.escape_html(errors.get(action) or self._s(f'panic_restore_{action}')), True))
+        return self._result_table(_EMOJI['error'], self._s('panic_result_title'), rows) + '\n' + self._s('panic_retry')
+
+    @loader.command(ru_doc='включение/выключение паники', en_doc='enable/disable panic')
+    @loader.group_admin
     async def panic(self, message: Message):
         entity = await self._chat_command_entity(message, panic=True)
         if not entity:
@@ -12075,18 +14915,26 @@ except Exception:
                 return await self._inline_answer(message, f"{_EMOJI['error']} <b>{self._s('panic_choose_action')}</b>")
             try:
                 if active:
-                    old = self._chat_controls[chat_id]
+                    old = dict(self._chat_controls[chat_id])
                     details = self._panic_result_details(old, enabled=False)
-                    await self._disable_panic(entity, chat_id)
+                    failures = await self._disable_panic(entity, chat_id)
+                    if failures:
+                        return await self._inline_answer(
+                            message,
+                            self._panic_failure_result(self._chat_controls[chat_id], failures),
+                        )
                 else:
                     await self._enable_panic(entity, chat_id)
                     details = self._panic_result_details(self._chat_controls[chat_id], enabled=True)
             except Exception:
                 logger.exception("Could not %s panic mode", "disable" if active else "enable")
-                return await self._inline_answer(message, f"{_EMOJI['error']} <b>{self._s('panic_disable_failed' if active else 'panic_enable_failed')}</b>")
-        if active:
-            return await self._inline_answer(message, f"{_EMOJI['success']} <b>GodChat · {self._s('panic_off')}</b>\n\n<blockquote>{details}</blockquote>")
-        await self._inline_answer(message, f"{_EMOJI['warning']} <b>GodChat · {self._s('panic_on')}</b>\n\n<blockquote>{details}</blockquote>")
+                error_key = (
+                    "panic_disable_failed" if active else
+                    "panic_enable_partial" if self._chat_controls.get(chat_id, {}).get("panic_active") else
+                    "panic_enable_failed"
+                )
+                return await self._inline_answer(message, f"{_EMOJI['error']} <b>{self._s(error_key)}</b>")
+        return await self._inline_answer(message, details)
 
     async def _enable_panic(self, entity, chat_id):
         config = self._panic_config(chat_id)
@@ -12108,6 +14956,7 @@ except Exception:
                 await self.client(functions.channels.ToggleJoinRequestRequest(channel=entity, enabled=True))
                 done.append("requests")
         except Exception:
+            rollback_failures = []
             for action in reversed(done):
                 try:
                     if action == "requests":
@@ -12118,6 +14967,18 @@ except Exception:
                         await self._set_chat_closed(entity, state["base_rights"], False)
                 except Exception:
                     logger.exception("Could not roll back panic action %s", action)
+                    rollback_failures.append(action)
+            if rollback_failures:
+                state.update(
+                    panic_active=True,
+                    panic_slow=settings["slow"],
+                    panic_join_request=settings["join_request"],
+                    panic_close_applied="close" in rollback_failures,
+                    panic_slow_applied="slow" in rollback_failures,
+                    panic_requests_applied="requests" in rollback_failures,
+                )
+                self._chat_controls[chat_id] = state
+                self._save_chat_controls()
             raise
         state.update(panic_active=True, panic_slow=settings["slow"],
                      panic_join_request=settings["join_request"],
@@ -12130,15 +14991,60 @@ except Exception:
     async def _disable_panic(self, entity, chat_id):
         state = self._chat_controls[chat_id]
         current = await self._fresh_chat_settings(entity)
-        if state.get("panic_slow_applied", True) and current["slow"] == _PANIC_SLOW_MODE:
-            await self.client(functions.channels.ToggleSlowModeRequest(channel=entity, seconds=int(state.get("panic_slow", 0))))
-        if state.get("panic_requests_applied", True) and current["join_request"]:
-            await self.client(functions.channels.ToggleJoinRequestRequest(channel=entity, enabled=bool(state.get("panic_join_request", False))))
-        if (state.get("panic_close_applied", True) and not state.get("banchat_active")
-                and current["rights"].get("send_messages")):
-            rights = dict(current["rights"])
-            rights["send_messages"] = bool(state["base_rights"].get("send_messages", False))
-            await self._set_chat_closed(entity, rights, False)
+        failures = []
+        errors = state.setdefault('panic_restore_errors', {})
+        if state.get("panic_close_applied", True):
+            try:
+                if not state.get("banchat_active"):
+                    rights = dict(current["rights"])
+                    for field in _BANNED_RIGHT_FIELDS:
+                        if field.startswith('send_') or field == 'embed_links':
+                            rights[field] = bool(state['base_rights'].get(field, False))
+                    rights['until_date'] = int(state['base_rights'].get('until_date', 0))
+                    if rights != current['rights']:
+                        await self._set_chat_closed(entity, rights, False)
+            except Exception as error:
+                if not self._panic_not_modified(error):
+                    logger.exception("Could not restore chat permissions after panic")
+                    failures.append("chat")
+                    errors['chat'] = getattr(error, 'message', None) or type(error).__name__
+            if 'chat' not in failures:
+                state["panic_close_applied"] = False
+                errors.pop('chat', None)
+                self._save_chat_controls()
+        if state.get("panic_requests_applied", True):
+            try:
+                if current["join_request"]:
+                    await self.client(functions.channels.ToggleJoinRequestRequest(
+                        channel=entity, enabled=bool(state.get("panic_join_request", False))
+                    ))
+            except Exception as error:
+                if not self._panic_not_modified(error):
+                    logger.exception("Could not restore join requests after panic")
+                    failures.append("requests")
+                    errors['requests'] = getattr(error, 'message', None) or type(error).__name__
+            if 'requests' not in failures:
+                state["panic_requests_applied"] = False
+                errors.pop('requests', None)
+                self._save_chat_controls()
+        if state.get("panic_slow_applied", True):
+            try:
+                if current["slow"] == _PANIC_SLOW_MODE:
+                    await self.client(functions.channels.ToggleSlowModeRequest(
+                        channel=entity, seconds=int(state.get("panic_slow", 0))
+                    ))
+            except Exception as error:
+                if not self._panic_not_modified(error):
+                    logger.exception("Could not restore slow mode after panic")
+                    failures.append("slow")
+                    errors['slow'] = getattr(error, 'message', None) or type(error).__name__
+            if 'slow' not in failures:
+                state["panic_slow_applied"] = False
+                errors.pop('slow', None)
+                self._save_chat_controls()
+        if failures:
+            self._save_chat_controls()
+            return failures
         state["panic_active"] = False
         state.pop("panic_until", None)
         if state.get("banchat_active"):
@@ -12147,10 +15053,11 @@ except Exception:
             self._chat_controls.pop(chat_id, None)
             self._save_chat_controls()
         self._panic_joins.pop(chat_id, None)
+        return []
 
     @loader.command(
-        ru_doc=" [пользователь] [время] - делит-мут; повторная команда снимает"
-    , en_doc=' [user] [time] - delete-mute; repeat to remove')
+        ru_doc='[пользователь] [время] - делит-мут; повторная команда снимает'
+    , en_doc='[user] [time] - delete-mute; repeat to remove')
     async def dmute(self, message: Message):
         context = await self._delete_mute_context(message)
         if not context:
@@ -12168,7 +15075,7 @@ except Exception:
             self._remove_delete_mute(chat_id, target.id)
             await self._answer_temporary(
                 message,
-                self._result(
+                self._mute_result(
                     _EMOJI["success"], self._s("dmute_title"), target,
                     self._s("dmute_removed"), None, "",
                 ),
@@ -12204,10 +15111,7 @@ except Exception:
             return
         if not getattr(message, "is_private", False):
             capabilities = await self._operator_capabilities(entity)
-            if not capabilities.get("delete_messages") or (
-                getattr(message, "is_channel", False)
-                and not capabilities.get("ban_users")
-            ):
+            if not capabilities.get("delete_messages"):
                 await self._inline_answer(
                     message,
                     f"{_EMOJI['error']} <b>{self._s('dmute_delete_rights')}</b>",
@@ -12220,7 +15124,7 @@ except Exception:
         self._save_delete_mutes()
         await self._answer_temporary(
             message,
-            self._result(
+            self._mute_result(
                 _EMOJI["mute"], self._s("dmute_title"), target,
                 self._s("dmute_action"), duration_label, "",
             ),
@@ -12288,8 +15192,8 @@ except Exception:
         )
 
     @loader.command(
-        ru_doc=" [пользователь] [время] [причина] - мут"
-    , en_doc=' [user] [time] [reason] - mute')
+        ru_doc='[пользователь] [время] [причина] - мут'
+    , en_doc='[user] [time] [reason] - mute')
     @loader.group_admin_ban_users
     async def mute(self, message: Message):
         context = await self._context(message, error_ttl=_IMPORTANT_RESULT_TTL)
@@ -12357,7 +15261,7 @@ except Exception:
             return
         await self._inline_answer(
             message,
-            self._result(
+            self._mute_result(
                 _EMOJI["mute"],
                 self._s("mute_title"),
                 target,
@@ -12368,8 +15272,8 @@ except Exception:
         )
 
     @loader.command(
-        ru_doc=" [пользователь] - снять мут"
-    , en_doc=' [user] - unmute')
+        ru_doc='[пользователь] - снять мут'
+    , en_doc='[user] - unmute')
     async def unmute(self, message: Message):
         if getattr(message, "is_private", False):
             context = await self._delete_mute_context(message)
@@ -12386,7 +15290,7 @@ except Exception:
             removed = self._remove_delete_mute(message.chat_id, target.id)
             await self._inline_answer(
                 message,
-                self._result(
+                self._mute_result(
                     _EMOJI["success"] if removed else _EMOJI["warning"],
                     self._s("dmute_title"),
                     target,
@@ -12408,7 +15312,7 @@ except Exception:
             if delete_mute_removed:
                 await self._inline_answer(
                     message,
-                    self._result(
+                    self._mute_result(
                         _EMOJI["success"],
                         self._s("dmute_title"),
                         target,
@@ -12432,7 +15336,7 @@ except Exception:
             if delete_mute_removed:
                 await self._inline_answer(
                     message,
-                    self._result(
+                    self._mute_result(
                         _EMOJI["success"],
                         self._s("dmute_title"),
                         target,
@@ -12455,7 +15359,7 @@ except Exception:
             if delete_mute_removed:
                 await self._inline_answer(
                     message,
-                    self._result(
+                    self._mute_result(
                         _EMOJI["success"],
                         self._s("dmute_title"),
                         target,
@@ -12476,7 +15380,7 @@ except Exception:
             return
         await self._inline_answer(
             message,
-            self._result(
+            self._mute_result(
                 _EMOJI["success"],
                 self._s("unmute_title"),
                 target,
@@ -12496,7 +15400,6 @@ except Exception:
         )
 
 
-GodChatMod.strings["_cls_doc"] = "Moderation tools for chats"
 GodChatMod.strings.update({
     f"_cmd_doc_{name}": method.en_doc
     for name, method in loader.get_commands(GodChatMod).items()
