@@ -1,4 +1,4 @@
-__version__ = (1, 1, 0)
+__version__ = (1, 1, 1)
 # meta developer: @mofkomodules
 # Name: GodChat
 # meta banner: https://raw.githubusercontent.com/mofko/MofkoModules/refs/heads/main/assets/godchat_banner.png?v=20261012
@@ -6609,6 +6609,12 @@ class GodChatMod(loader.Module):
 
     @staticmethod
     async def _get_reply_message(message):
+        header = getattr(message, 'reply_to', None)
+        if getattr(header, 'forum_topic', False) and not getattr(header, 'quote_text', None):
+            reply_id = getattr(header, 'reply_to_msg_id', None)
+            topic_id = getattr(header, 'reply_to_top_id', None)
+            if reply_id is not None and (topic_id is None or reply_id == topic_id):
+                return None
         reply = await message.get_reply_message()
         if isinstance(reply, (list, tuple)):
             return next((item for item in reply if item is not None), None)
